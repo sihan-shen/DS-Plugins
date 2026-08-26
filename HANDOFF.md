@@ -8,7 +8,7 @@ Define a DSH-based personal Coding Agent plugin architecture that is ChatGPT/Cod
 
 `README.md` records the full architecture baseline: lifecycle, component boundaries, data contracts, scheduling rules, prompt/cache behavior, code intelligence, memory, verification, telemetry, safety, a three-tier plugin reuse analysis, configuration, v0.1-v0.6 roadmap, and measurable hypotheses.
 
-The repository now also provides a Nix Flake with a Node.js 24 development shell, a reusable `homeManagerModules.deepseek-harness-dev` module that only enables `direnv` and `nix-direnv`, and an `.envrc` containing only `use flake`. The shell makes `DSH_HOME` repository-local. `.gitignore` excludes direnv cache, repository-local `.dsh` state, and an independently cloned `upstream/deepseek-harness` source tree. Harness remains a source-run dependency, not a global npm or Nix installation; no plugin implementation has been added.
+The repository now also provides a Nix Flake with a Node.js 24 development shell, a reusable `homeManagerModules.deepseek-harness-dev` module that only enables `direnv` and `nix-direnv`, and an `.envrc` containing only `use flake`. The shell supplies a `dsh-pnpm-wrapper` that invokes Node.js 24's `corepack pnpm`, takes PATH precedence over unrelated pnpm binaries, and preserves the upstream `packageManager` selection without writing shims into the Nix store. It resolves `DSH_HOME` by walking upward for the DS-Plugins marker pair, so an independently cloned nested Harness Git checkout still uses the repository-local `.dsh`. `.gitignore` excludes direnv cache, that local state, and the upstream checkout. Harness remains a source-run dependency, not a global npm or Nix installation; no runnable plugin implementation has been added.
 
 ## Key Decisions
 
@@ -21,16 +21,17 @@ The repository now also provides a Nix Flake with a Node.js 24 development shell
 
 ## Validation
 
-- `rg -n 'DeepSeek Harness 开发环境|homeManagerModules\.deepseek-harness-dev|direnv allow|corepack enable|pnpm run typecheck|allowBuilds' README.md` found every setup milestone in the README.
-- `git diff --check` reported no whitespace errors after the documentation update, and `git status --short` showed only the intended `README.md` and `HANDOFF.md` documentation edits for this task before committing.
-- `nix flake check --no-build` evaluated the local default development shell and Home Manager activation check successfully.
-- `nix develop --command sh -c 'set -eu; test "$(node --version | cut -d. -f1)" = "v24"; corepack --version; git --version; gcc --version >/dev/null; clang --version >/dev/null; python3 --version; cargo --version; rg --version >/dev/null; jq --version; test "$DSH_HOME" = "$(git rev-parse --show-toplevel)/.dsh"'` completed successfully: Node was v24, Corepack, Git, GCC, Clang, Python, Cargo, Ripgrep, and jq were available, and `DSH_HOME` was repository-local.
-- `git diff --check HEAD` reported no whitespace errors across the complete working tree.
-- Harness was not cloned, `direnv allow` and Home Manager activation were not run, and no pnpm dependencies were installed; therefore Harness install, typecheck, build, and web-server behavior remain intentionally unverified.
+- `nix run nixpkgs#nixfmt-rfc-style -- flake.nix home-manager/deepseek-harness-dev.nix` completed successfully, and `git diff --check -- flake.nix home-manager/deepseek-harness-dev.nix` reported no whitespace errors.
+- Exact all-system evidence: `nix flake check --all-systems --no-build` exited 0 after evaluating `devShells.x86_64-linux.default`, `devShells.aarch64-linux.default`, `checks.x86_64-linux.home-manager-module`, and `checks.aarch64-linux.home-manager-module`; its final line was `all checks passed!`. The command emitted only the expected dirty-tree notice and the existing `unknown flake output 'homeManagerModules'` warning.
+- The root `nix develop --command sh -c '...'` toolchain check exited 0 with Node `v24.19.0`, Corepack `0.35.0`, Git `2.55.0`, GCC `15.3.0`, Clang `21.1.8`, Python `3.14.7`, Cargo `1.97.0`, Ripgrep `15.2.0`, and jq `1.8.2`. `command -v pnpm` resolved to `/nix/store/idb0d90qg32509b1a652i5apz2gibikg-dsh-pnpm-wrapper/bin/pnpm`; `env -i HOME="$HOME" PATH="<wrapper-bin>:<node-bin>" pnpm --version` returned `11.24.0`; and `DSH_HOME` was `/home/sihan/Projects/DS-Plugins/.dsh`.
+- From a temporary, ignored Git repository at `upstream/deepseek-harness`, `git rev-parse --show-toplevel` returned the nested checkout while `nix develop /home/sihan/Projects/DS-Plugins --command sh -c 'test "$DSH_HOME" = "/home/sihan/Projects/DS-Plugins/.dsh"'` still exited 0. The temporary checkout was removed afterward.
+- From `/tmp`, `nix develop /home/sihan/Projects/DS-Plugins --command true` exited 1 with `DeepSeek Harness development shell: could not find the DS-Plugins project root from /tmp`, verifying clear failure when the marker pair is absent.
+- The README milestone scan found the module import, `direnv allow`, `dsh-pnpm-wrapper`, pnpm checks, typecheck, and `allowBuilds`; a tracked-files scan found no obsolete Corepack shim-enablement workflow; `git diff --check HEAD` reported no whitespace errors.
+- Harness was not cloned, `direnv allow` and Home Manager activation were not run, and no project dependencies were installed; therefore Harness install, typecheck, build, and web-server behavior remain intentionally unverified.
 
 ## Next Step
 
-Apply the module in the user's own Home Manager configuration, run `direnv allow`, and clone Harness into `upstream/deepseek-harness`; then install its dependencies and run the documented typecheck, build, and web-server checks. After that, validate the shortlisted plugins and current DSH extension points, then turn the v0.1 milestone into an implementation plan.
+Apply the module in the user's own Home Manager configuration, run `direnv allow`, and clone Harness into `upstream/deepseek-harness`; then confirm the dev-shell pnpm wrapper reads Harness's `packageManager`, install its dependencies, and run the documented typecheck, build, and web-server checks. After that, validate the shortlisted plugins and current DSH extension points, then turn the v0.1 milestone into an implementation plan.
 
 ## Plugin Research (2026-08-25)
 

@@ -31,10 +31,19 @@
         system:
         let
           pkgs = import nixpkgs { inherit system; };
+          pnpmWrapper = pkgs.runCommand "dsh-pnpm-wrapper" { } ''
+            mkdir -p "$out/bin"
+            cat > "$out/bin/pnpm" <<'EOF'
+            #!${pkgs.runtimeShell}
+            exec ${pkgs.nodejs_24}/bin/corepack pnpm "$@"
+            EOF
+            chmod +x "$out/bin/pnpm"
+          '';
         in
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
+              pnpmWrapper
               nodejs_24
               git
               gcc
@@ -57,7 +66,21 @@
             ];
 
             shellHook = ''
-              project_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+              export PATH="${pnpmWrapper}/bin:$PATH"
+
+              project_root="$(pwd -P)"
+              while
+                ! test -f "$project_root/flake.nix" \
+                  || ! test -f "$project_root/home-manager/deepseek-harness-dev.nix"
+              do
+                if test "$project_root" = "/"; then
+                  echo "DeepSeek Harness development shell: could not find the DS-Plugins project root from $(pwd -P)" >&2
+                  exit 1
+                fi
+
+                project_root="$(dirname -- "$project_root")"
+              done
+
               export DSH_HOME="$project_root/.dsh"
               unset project_root
 

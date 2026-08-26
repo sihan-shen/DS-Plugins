@@ -4,7 +4,7 @@
 
 DS-Plugins 将围绕 DeepSeek Harness 开发个人 Coding Agent 插件。Harness 仍处于快速迭代阶段，因此当前不将 Harness 或其 JavaScript 依赖打包成 Nix package，也不通过 Home Manager 全局安装 Node.js、pnpm 或项目编译工具。
 
-本设计沿用既定安装方案：Nix 提供可复现的系统工具链，Corepack 根据 Harness 仓库的 `packageManager` 字段选择 pnpm，Harness 从源码运行，插件在本仓库中独立开发。
+本设计沿用既定安装方案：Nix 提供可复现的系统工具链和项目专属 pnpm wrapper；该 wrapper 调用 Node.js 24 自带的 `corepack pnpm`，由 Corepack 根据 Harness 仓库的 `packageManager` 字段选择 pnpm。Harness 从源码运行，插件在本仓库中独立开发。
 
 ## 目标
 
@@ -19,7 +19,7 @@ DS-Plugins 将围绕 DeepSeek Harness 开发个人 Coding Agent 插件。Harness
 
 - 不自动克隆、安装或更新 DeepSeek Harness。
 - 不通过 Nix 构建 Harness 的 `node_modules` 或发布包。
-- 不创建全局 pnpm 安装，也不同时安装独立 Corepack 包。
+- 不创建全局或固定版本的 pnpm 安装，也不同时安装独立 Corepack 包；项目 shell 只提供调用 Node.js 24 Corepack 的 pnpm wrapper。
 - 不管理编辑器、Shell 或用户的完整 Home Manager 配置。
 - 不在本阶段创建业务插件、profile 或 Cordis patch。
 
@@ -44,7 +44,7 @@ programs.direnv = {
 
 仓库根目录的 `flake.nix` 提供默认 dev shell，并导出 Home Manager module。dev shell 包含：
 
-- Harness runtime：Node.js 24（包含 Corepack wrapper）和 Git。
+- Harness runtime：Node.js 24（包含 Corepack）、优先于外部 PATH 的项目专属 pnpm wrapper 和 Git。
 - 原生 Node 模块工具链：GCC、Clang、GNU Make、CMake、pkg-config 和 Python。
 - 常用语言工具：uv、Rust 和 Cargo。
 - 代码与诊断工具：TypeScript language server、ripgrep、fd、jq、tree-sitter、gdb、strace 和 GitHub CLI。
@@ -78,7 +78,7 @@ DS-Plugins/
 
 ## 环境与状态
 
-dev shell 将 `DSH_HOME` 设置为仓库根目录下的 `.dsh`。路径基于 Flake 所在仓库计算，不依赖调用 shell 时的当前子目录。
+dev shell 从调用目录开始逐级向上查找 `flake.nix` 与 `home-manager/deepseek-harness-dev.nix` 这一标记对，并将 `DSH_HOME` 设置为找到的仓库根目录下的 `.dsh`。因此即使调用目录位于独立的嵌套 Git checkout 中，路径也不会漂移；找不到标记对时 shell 会以清晰错误失败。
 
 以下内容不纳入版本控制：
 
@@ -93,7 +93,7 @@ dev shell 将 `DSH_HOME` 设置为仓库根目录下的 `.dsh`。路径基于 Fl
 1. 在用户现有 Home Manager 配置中导入仓库导出的 module，并执行 `home-manager switch`。
 2. 在 DS-Plugins 根目录执行 `direnv allow`。
 3. 将官方 Harness 仓库克隆到 `upstream/deepseek-harness`。
-4. 进入 Harness checkout，执行 `corepack enable` 和 `pnpm --version`。
+4. 进入 Harness checkout，执行 `pnpm --version`，确认 dev-shell wrapper 可用且 Corepack 读取上游 `packageManager` 字段。
 5. 执行 `pnpm install`、`pnpm run typecheck` 和 `pnpm run build`。
 6. 使用 `pnpm dsh web` 启动，并访问 `http://127.0.0.1:3080`。
 
@@ -103,7 +103,7 @@ dev shell 将 `DSH_HOME` 设置为仓库根目录下的 `.dsh`。路径基于 Fl
 
 - 如果 `direnv` 未启用，README 引导用户先应用 Home Manager module。
 - 如果 Flake 评估失败，优先使用 `nix flake check` 和 `nix develop --command` 定位配置问题。
-- 如果 Corepack 不可用，不额外加入 `pkgs.corepack`；先确认所选 nixpkgs 中 `nodejs_24` wrapper 的实际组成。
+- 如果 pnpm wrapper 不可用，不额外加入 `pkgs.corepack` 或固定版本的 `pkgs.pnpm`；先确认 wrapper 是否优先于外部 PATH，并确认所选 nixpkgs 中 `nodejs_24` 的 Corepack 可执行文件。
 - 如果原生 Node 模块缺少库，只将明确需要的依赖加入 dev shell，不预先引入大量动态库。
 - 如果插件的 `prepare` 被 pnpm 阻止，使用精确的 `allowBuilds` 条目，不全局放开构建脚本。
 
@@ -111,11 +111,12 @@ dev shell 将 `DSH_HOME` 设置为仓库根目录下的 `.dsh`。路径基于 Fl
 
 实现完成后执行覆盖本次风险的最小验证：
 
-1. `nix flake check` 验证 Flake 能够评估。
+1. `nix flake check --all-systems --no-build` 验证两个受支持系统的 Flake 输出能够评估。
 2. 通过 `nix develop --command` 检查 Node、Corepack、Git、编译器、Python、Rust 和关键源码工具可执行。
-3. 检查 `DSH_HOME` 指向仓库内 `.dsh`。
-4. 使用 Nix module 评估验证 Home Manager module 的语法和导出路径。
-5. 检查实际 diff，并更新 `HANDOFF.md` 记录已运行与未运行的验证。
+3. 检查 pnpm 解析到 dev-shell wrapper，并在仅包含 wrapper 与 Node bin 的最小 PATH/环境中运行 `pnpm --version`。
+4. 分别从仓库根目录和临时的嵌套 Git checkout 检查 `DSH_HOME` 指向 DS-Plugins 仓库内 `.dsh`，并检查仓库外调用会清晰失败。
+5. 使用 Nix module 评估验证 Home Manager module 的语法和导出路径。
+6. 检查实际 diff，并更新 `HANDOFF.md` 记录已运行与未运行的验证。
 
 不会声称 Harness 的 `pnpm install`、typecheck 或 build 已通过，除非上游源码已存在且实际执行了这些命令。
 

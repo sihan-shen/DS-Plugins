@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Use `github:NixOS/nixpkgs/nixos-unstable` and Node.js 24.
-- Use the Corepack wrapper supplied with `nodejs_24`; do not add `pkgs.corepack` or a global pnpm package.
+- Add a dev-shell `pnpm` wrapper derivation that executes `${pkgs.nodejs_24}/bin/corepack pnpm "$@"`, and make it win PATH resolution; do not add `pkgs.corepack` or a global/fixed pnpm package.
 - Home Manager must manage only direnv/nix-direnv for this feature; it must not set `home.username`, `home.homeDirectory`, or `home.stateVersion` in the exported module.
 - Harness must remain a source checkout under `upstream/deepseek-harness`; do not package, clone, install, or update it automatically.
 - Set `DSH_HOME` to the current repository's `.dsh` directory without hard-coding a username or home path.
@@ -75,10 +75,19 @@ Create `flake.nix`:
       devShells = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
+          pnpmWrapper = pkgs.runCommand "dsh-pnpm-wrapper" { } ''
+            mkdir -p "$out/bin"
+            cat > "$out/bin/pnpm" <<'EOF'
+            #!${pkgs.runtimeShell}
+            exec ${pkgs.nodejs_24}/bin/corepack pnpm "$@"
+            EOF
+            chmod +x "$out/bin/pnpm"
+          '';
         in
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
+              pnpmWrapper
               nodejs_24
               git
               gcc
@@ -90,7 +99,7 @@ Create `flake.nix`:
               uv
               rustc
               cargo
-              nodePackages.typescript-language-server
+              typescript-language-server
               ripgrep
               fd
               jq
@@ -101,7 +110,21 @@ Create `flake.nix`:
             ];
 
             shellHook = ''
-              project_root="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+              export PATH="${pnpmWrapper}/bin:$PATH"
+
+              project_root="$(pwd -P)"
+              while
+                ! test -f "$project_root/flake.nix" \
+                  || ! test -f "$project_root/home-manager/deepseek-harness-dev.nix"
+              do
+                if test "$project_root" = "/"; then
+                  echo "DeepSeek Harness development shell: could not find the DS-Plugins project root from $(pwd -P)" >&2
+                  exit 1
+                fi
+
+                project_root="$(dirname -- "$project_root")"
+              done
+
               export DSH_HOME="$project_root/.dsh"
               unset project_root
 
@@ -157,7 +180,7 @@ Run:
 
 ```bash
 nix flake lock
-nix flake check --no-build
+nix flake check --all-systems --no-build
 ```
 
 Expected: `flake.lock` is created; flake evaluation succeeds for both supported Linux systems and the Home Manager module check resolves to an activation derivation.
@@ -167,10 +190,10 @@ Expected: `flake.lock` is created; flake evaluation succeeds for both supported 
 Run:
 
 ```bash
-nix develop --command sh -c 'node --version; corepack --version; git --version; test "$DSH_HOME" = "$(git rev-parse --show-toplevel)/.dsh"'
+nix develop --command sh -c 'set -eu; node --version; corepack --version; git --version; pnpm_path=$(command -v pnpm); case "$pnpm_path" in /nix/store/*-dsh-pnpm-wrapper/bin/pnpm) ;; *) exit 1 ;; esac; minimal_path=$(dirname -- "$pnpm_path"):$(dirname -- "$(command -v node)"); env -i HOME="$HOME" PATH="$minimal_path" pnpm --version; test "$DSH_HOME" = "$(pwd -P)/.dsh"'
 ```
 
-Expected: Node reports major version 24, Corepack and Git report versions, and the `DSH_HOME` assertion exits successfully.
+Expected: Node reports major version 24, Corepack and Git report versions, pnpm resolves to the dev-shell wrapper and prints its version from the minimal environment, and the root `DSH_HOME` assertion exits successfully. Also run the same `DSH_HOME` assertion from a temporary ignored nested Git checkout and confirm it still points to the DS-Plugins root.
 
 - [ ] **Step 6: Commit the flake and module**
 
@@ -254,7 +277,7 @@ Insert a new top-level section immediately after the introductory block and befo
 ````markdown
 ## DeepSeek Harness 开发环境
 
-本仓库采用两层环境：Home Manager 只启用 `direnv + nix-direnv`，项目 Flake 固定 Node.js 24、Corepack 和编译工具。Harness 本身从源码运行，不作为全局 npm 或 Nix package 安装。
+本仓库采用两层环境：Home Manager 只启用 `direnv + nix-direnv`，项目 Flake 固定 Node.js 24、Corepack、项目专属 pnpm wrapper 和编译工具。Harness 本身从源码运行，不作为全局 npm 或 Nix package 安装。
 
 ### 1. 启用 Home Manager module
 
@@ -294,11 +317,13 @@ direnv allow
 ```bash
 node --version
 corepack --version
+command -v pnpm
+pnpm --version
 git --version
 printf '%s\n' "$DSH_HOME"
 ```
 
-Node 应为 24.x，`DSH_HOME` 应指向本仓库的 `.dsh`。
+Node 应为 24.x，`pnpm` 应解析到 Nix dev shell 的 `dsh-pnpm-wrapper`，`DSH_HOME` 应指向本仓库的 `.dsh`。该 wrapper 直接执行 Node.js 24 自带的 `corepack pnpm`，无需也不应启用 Corepack shim；shim 启用会尝试写入不可变的 Nix store。
 
 ### 3. 安装并运行 Harness 源码
 
@@ -306,7 +331,6 @@ Node 应为 24.x，`DSH_HOME` 应指向本仓库的 `.dsh`。
 mkdir -p upstream
 git clone https://github.com/deepseek-ai/deepseek-harness.git upstream/deepseek-harness
 cd upstream/deepseek-harness
-corepack enable
 pnpm --version
 pnpm install
 pnpm run typecheck
@@ -314,7 +338,7 @@ pnpm run build
 pnpm dsh web
 ```
 
-浏览器访问 `http://127.0.0.1:3080`。Corepack 会依据 Harness 的 `package.json#packageManager` 选择 pnpm；不要另行全局安装 pnpm。
+浏览器访问 `http://127.0.0.1:3080`。dev shell 的 pnpm wrapper 会让 Corepack 依据 Harness 的 `package.json#packageManager` 选择 pnpm；不要另行全局安装 pnpm。
 
 如果 GitHub 来源的 TypeScript 插件依赖 `prepare` 构建，而 pnpm 10+ 报告脚本被忽略，请只在对应 profile 的 `pnpm-workspace.yaml` 中允许该包：
 
@@ -344,7 +368,7 @@ Preserve the architecture decisions and plugin research sections that remain cur
 Run:
 
 ```bash
-rg -n 'DeepSeek Harness 开发环境|homeManagerModules\.deepseek-harness-dev|direnv allow|corepack enable|pnpm run typecheck|allowBuilds' README.md
+rg -n 'DeepSeek Harness 开发环境|homeManagerModules\.deepseek-harness-dev|direnv allow|dsh-pnpm-wrapper|pnpm run typecheck|allowBuilds' README.md
 git diff --check
 git status --short
 ```
@@ -356,12 +380,12 @@ Expected: every setup milestone is found, no whitespace errors exist, and only t
 Run:
 
 ```bash
-nix flake check --no-build
-nix develop --command sh -c 'set -eu; test "$(node --version | cut -d. -f1)" = "v24"; corepack --version; git --version; gcc --version >/dev/null; clang --version >/dev/null; python3 --version; cargo --version; rg --version >/dev/null; jq --version; test "$DSH_HOME" = "$(git rev-parse --show-toplevel)/.dsh"'
+nix flake check --all-systems --no-build
+nix develop --command sh -c 'set -eu; test "$(node --version | cut -d. -f1)" = "v24"; corepack --version; git --version; gcc --version >/dev/null; clang --version >/dev/null; python3 --version; cargo --version; rg --version >/dev/null; jq --version; pnpm_path=$(command -v pnpm); case "$pnpm_path" in /nix/store/*-dsh-pnpm-wrapper/bin/pnpm) ;; *) exit 1 ;; esac; minimal_path=$(dirname -- "$pnpm_path"):$(dirname -- "$(command -v node)"); env -i HOME="$HOME" PATH="$minimal_path" pnpm --version; test "$DSH_HOME" = "$(pwd -P)/.dsh"'
 git diff --check HEAD
 ```
 
-Expected: Flake and Home Manager module evaluation succeed; every listed tool is executable; Node is v24; `DSH_HOME` is repository-local; the complete working tree has no whitespace errors.
+Expected: Both supported systems and the Home Manager module evaluate; every listed tool is executable; Node is v24; pnpm resolves to the shell wrapper and runs in the minimal environment; root and nested-checkout `DSH_HOME` remain repository-local; the complete working tree has no whitespace errors.
 
 - [ ] **Step 5: Commit documentation and handoff**
 
