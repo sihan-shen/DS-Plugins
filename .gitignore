@@ -1,0 +1,8 @@
+# direnv cache and links
+/.direnv/
+
+# Repository-local DeepSeek Harness state
+/.dsh/
+
+# Independently cloned upstream source
+/upstream/deepseek-harness/
