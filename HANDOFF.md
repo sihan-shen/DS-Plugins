@@ -10,6 +10,8 @@ Define a DSH-based personal Coding Agent plugin architecture that is ChatGPT/Cod
 
 The repository now also provides a Nix Flake with a Node.js 24 development shell, a reusable `homeManagerModules.deepseek-harness-dev` module that only enables `direnv` and `nix-direnv`, and an `.envrc` containing only `use flake`. The shell supplies a `dsh-pnpm-wrapper` that invokes Node.js 24's `corepack pnpm`, takes PATH precedence over unrelated pnpm binaries, and preserves the upstream `packageManager` selection without writing shims into the Nix store. It resolves `DSH_HOME` by walking upward for the DS-Plugins marker pair, so an independently cloned nested Harness Git checkout still uses the repository-local `.dsh`. `.gitignore` excludes direnv cache, that local state, and the upstream checkout. Harness remains a source-run dependency, not a global npm or Nix installation; no runnable plugin implementation has been added.
 
+The official Harness checkout now exists at `upstream/deepseek-harness` on commit `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e` (`0.1.1-rc.2`). Its pnpm dependencies are installed, typecheck and production build pass, and the Web UI is running at `http://127.0.0.1:3080`. On the current Nix-built Node.js 24.19, `node-addon-require-builtin@0.1.4` cannot discover Node's internal ESM loader, so source launch uses the upstream-supported direct Node fallback: `node --expose-internals --import tsx/esm apps/cli/src/bin.ts web --no-open`.
+
 ## Key Decisions
 
 - Extend DSH through plugins; do not fork its agent loop.
@@ -27,11 +29,17 @@ The repository now also provides a Nix Flake with a Node.js 24 development shell
 - From a temporary, ignored Git repository at `upstream/deepseek-harness`, `git rev-parse --show-toplevel` returned the nested checkout while `nix develop /home/sihan/Projects/DS-Plugins --command sh -c 'test "$DSH_HOME" = "/home/sihan/Projects/DS-Plugins/.dsh"'` still exited 0. The temporary checkout was removed afterward.
 - From `/tmp`, `nix develop /home/sihan/Projects/DS-Plugins --command true` exited 1 with `DeepSeek Harness development shell: could not find the DS-Plugins project root from /tmp`, verifying clear failure when the marker pair is absent.
 - The README milestone scan found the module import, `direnv allow`, `dsh-pnpm-wrapper`, pnpm checks, typecheck, and `allowBuilds`; a tracked-files scan found no obsolete Corepack shim-enablement workflow; `git diff --check HEAD` reported no whitespace errors.
-- Harness was not cloned, `direnv allow` and Home Manager activation were not run, and no project dependencies were installed; therefore Harness install, typecheck, build, and web-server behavior remain intentionally unverified.
+- Home Manager activation and `direnv allow` were completed outside the repository and verified through a fresh interactive zsh session; nix-direnv reused its cached dev shell and exported the expected Node, pnpm wrapper, and `DSH_HOME` values.
+- `git clone https://github.com/deepseek-ai/deepseek-harness.git upstream/deepseek-harness` completed at commit `b150a551`; upstream declares `packageManager=pnpm@11.7.0`, and the dev-shell wrapper selected pnpm `11.7.0`.
+- `pnpm install` completed for all 246 workspace projects after supply-chain policy validation of 1,215 lockfile entries. Network retries recovered automatically; install finished with non-fatal pre-build example-bin warnings.
+- `pnpm run typecheck` exited 0 after the Host library build and Client TypeScript project-reference check.
+- The first sandboxed `pnpm run build` attempt failed because `tsx` could not create `/tmp/tsx-1000/112.pipe`; rerunning with local IPC permission exited 0, built Host and Client libraries, produced 200 client artifacts, and completed the Vite production build.
+- Plain `pnpm dsh web --no-open` exposed an upstream/Nix compatibility issue: `node-addon-require-builtin@0.1.4` reports `Unsupported/no-getter` on Nix Node `24.19.0`, leaving Loader bare-package resolution unavailable. Direct launch with `node --expose-internals --import tsx/esm apps/cli/src/bin.ts web --no-open` uses Harness's internal-loader fallback and started successfully at `http://127.0.0.1:3080`.
+- A same-permission-boundary `curl --fail http://127.0.0.1:3080/` returned `HTTP/1.1 200 OK` and a 14,555-byte Harness bootstrap page. No DeepSeek API credential or real provider call has been configured or tested.
 
 ## Next Step
 
-Apply the module in the user's own Home Manager configuration, run `direnv allow`, and clone Harness into `upstream/deepseek-harness`; then confirm the dev-shell pnpm wrapper reads Harness's `packageManager`, install its dependencies, and run the documented typecheck, build, and web-server checks. After that, validate the shortlisted plugins and current DSH extension points, then turn the v0.1 milestone into an implementation plan.
+Open `http://127.0.0.1:3080`, configure the desired model/provider credentials without committing secrets, and perform one bounded UI smoke session. Then decide whether to keep the direct Node compatibility launch as a documented local wrapper or track an upstream fix for `node-addon-require-builtin` on Nix Node. After that, validate the shortlisted plugins and current DSH extension points, then turn the v0.1 milestone into an implementation plan.
 
 ## Plugin Research (2026-08-25)
 
