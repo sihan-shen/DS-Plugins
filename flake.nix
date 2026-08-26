@@ -9,16 +9,26 @@
     };
   };
 
-  outputs = inputs@{ self, nixpkgs, home-manager, ... }:
+  outputs =
+    inputs@{
+      self,
+      nixpkgs,
+      home-manager,
+      ...
+    }:
     let
-      supportedSystems = [ "x86_64-linux" "aarch64-linux" ];
+      supportedSystems = [
+        "x86_64-linux"
+        "aarch64-linux"
+      ];
       forAllSystems = nixpkgs.lib.genAttrs supportedSystems;
       module = import ./home-manager/deepseek-harness-dev.nix;
     in
     {
       homeManagerModules.deepseek-harness-dev = module;
 
-      devShells = forAllSystems (system:
+      devShells = forAllSystems (
+        system:
         let
           pkgs = import nixpkgs { inherit system; };
         in
@@ -36,7 +46,7 @@
               uv
               rustc
               cargo
-              nodePackages.typescript-language-server
+              typescript-language-server
               ripgrep
               fd
               jq
@@ -57,9 +67,11 @@
               echo "DSH_HOME: $DSH_HOME"
             '';
           };
-        });
+        }
+      );
 
-      checks = forAllSystems (system:
+      checks = forAllSystems (
+        system:
         let
           pkgs = import nixpkgs { inherit system; };
           testHome = home-manager.lib.homeManagerConfiguration {
@@ -76,6 +88,7 @@
         in
         {
           home-manager-module = testHome.activationPackage;
-        });
+        }
+      );
     };
 }
