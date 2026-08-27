@@ -64,10 +64,12 @@ pnpm --version
 pnpm install
 pnpm run typecheck
 pnpm run build
-pnpm dsh web
+dsh-web
 ```
 
 浏览器访问 `http://127.0.0.1:3080`。dev shell 的 pnpm wrapper 会让 Corepack 依据 Harness 的 `package.json#packageManager` 选择 pnpm；不要另行全局安装 pnpm。
+
+`dsh-web` 会自动进入本仓库的 Harness 源码目录，并使用适配当前 Nix Node.js 24 的直接 Node 启动方式运行 Web UI。它可以从 DS-Plugins 根目录或任意子目录执行；额外参数会原样传给 `dsh web`。
 
 如果 GitHub 来源的 TypeScript 插件依赖 `prepare` 构建，而 pnpm 10+ 报告脚本被忽略，请只在对应 profile 的 `pnpm-workspace.yaml` 中允许该包：
 

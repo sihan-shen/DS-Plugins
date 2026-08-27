@@ -39,11 +39,37 @@
             EOF
             chmod +x "$out/bin/pnpm"
           '';
+          dshWebWrapper = pkgs.runCommand "dsh-web-wrapper" { } ''
+            mkdir -p "$out/bin"
+            cat > "$out/bin/dsh-web" <<'EOF'
+            #!${pkgs.runtimeShell}
+            set -eu
+
+            if test -z "''${DSH_HOME:-}"; then
+              echo "dsh-web: DSH_HOME is not set; enter the DS-Plugins development shell first" >&2
+              exit 1
+            fi
+
+            harness_dir="$(dirname -- "$DSH_HOME")/upstream/deepseek-harness"
+            if ! test -f "$harness_dir/apps/cli/src/bin.ts"; then
+              echo "dsh-web: Harness source checkout not found at $harness_dir" >&2
+              exit 1
+            fi
+
+            cd "$harness_dir"
+            exec ${pkgs.nodejs_24}/bin/node \
+              --expose-internals \
+              --import tsx/esm \
+              apps/cli/src/bin.ts web --no-open "$@"
+            EOF
+            chmod +x "$out/bin/dsh-web"
+          '';
         in
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
               pnpmWrapper
+              dshWebWrapper
               nodejs_24
               git
               gcc
