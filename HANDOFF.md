@@ -40,13 +40,13 @@ The official Harness checkout now exists at `upstream/deepseek-harness` on commi
 
 ## Next Step
 
-Review and approve `docs/superpowers/specs/2026-08-27-dsh-v0.1-foundation-design.md`, then turn it into a task-level implementation plan. Track an upstream fix for `node-addon-require-builtin` on Nix Node so the local `dsh-web` compatibility wrapper can eventually return to the standard launch path.
+Execute `docs/superpowers/plans/2026-08-27-dsh-v0.1-foundation.md` task by task, starting with the out-of-tree workspace and real Loader profile composition. Track an upstream fix for `node-addon-require-builtin` on Nix Node so the local `dsh-web` compatibility wrapper can eventually return to the standard launch path.
 
 ## v0.1 Design Status (2026-08-27)
 
 The shortlisted plugins and the DSH `0.1.1-rc.2` extension points were validated through three independent read-only reviews. The resulting design uses the official `dsh-llm-pi-ai` `openai-codex` OAuth path, a single out-of-tree orchestrator plugin, `ctx.subagents.start()` for one serial worker, versioned session events and Handoff data, deterministic hard limits, and plugin-owned targeted verification. It does not install community plugins in v0.1.
 
-Community plugin manifests commonly use prerelease peer ranges that do not accept `0.1.1-rc.2` under npm semver rules. `dsh-lsp-actions` remains the strongest later reuse candidate; telemetry redaction remains conditional; third-party OpenAI OAuth is rejected for v0.1 because the official route exists and the candidate lacks Windows support and secure credential storage. The approved design is recorded in `docs/superpowers/specs/2026-08-27-dsh-v0.1-foundation-design.md` and awaits user review before implementation planning.
+Community plugin manifests commonly use prerelease peer ranges that do not accept `0.1.1-rc.2` under npm semver rules. `dsh-lsp-actions` remains the strongest later reuse candidate; telemetry redaction remains conditional; third-party OpenAI OAuth is rejected for v0.1 because the official route exists and the candidate lacks Windows support and secure credential storage. The approved design is recorded in `docs/superpowers/specs/2026-08-27-dsh-v0.1-foundation-design.md`; its task-level implementation plan is `docs/superpowers/plans/2026-08-27-dsh-v0.1-foundation.md`.
 
 ## Plugin Research (2026-08-25)
 
