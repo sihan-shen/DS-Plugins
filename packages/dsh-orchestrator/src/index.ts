@@ -1,7 +1,23 @@
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-session'
+import { mountBudgetControllerRegistry } from './budgets.js'
 import { Config } from './config.js'
+import { appendBudgetRejected } from './events.js'
 import type { OrchestratorConfig } from './types.js'
 
+export { BudgetController, createBudgetControllerRegistry, mountBudgetControllerRegistry } from './budgets.js'
+export type {
+  BudgetAllowed,
+  BudgetControllerRegistry,
+  BudgetDecision,
+  BudgetRejected,
+  BudgetRejection,
+  BudgetRejectionCode,
+  BudgetRejectionRecorder,
+  BudgetRejectionRecorderFactory,
+  MountedBudgetControllerRegistry,
+  PluginToolAction,
+} from './budgets.js'
 export { Config, parseConfig } from './config.js'
 export {
   appendBudgetRejected,
@@ -31,9 +47,20 @@ export const name = 'ds-orchestrator'
 
 /**
  * Mount the v0.1 bundle entry point.
- * @param _ctx - Cordis context that later v0.1 tasks extend with orchestration services.
- * @param _config - Validated deployment configuration reserved for later v0.1 tasks.
+ * @param ctx - Cordis context that owns session lifecycle and teardown.
+ * @param config - Validated deployment configuration whose budget limits are enforced.
  */
-export function apply(_ctx: Context, _config: OrchestratorConfig): void {}
+export function apply(ctx: Context, config: OrchestratorConfig): void {
+  mountBudgetControllerRegistry(ctx, config.budgets, rootSessionId => rejection => {
+    const session = ctx.sessions.get(rootSessionId)
+    if (session === undefined) return
+    appendBudgetRejected(session, {
+      reason: rejection.code,
+      limit: rejection.limit,
+      observed: rejection.observed,
+    })
+  })
+}
 
 apply.Config = Config
+apply.inject = ['sessions']
