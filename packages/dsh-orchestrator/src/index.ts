@@ -3,6 +3,20 @@ import { Config } from './config.js'
 import type { OrchestratorConfig } from './types.js'
 
 export { Config, parseConfig } from './config.js'
+export {
+  appendBudgetRejected,
+  appendRunStarted,
+  appendVerificationFinished,
+  appendWorkerFinished,
+  appendWorkerRequested,
+} from './events.js'
+export type {
+  BudgetRejectedInput,
+  BudgetRejectedV1,
+  RunStartedInput,
+  RunStartedV1,
+  WorkerFinishedV1,
+} from './events.js'
 export { failedHandoff, normalizeWorkerOutput, parseHandoff } from './handoff.js'
 export type {
   HandoffV1,
