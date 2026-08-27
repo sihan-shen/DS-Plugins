@@ -9,3 +9,10 @@
 
 # Isolated feature worktrees
 /.worktrees/
+
+# Workspace install and build outputs
+/node_modules/
+/packages/*/node_modules/
+/profiles/*/node_modules/
+/packages/*/lib/
+*.tsbuildinfo

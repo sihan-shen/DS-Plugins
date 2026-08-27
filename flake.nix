@@ -114,6 +114,7 @@
               echo "Node: $(node --version)"
               echo "Corepack: $(corepack --version 2>/dev/null || echo unavailable)"
               echo "DSH_HOME: $DSH_HOME"
+              echo "Workspace: pnpm install, pnpm typecheck, pnpm test"
             '';
           };
         }

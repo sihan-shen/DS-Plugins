@@ -1,0 +1,21 @@
+- id: ds-orchestrator
+  config:
+    mode: direct
+    worker:
+      provider: openai-codex
+      model: gpt-5.6-codex
+      maxTokens: 32000
+    budgets:
+      maxWorkers: 0
+      maxPluginToolActions: 24
+      toolTimeoutMs: 60000
+    verification:
+      commands:
+        - name: typecheck
+          executable: pnpm
+          args: [typecheck]
+        - name: test:profile
+          executable: pnpm
+          args: [test:profile]
+      timeoutMs: 120000
+      maxOutputBytes: 65536

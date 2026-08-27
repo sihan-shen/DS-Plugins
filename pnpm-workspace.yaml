@@ -1,0 +1,14 @@
+packages:
+  - packages/*
+  - profiles/*
+
+# pnpm blocks dependency lifecycle scripts until this workspace reviews them.
+# The native runtime providers and test bundler need their maintained scripts;
+# the remaining scripts are not required for this profile bundle.
+allowBuilds:
+  '@deepseek-ai/dsh-subprocess-local': true
+  '@google/genai': false
+  esbuild: true
+  koffi: true
+  node-pty: true
+  protobufjs: false

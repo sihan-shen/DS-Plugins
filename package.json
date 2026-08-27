@@ -1,0 +1,19 @@
+{
+  "name": "ds-plugins",
+  "private": true,
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": "^22.19.0 || >=24"
+  },
+  "scripts": {
+    "build": "pnpm --filter @ds-plugins/dsh-orchestrator run build",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:profile": "vitest run packages/dsh-orchestrator/tests/profile.spec.ts"
+  },
+  "devDependencies": {
+    "tsdown": "0.18.0",
+    "typescript": "5.9.3",
+    "vitest": "4.0.18"
+  }
+}
