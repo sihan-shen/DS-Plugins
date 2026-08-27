@@ -91,6 +91,11 @@ export function parseDelegateWorkerInput(value: unknown): DelegateWorkerInput {
     throw new TypeError('delegate_worker arguments must be an object')
   }
   const input = value as { task?: unknown; allowedTools?: unknown }
+  for (const key of Object.keys(input)) {
+    if (key !== 'task' && key !== 'allowedTools') {
+      throw new TypeError(`delegate_worker arguments contain unsupported property: ${key}`)
+    }
+  }
   if (!Array.isArray(input.allowedTools)) throw new TypeError('delegate_worker allowedTools must be an array')
   if (input.allowedTools.length > MAX_HANDOFF_ITEMS) {
     throw new TypeError(`delegate_worker allowedTools must not contain more than ${MAX_HANDOFF_ITEMS} items`)
@@ -179,9 +184,9 @@ function handoffProjection(handoff: HandoffV1): string {
   })
 }
 
-function injectHandoff(parent: Agent, handoff: HandoffV1): void {
+function handoffContext(handoff: HandoffV1) {
   const text = handoffProjection(handoff)
-  parent.inject(createUserMessage({
+  return createUserMessage({
     content: [{ type: 'text', text }],
     source: {
       kind: 'plugin',
@@ -189,7 +194,7 @@ function injectHandoff(parent: Agent, handoff: HandoffV1): void {
       form: 'notice',
       summary: boundContextSummary(handoff.summary),
     },
-  }))
+  })
 }
 
 /**
@@ -198,7 +203,7 @@ function injectHandoff(parent: Agent, handoff: HandoffV1): void {
  * @returns A valid HandoffV1 even when child startup or execution fails.
  */
 export async function runWorker(options: RunWorkerOptions): Promise<HandoffV1> {
-  const input = parseDelegateWorkerInput(options)
+  const input = parseDelegateWorkerInput({ task: options.task, allowedTools: options.allowedTools })
   if (options.signal.aborted) return blockedHandoff('Worker was cancelled before publication.')
 
   const spec = workerSpec(input, options.config)
@@ -219,12 +224,14 @@ export async function runWorker(options: RunWorkerOptions): Promise<HandoffV1> {
     handoff = options.signal.aborted
       ? blockedHandoff('Worker was cancelled before completion.')
       : failedHandoff('Worker failed before completion.')
-  } finally {
+  }
+  try {
     await run.dispose()
+  } catch {
+    handoff = failedHandoff('Worker cleanup failed before completion.')
   }
 
   appendWorkerFinished(options.parent.session, run.id, handoff)
-  if (!options.signal.aborted) injectHandoff(options.parent, handoff)
   return handoff
 }
 
@@ -269,7 +276,9 @@ export function createDelegateWorkerTool(options: DelegateWorkerToolOptions): To
       if (!action.allowed) throw new Error(`delegate_worker rejected by budget: ${action.code}`)
       const worker = budget.admitWorker()
       if (!worker.allowed) throw new Error(`delegate_worker rejected by budget: ${worker.code}`)
-      return runWorker({ ...input, config: options.config, parent, signal: exec.signal, subagents: options.subagents })
+      const handoff = await runWorker({ ...input, config: options.config, parent, signal: exec.signal, subagents: options.subagents })
+      if (!exec.signal.aborted) exec.deferContext(handoffContext(handoff))
+      return handoff
     },
     presentCall: rawArgs => {
       try {
@@ -294,29 +303,31 @@ export function mountSingleWorkerMode(
   budgetRegistry: Pick<BudgetControllerRegistry, 'forRootSession'>,
 ): void {
   if (config.mode !== 'single-worker') throw new TypeError('mountSingleWorkerMode requires mode "single-worker"')
-  ctx.effect(() => {
-    const pending = new Map<SessionId, Session>()
-    let active = true
-    const disposeTool = ctx.tools.register(createDelegateWorkerTool({ config, subagents: ctx.subagents, budgetRegistry }))
-    const disposeEvents = ctx.on('session/event', (session, event) => {
-      if (event.type !== 'request/header' || session.header.parentSession !== undefined) return
-      if (session.events.some(entry => entry.type === 'dsh-plugin/run-started') || pending.has(session.id)) return
-      pending.set(session.id, session)
-      queueMicrotask(() => {
-        if (!active || pending.get(session.id) !== session) return
-        pending.delete(session.id)
-        appendRunStarted(session, { mode: 'single-worker', provider: config.worker.provider, model: config.worker.model })
+  ctx.inject(['subagents'], workerCtx => {
+    workerCtx.effect(() => {
+      const pending = new Map<SessionId, Session>()
+      let active = true
+      const disposeTool = workerCtx.tools.register(createDelegateWorkerTool({ config, subagents: workerCtx.subagents, budgetRegistry }))
+      const disposeEvents = workerCtx.on('session/event', (session, event) => {
+        if (event.type !== 'request/header' || session.header.parentSession !== undefined) return
+        if (session.events.some(entry => entry.type === 'dsh-plugin/run-started') || pending.has(session.id)) return
+        pending.set(session.id, session)
+        queueMicrotask(() => {
+          if (!active || pending.get(session.id) !== session) return
+          pending.delete(session.id)
+          appendRunStarted(session, { mode: 'single-worker', provider: config.worker.provider, model: config.worker.model })
+        })
       })
-    })
-    const disposeSessions = ctx.on('session/disposed', session => {
-      if (pending.get(session.id) === session) pending.delete(session.id)
-    })
-    return () => {
-      active = false
-      disposeTool()
-      disposeEvents()
-      disposeSessions()
-      pending.clear()
-    }
-  }, 'ds-orchestrator: single worker mode')
+      const disposeSessions = workerCtx.on('session/disposed', session => {
+        if (pending.get(session.id) === session) pending.delete(session.id)
+      })
+      return () => {
+        active = false
+        disposeTool()
+        disposeEvents()
+        disposeSessions()
+        pending.clear()
+      }
+    }, 'ds-orchestrator: single worker mode')
+  })
 }

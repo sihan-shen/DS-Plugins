@@ -77,7 +77,7 @@ export type {
 export const name = 'ds-orchestrator'
 
 /** Required services for the v0.1 Direct runtime. */
-export const inject = ['systemPrompt', 'tools', 'sessions', 'subagents', 'subprocess']
+export const inject = ['systemPrompt', 'tools', 'sessions', 'subprocess']
 
 /**
  * Mount the v0.1 bundle entry point.

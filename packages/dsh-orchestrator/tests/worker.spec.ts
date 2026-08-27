@@ -1,6 +1,9 @@
+import { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-subagent'
+import type {} from '@deepseek-ai/dsh-tools'
 import { describe, expect, it, vi } from 'vitest'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
-import { createDelegateWorkerTool, HANDOFF_V1_JSON_SCHEMA, runWorker } from '../src/worker.ts'
+import { createDelegateWorkerTool, HANDOFF_V1_JSON_SCHEMA, mountSingleWorkerMode, runWorker } from '../src/worker.ts'
 import type { HandoffV1, OrchestratorConfig } from '../src/types.ts'
 
 const workspaceRoot = '/workspace/ds-plugins'
@@ -87,8 +90,9 @@ class FakeSubagents {
 function publishedRun(
   result: Promise<FakeResult>,
   id = 'child-worker-session',
+  disposeRun: () => Promise<void> = async () => undefined,
 ): { readonly run: FakeRun; readonly dispose: ReturnType<typeof vi.fn> } {
-  const dispose = vi.fn(async () => undefined)
+  const dispose = vi.fn(disposeRun)
   return { run: { id: SessionId(id), result, dispose }, dispose }
 }
 
@@ -143,8 +147,22 @@ function injectedText(message: unknown): string {
   return first.text
 }
 
+function toolRegistry() {
+  const tools = new Map<string, { readonly name: string }>()
+  return {
+    register(tool: { readonly name: string }) {
+      if (tools.has(tool.name)) throw new Error(`duplicate tool: ${tool.name}`)
+      tools.set(tool.name, tool)
+      return () => { tools.delete(tool.name) }
+    },
+    get(name: string) {
+      return tools.get(name)
+    },
+  }
+}
+
 describe('one-shot worker runtime', () => {
-  it('starts one bounded foreground child, awaits its result, disposes it, and injects only the validated handoff', async () => {
+  it('starts one bounded foreground child, awaits its result, disposes it, and records only the validated handoff', async () => {
     let settle = (_result: FakeResult) => undefined
     const result = new Promise<FakeResult>(resolve => { settle = resolve })
     const run = publishedRun(result)
@@ -193,25 +211,7 @@ describe('one-shot worker runtime', () => {
     expect(parent.session.events[1]).toMatchObject({
       data: { childSessionId: SessionId('child-worker-session'), handoff: validHandoff },
     })
-    expect(injected).toHaveLength(1)
-    const projection = JSON.parse(injectedText(injected[0]))
-    expect(projection).toEqual({
-      status: validHandoff.status,
-      summary: validHandoff.summary,
-      changedFiles: validHandoff.changedFiles,
-      decisions: validHandoff.decisions,
-      verification: validHandoff.verification,
-      blockers: validHandoff.blockers,
-    })
-    expect(injected[0]).toMatchObject({
-      source: {
-        kind: 'plugin',
-        plugin: 'ds-orchestrator',
-        form: 'notice',
-        summary: validHandoff.summary,
-      },
-    })
-    expect(injectedText(injected[0])).not.toContain('SECRET_TRANSCRIPT_MARKER')
+    expect(injected).toEqual([])
   })
 
   it.each([
@@ -239,8 +239,7 @@ describe('one-shot worker runtime', () => {
     expect(JSON.stringify(handoff)).not.toContain('SECRET_TRANSCRIPT_MARKER')
     expect(parent.session.events.filter(event => event.type === 'dsh-plugin/worker-finished')).toHaveLength(1)
     expect(JSON.stringify(parent.session.events)).not.toContain('SECRET_TRANSCRIPT_MARKER')
-    expect(injected).toHaveLength(1)
-    expect(injectedText(injected[0])).not.toContain('SECRET_TRANSCRIPT_MARKER')
+    expect(injected).toEqual([])
     expect(run.dispose).toHaveBeenCalledTimes(1)
   })
 
@@ -255,8 +254,35 @@ describe('one-shot worker runtime', () => {
 
     expect(handoff).toMatchObject({ status: 'failed', changedFiles: [], verification: [] })
     expect(JSON.stringify(handoff)).not.toContain('SECRET_TRANSCRIPT_MARKER')
-    expect(injected).toHaveLength(1)
-    expect(injectedText(injected[0])).not.toContain('SECRET_TRANSCRIPT_MARKER')
+    expect(injected).toEqual([])
+    expect(run.dispose).toHaveBeenCalledTimes(1)
+  })
+
+  it('normalizes a disposal rejection into a scrubbed failed handoff and appends completion evidence', async () => {
+    const run = publishedRun(
+      Promise.resolve({ stopReason: 'completed', structured: validHandoff, output: [] }),
+      'child-worker-dispose-rejection',
+      async () => { throw new Error('SECRET_TRANSCRIPT_MARKER') },
+    )
+    const { parent, injected } = parentFor()
+
+    const handoff = await runWorker({
+      config,
+      parent,
+      task: 'Bounded task.',
+      allowedTools: ['read_file'],
+      signal: new AbortController().signal,
+      subagents: new FakeSubagents(async () => run.run),
+    })
+
+    expect(handoff).toMatchObject({ status: 'failed', changedFiles: [], verification: [] })
+    expect(JSON.stringify(handoff)).not.toContain('SECRET_TRANSCRIPT_MARKER')
+    expect(parent.session.events.map(event => event.type)).toEqual([
+      'dsh-plugin/worker-requested',
+      'dsh-plugin/worker-finished',
+    ])
+    expect(JSON.stringify(parent.session.events)).not.toContain('SECRET_TRANSCRIPT_MARKER')
+    expect(injected).toEqual([])
     expect(run.dispose).toHaveBeenCalledTimes(1)
   })
 
@@ -337,8 +363,8 @@ describe('one-shot worker runtime', () => {
 })
 
 describe('delegate_worker tool', () => {
-  it('admits one delegation before starting and rejects the second without invoking the provider', async () => {
-    const { parent } = parentFor()
+  it('admits one delegation before starting, binds a scrubbed handoff to its tool result, and rejects the second without invoking the provider', async () => {
+    const { parent, injected } = parentFor()
     const first = publishedRun(Promise.resolve({ stopReason: 'completed', structured: validHandoff, output: [] }))
     const subagents = new FakeSubagents(async () => first.run)
     const admitPluginTool = vi.fn(() => ({ allowed: true as const }))
@@ -350,10 +376,11 @@ describe('delegate_worker tool', () => {
       subagents,
       budgetRegistry: { forRootSession: () => ({ admitPluginTool, admitWorker }) },
     })
+    const deferContext = vi.fn()
 
     await expect(tool.execute(
       { task: 'Bounded task.', allowedTools: ['read_file'] },
-      { signal: new AbortController().signal, agent: parent } as never,
+      { signal: new AbortController().signal, agent: parent, deferContext } as never,
     )).resolves.toEqual(validHandoff)
     await expect(tool.execute(
       { task: 'Different bounded task.', allowedTools: ['read_file'] },
@@ -364,6 +391,27 @@ describe('delegate_worker tool', () => {
     expect(admitWorker).toHaveBeenCalledTimes(2)
     expect(subagents.requests).toHaveLength(1)
     expect(first.dispose).toHaveBeenCalledTimes(1)
+    expect(injected).toEqual([])
+    expect(deferContext).toHaveBeenCalledTimes(1)
+    const [context] = deferContext.mock.calls[0] ?? []
+    expect(context).toMatchObject({
+      source: {
+        kind: 'plugin',
+        plugin: 'ds-orchestrator',
+        form: 'notice',
+        summary: validHandoff.summary,
+      },
+    })
+    const projection = JSON.parse(injectedText(context))
+    expect(projection).toEqual({
+      status: validHandoff.status,
+      summary: validHandoff.summary,
+      changedFiles: validHandoff.changedFiles,
+      decisions: validHandoff.decisions,
+      verification: validHandoff.verification,
+      blockers: validHandoff.blockers,
+    })
+    expect(injectedText(context)).not.toContain('SECRET_TRANSCRIPT_MARKER')
   })
 
   it('validates tool input and pre-aborted cancellation before charging either budget', async () => {
@@ -389,6 +437,10 @@ describe('delegate_worker tool', () => {
       { signal: new AbortController().signal, agent: parent } as never,
     )).rejects.toThrow(/allowedTools/i)
     await expect(tool.execute(
+      { task: 'Bounded task.', allowedTools: ['read_file'], unexpected: true },
+      { signal: new AbortController().signal, agent: parent } as never,
+    )).rejects.toThrow(/unknown|unsupported/i)
+    await expect(tool.execute(
       { task: 'Bounded task.', allowedTools: ['read_file'] },
       { signal: aborted.signal, agent: parent } as never,
     )).rejects.toBe(cancellation)
@@ -396,5 +448,32 @@ describe('delegate_worker tool', () => {
     expect(admitPluginTool).not.toHaveBeenCalled()
     expect(admitWorker).not.toHaveBeenCalled()
     expect(subagents.requests).toEqual([])
+  })
+})
+
+describe('single-worker service lifecycle', () => {
+  it('mounts delegate_worker only while the optional subagents service is available', async () => {
+    const ctx = new Context()
+    const tools = toolRegistry()
+    ctx.provide('tools', tools as never)
+    const budgetRegistry = {
+      forRootSession: () => ({
+        admitPluginTool: () => ({ allowed: true as const }),
+        admitWorker: () => ({ allowed: true as const }),
+      }),
+    }
+    const fiber = await ctx.plugin(child => {
+      mountSingleWorkerMode(child, config, budgetRegistry)
+    })
+
+    expect(tools.get('delegate_worker')).toBeUndefined()
+
+    ctx.provide('subagents', new FakeSubagents(async () => {
+      throw new Error('worker should not start in this lifecycle test')
+    }) as never)
+    await vi.waitFor(() => expect(tools.get('delegate_worker')).toBeDefined())
+
+    await fiber.dispose()
+    expect(tools.get('delegate_worker')).toBeUndefined()
   })
 })
