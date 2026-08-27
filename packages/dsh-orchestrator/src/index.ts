@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-subagent'
 import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-tools'
 import { mountBudgetControllerRegistry } from './budgets.js'
@@ -7,6 +8,7 @@ import { Config } from './config.js'
 import { mountDirectMode } from './direct.js'
 import { appendBudgetRejected } from './events.js'
 import { mountTargetedVerificationTool } from './verification.js'
+import { mountSingleWorkerMode } from './worker.js'
 import type { OrchestratorConfig } from './types.js'
 
 export { BudgetController, createBudgetControllerRegistry, mountBudgetControllerRegistry } from './budgets.js'
@@ -46,6 +48,18 @@ export {
   VERIFICATION_CLEANUP_ALLOWANCE_MS,
   VERIFICATION_TERMINATION_GRACE_MS,
 } from './verification.js'
+export {
+  createDelegateWorkerTool,
+  HANDOFF_V1_JSON_SCHEMA,
+  mountSingleWorkerMode,
+  parseDelegateWorkerInput,
+  runWorker,
+} from './worker.js'
+export type {
+  DelegateWorkerInput,
+  DelegateWorkerToolOptions,
+  RunWorkerOptions,
+} from './worker.js'
 export type {
   TargetedVerificationToolOptions,
   VerificationEvidenceAppender,
@@ -63,7 +77,7 @@ export type {
 export const name = 'ds-orchestrator'
 
 /** Required services for the v0.1 Direct runtime. */
-export const inject = ['systemPrompt', 'tools', 'sessions', 'subprocess']
+export const inject = ['systemPrompt', 'tools', 'sessions', 'subagents', 'subprocess']
 
 /**
  * Mount the v0.1 bundle entry point.
@@ -86,7 +100,11 @@ export function apply(ctx: Context, config: OrchestratorConfig): void {
     subprocess: ctx.subprocess,
     budgetRegistry: budgets.registry,
   })
-  if (config.mode === 'direct') mountDirectMode(ctx, config)
+  if (config.mode === 'direct') {
+    mountDirectMode(ctx, config)
+  } else {
+    mountSingleWorkerMode(ctx, config, budgets.registry)
+  }
 }
 
 apply.Config = Config

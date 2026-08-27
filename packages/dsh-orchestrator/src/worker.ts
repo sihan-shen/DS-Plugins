@@ -1,0 +1,322 @@
+import type { Context } from '@deepseek-ai/cordis'
+import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
+import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { Session, SessionId } from '@deepseek-ai/dsh-session'
+import type { SubagentRun, SubagentRuntime, SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
+import type { ObjectJsonSchema, ToolDefinition } from '@deepseek-ai/dsh-tools'
+import type { BudgetControllerRegistry } from './budgets.js'
+import { MAX_HANDOFF_ITEMS, MAX_HANDOFF_STRING_BYTES } from './config.js'
+import { appendRunStarted, appendWorkerFinished, appendWorkerRequested } from './events.js'
+import { failedHandoff, normalizeWorkerOutput } from './handoff.js'
+import type { HandoffV1, OrchestratorConfig, WorkerSpecV1 } from './types.js'
+
+/** Exact structured result contract requested from every v0.1 child worker. */
+export const HANDOFF_V1_JSON_SCHEMA: ObjectJsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    schemaVersion: { type: 'integer', const: 1 },
+    status: { type: 'string', enum: ['completed', 'blocked', 'failed'] },
+    summary: { type: 'string' },
+    changedFiles: { type: 'array', items: { type: 'string' } },
+    decisions: { type: 'array', items: { type: 'string' } },
+    verification: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          schemaVersion: { type: 'integer', const: 1 },
+          commandName: { type: 'string' },
+          args: { type: 'array', items: { type: 'string' } },
+          exitCode: { oneOf: [{ type: 'integer' }, { type: 'null' }] },
+          status: { type: 'string', enum: ['passed', 'failed', 'timed-out', 'spawn-error'] },
+          stdout: { type: 'string' },
+          stderr: { type: 'string' },
+          truncated: { type: 'boolean' },
+          durationMs: { type: 'integer' },
+        },
+        required: ['schemaVersion', 'commandName', 'args', 'exitCode', 'status', 'stdout', 'stderr', 'truncated', 'durationMs'],
+      },
+    },
+    blockers: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['schemaVersion', 'status', 'summary', 'changedFiles', 'decisions', 'verification', 'blockers'],
+}
+
+/** The bounded caller input allowed by the foreground delegation tool. */
+export interface DelegateWorkerInput {
+  readonly task: string
+  readonly allowedTools: readonly string[]
+}
+
+/** Dependencies required to run one already-admitted foreground worker. */
+export interface RunWorkerOptions extends DelegateWorkerInput {
+  readonly config: OrchestratorConfig
+  readonly parent: Agent
+  readonly signal: AbortSignal
+  readonly subagents: Pick<SubagentRuntime, 'start'>
+}
+
+/** Dependencies required to define the model-facing delegation tool. */
+export interface DelegateWorkerToolOptions {
+  readonly config: OrchestratorConfig
+  readonly subagents: Pick<SubagentRuntime, 'start'>
+  readonly budgetRegistry: Pick<BudgetControllerRegistry, 'forRootSession'>
+}
+
+const workerPromptInstruction = [
+  'Return only a JSON HandoffV1 object matching the required output schema.',
+  'Do not return a transcript, credentials, tool output, or diagnostic text.',
+].join(' ')
+
+const textEncoder = new TextEncoder()
+
+function throwReason(signal: AbortSignal): never {
+  throw signal.reason ?? new DOMException('Worker cancelled', 'AbortError')
+}
+
+function boundedString(value: unknown, name: string): string {
+  if (typeof value !== 'string' || value.trim() === '') throw new TypeError(`${name} must be a non-empty string`)
+  if (value.includes('\0')) throw new TypeError(`${name} must not contain a NUL byte`)
+  if (textEncoder.encode(value).byteLength > MAX_HANDOFF_STRING_BYTES) {
+    throw new TypeError(`${name} must not exceed ${MAX_HANDOFF_STRING_BYTES} UTF-8 bytes`)
+  }
+  return value
+}
+
+/** Validate tool-shaped worker input before any budget admission or child publication. */
+export function parseDelegateWorkerInput(value: unknown): DelegateWorkerInput {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('delegate_worker arguments must be an object')
+  }
+  const input = value as { task?: unknown; allowedTools?: unknown }
+  if (!Array.isArray(input.allowedTools)) throw new TypeError('delegate_worker allowedTools must be an array')
+  if (input.allowedTools.length > MAX_HANDOFF_ITEMS) {
+    throw new TypeError(`delegate_worker allowedTools must not contain more than ${MAX_HANDOFF_ITEMS} items`)
+  }
+  const allowedTools = input.allowedTools.map((tool, index) => boundedString(tool, `delegate_worker allowedTools[${index}]`))
+  if (new Set(allowedTools).size !== allowedTools.length) {
+    throw new TypeError('delegate_worker allowedTools must not contain duplicates')
+  }
+  if (allowedTools.includes('delegate_worker')) {
+    throw new TypeError('delegate_worker must not allow recursive delegation')
+  }
+  return { task: boundedString(input.task, 'delegate_worker task'), allowedTools }
+}
+
+function blockedHandoff(message: string): HandoffV1 {
+  return { ...failedHandoff(message), status: 'blocked' }
+}
+
+function failedForStopReason(stopReason: string): HandoffV1 {
+  switch (stopReason) {
+    case 'aborted':
+      return blockedHandoff('Worker was cancelled before completion.')
+    case 'max-tokens':
+      return blockedHandoff('Worker reached its configured token limit before completion.')
+    case 'refusal':
+      return blockedHandoff('Worker declined the delegated task.')
+    case 'error':
+      return failedHandoff('Worker failed before completion.')
+    default:
+      return failedHandoff('Worker ended with an unsupported stop reason.')
+  }
+}
+
+function failedStart(signal: AbortSignal): HandoffV1 {
+  return signal.aborted
+    ? blockedHandoff('Worker was cancelled before publication.')
+    : failedHandoff('Worker could not be started.')
+}
+
+function workerSpec(input: DelegateWorkerInput, config: OrchestratorConfig): WorkerSpecV1 {
+  return {
+    schemaVersion: 1,
+    task: input.task,
+    provider: config.worker.provider,
+    model: config.worker.model,
+    ...(config.worker.reasoningEffort === undefined ? {} : { reasoningEffort: config.worker.reasoningEffort }),
+    maxTokens: config.worker.maxTokens,
+    allowedTools: [...input.allowedTools],
+    expectedOutput: 'handoff-v1',
+  }
+}
+
+function startRequest(spec: WorkerSpecV1, parent: Agent, signal: AbortSignal): SubagentStartRequest {
+  const agentOptions: AgentOptions = {
+    provider: spec.provider,
+    model: spec.model,
+    maxTokens: spec.maxTokens,
+  }
+  return {
+    prompt: [{
+      type: 'text',
+      text: `${spec.task}\n\n${workerPromptInstruction}`,
+    }],
+    parent,
+    signal,
+    agentOptions,
+    outputSchema: HANDOFF_V1_JSON_SCHEMA,
+    maxDepth: 1,
+    toolFilter: { allow: [...spec.allowedTools] },
+  }
+}
+
+function acceptedHandoff(result: Awaited<SubagentRun['result']>, workspaceRoot: string): HandoffV1 {
+  if (result.stopReason !== 'completed') return failedForStopReason(result.stopReason)
+  return normalizeWorkerOutput(result.structured, workspaceRoot)
+}
+
+function handoffProjection(handoff: HandoffV1): string {
+  return JSON.stringify({
+    status: handoff.status,
+    summary: handoff.summary,
+    changedFiles: handoff.changedFiles,
+    decisions: handoff.decisions,
+    verification: handoff.verification,
+    blockers: handoff.blockers,
+  })
+}
+
+function injectHandoff(parent: Agent, handoff: HandoffV1): void {
+  const text = handoffProjection(handoff)
+  parent.inject(createUserMessage({
+    content: [{ type: 'text', text }],
+    source: {
+      kind: 'plugin',
+      plugin: 'ds-orchestrator',
+      form: 'notice',
+      summary: boundContextSummary(handoff.summary),
+    },
+  }))
+}
+
+/**
+ * Start one already-admitted foreground child, persist only validated evidence, and return the bounded handoff.
+ * @param options - Validated deployment config, bounded input, root parent, and the caller's cancellation signal.
+ * @returns A valid HandoffV1 even when child startup or execution fails.
+ */
+export async function runWorker(options: RunWorkerOptions): Promise<HandoffV1> {
+  const input = parseDelegateWorkerInput(options)
+  if (options.signal.aborted) return blockedHandoff('Worker was cancelled before publication.')
+
+  const spec = workerSpec(input, options.config)
+  appendWorkerRequested(options.parent.session, spec)
+
+  let run: SubagentRun | undefined
+  try {
+    run = await options.subagents.start('spawn', startRequest(spec, options.parent, options.signal))
+  } catch {
+    return failedStart(options.signal)
+  }
+
+  let handoff: HandoffV1
+  try {
+    const result = await run.result
+    handoff = acceptedHandoff(result, options.config.workspaceRoot)
+  } catch {
+    handoff = options.signal.aborted
+      ? blockedHandoff('Worker was cancelled before completion.')
+      : failedHandoff('Worker failed before completion.')
+  } finally {
+    await run.dispose()
+  }
+
+  appendWorkerFinished(options.parent.session, run.id, handoff)
+  if (!options.signal.aborted) injectHandoff(options.parent, handoff)
+  return handoff
+}
+
+function handoffText(value: unknown): string {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return 'Worker handoff unavailable.'
+  const handoff = value as Record<string, unknown>
+  const status = typeof handoff.status === 'string' ? handoff.status : 'unknown'
+  const summary = typeof handoff.summary === 'string' ? handoff.summary : ''
+  return `Worker handoff: ${status}\n${summary}`
+}
+
+/** Create the foreground-only model tool that performs budget admission before child start. */
+export function createDelegateWorkerTool(options: DelegateWorkerToolOptions): ToolDefinition {
+  if (options.config.mode !== 'single-worker') {
+    throw new TypeError('delegate_worker requires mode "single-worker"')
+  }
+  return {
+    name: 'delegate_worker',
+    description: 'Start one foreground worker and return its structured handoff, never a transcript.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        task: { type: 'string' },
+        allowedTools: { type: 'array', items: { type: 'string' } },
+      },
+      required: ['task', 'allowedTools'],
+    },
+    output: {
+      schema: HANDOFF_V1_JSON_SCHEMA,
+      render: (_args, value) => [{ type: 'text', text: handoffText(value) }],
+    },
+    timeoutMs: options.config.budgets.toolTimeoutMs,
+    async execute(rawArgs, exec) {
+      const input = parseDelegateWorkerInput(rawArgs)
+      if (exec.signal.aborted) throwReason(exec.signal)
+      const parent = exec.agent
+      if (parent === undefined) throw new Error('delegate_worker requires an active parent agent')
+      const rootSessionId = parent.session.header.parentSession ?? parent.session.id
+      const budget = options.budgetRegistry.forRootSession(rootSessionId)
+      const action = budget.admitPluginTool('delegate_worker')
+      if (!action.allowed) throw new Error(`delegate_worker rejected by budget: ${action.code}`)
+      const worker = budget.admitWorker()
+      if (!worker.allowed) throw new Error(`delegate_worker rejected by budget: ${worker.code}`)
+      return runWorker({ ...input, config: options.config, parent, signal: exec.signal, subagents: options.subagents })
+    },
+    presentCall: rawArgs => {
+      try {
+        const input = parseDelegateWorkerInput(rawArgs)
+        return {
+          card: 'generic',
+          title: 'Delegate foreground worker',
+          kind: 'execute',
+          rawInput: input,
+        }
+      } catch {
+        return undefined
+      }
+    },
+  }
+}
+
+/** Register the Single Worker tool only while the configured mode is active. */
+export function mountSingleWorkerMode(
+  ctx: Context,
+  config: OrchestratorConfig,
+  budgetRegistry: Pick<BudgetControllerRegistry, 'forRootSession'>,
+): void {
+  if (config.mode !== 'single-worker') throw new TypeError('mountSingleWorkerMode requires mode "single-worker"')
+  ctx.effect(() => {
+    const pending = new Map<SessionId, Session>()
+    let active = true
+    const disposeTool = ctx.tools.register(createDelegateWorkerTool({ config, subagents: ctx.subagents, budgetRegistry }))
+    const disposeEvents = ctx.on('session/event', (session, event) => {
+      if (event.type !== 'request/header' || session.header.parentSession !== undefined) return
+      if (session.events.some(entry => entry.type === 'dsh-plugin/run-started') || pending.has(session.id)) return
+      pending.set(session.id, session)
+      queueMicrotask(() => {
+        if (!active || pending.get(session.id) !== session) return
+        pending.delete(session.id)
+        appendRunStarted(session, { mode: 'single-worker', provider: config.worker.provider, model: config.worker.model })
+      })
+    })
+    const disposeSessions = ctx.on('session/disposed', session => {
+      if (pending.get(session.id) === session) pending.delete(session.id)
+    })
+    return () => {
+      active = false
+      disposeTool()
+      disposeEvents()
+      disposeSessions()
+      pending.clear()
+    }
+  }, 'ds-orchestrator: single worker mode')
+}
