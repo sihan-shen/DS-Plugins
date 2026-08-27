@@ -4,6 +4,7 @@ import type {} from '@deepseek-ai/dsh-subprocess'
 import type {} from '@deepseek-ai/dsh-tools'
 import { mountBudgetControllerRegistry } from './budgets.js'
 import { Config } from './config.js'
+import { mountDirectMode } from './direct.js'
 import { appendBudgetRejected } from './events.js'
 import { mountTargetedVerificationTool } from './verification.js'
 import type { OrchestratorConfig } from './types.js'
@@ -22,6 +23,7 @@ export type {
   PluginToolAction,
 } from './budgets.js'
 export { Config, parseConfig } from './config.js'
+export { DIRECT_PROMPT_ORDER, DIRECT_PROMPT_SECTION, mountDirectMode } from './direct.js'
 export {
   appendBudgetRejected,
   appendRunStarted,
@@ -60,6 +62,9 @@ export type {
 /** Stable Cordis plugin name for the DSH v0.1 orchestration bundle. */
 export const name = 'ds-orchestrator'
 
+/** Required services for the v0.1 Direct runtime. */
+export const inject = ['systemPrompt', 'tools', 'sessions', 'subprocess']
+
 /**
  * Mount the v0.1 bundle entry point.
  * @param ctx - Cordis context that owns session lifecycle and teardown.
@@ -81,7 +86,8 @@ export function apply(ctx: Context, config: OrchestratorConfig): void {
     subprocess: ctx.subprocess,
     budgetRegistry: budgets.registry,
   })
+  if (config.mode === 'direct') mountDirectMode(ctx, config)
 }
 
 apply.Config = Config
-apply.inject = ['sessions', 'subprocess', 'tools']
+apply.inject = inject
