@@ -348,6 +348,7 @@ describe('targeted_verify tool definition', () => {
 describe('bundle targeted verification registration', () => {
   it('registers targeted_verify through apply with the deployment-configured repository root', async () => {
     const registrations: unknown[] = []
+    const promptSections: unknown[] = []
     const subprocess = new FakeSubprocess(() => handle(Promise.resolve({ exitCode: 0, signal: null })))
     const ctx = {
       sessions: { get: () => undefined },
@@ -360,6 +361,20 @@ describe('bundle targeted verification registration', () => {
       },
       effect(callback: () => unknown) {
         return callback()
+      },
+      get(name: string) {
+        if (name === 'systemPrompt') {
+          return {
+            section(section: unknown) {
+              promptSections.push(section)
+              return () => undefined
+            },
+          }
+        }
+        return undefined
+      },
+      on() {
+        return () => undefined
       },
     }
     const config = {
@@ -380,6 +395,7 @@ describe('bundle targeted verification registration', () => {
 
     const [registered] = registrations as ReturnType<typeof createTargetedVerificationTool>[]
     expect(registered?.name).toBe('targeted_verify')
+    expect(promptSections).toHaveLength(1)
     if (registered === undefined) return
 
     await expect(registered.execute(

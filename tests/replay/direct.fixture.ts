@@ -1,6 +1,6 @@
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { createBudgetControllerRegistry } from '../../packages/dsh-orchestrator/src/budgets.ts'
-import { createTargetedVerificationTool, VerificationService } from '../../packages/dsh-orchestrator/src/verification.ts'
+import { createTargetedVerificationTool } from '../../packages/dsh-orchestrator/src/verification.ts'
 import type { OrchestratorConfig, VerificationEvidenceV1 } from '../../packages/dsh-orchestrator/src/types.ts'
 
 const config: OrchestratorConfig = {
@@ -53,19 +53,22 @@ function evidenceProjection(evidence: VerificationEvidenceV1) {
   }
 }
 
-/** Execute a keyless Direct verification turn and retain only canonical evidence. */
-export async function replayDirectFixture() {
-  const session = Session.create(SessionId('replay-direct'), undefined, {
+function createSession(id: string): Session {
+  return Session.create(SessionId(id), undefined, {
     version: 0,
-    id: SessionId('replay-direct'),
+    id: SessionId(id),
     createdAt: 0,
     cwd: config.workspaceRoot,
   })
+}
+
+async function executeTargetedVerify(id: string, spawn: (signal: AbortSignal) => ReplayHandle) {
+  const session = createSession(id)
   const tool = createTargetedVerificationTool({
     workspaceRoot: config.workspaceRoot,
     verification: config.verification,
     subprocess: {
-      spawn: () => handle(Promise.resolve({ exitCode: 0, signal: null }), 'typecheck passed'),
+      spawn: ({ signal }: { readonly signal: AbortSignal }) => spawn(signal),
     } as never,
     budgetRegistry: createBudgetControllerRegistry(config.budgets, () => () => undefined),
   })
@@ -73,32 +76,40 @@ export async function replayDirectFixture() {
     { command: 'typecheck', args: [] },
     { signal: new AbortController().signal, agent: { session } } as never,
   ) as VerificationEvidenceV1
-
   return {
     evidence: evidenceProjection(evidence),
     events: session.events.map(event => ({ type: event.type, data: event.data })),
   }
 }
 
-/** Exercise every non-passing verification normalization without an LLM provider. */
+/** Execute a keyless Direct verification turn and retain only canonical evidence. */
+export async function replayDirectFixture() {
+  return executeTargetedVerify(
+    'replay-direct',
+    () => handle(Promise.resolve({ exitCode: 0, signal: null }), 'typecheck passed'),
+  )
+}
+
+/** Exercise every non-passing verification normalization through the registered tool path. */
 export async function replayVerificationVariants() {
-  const outcomes: Record<string, VerificationEvidenceV1> = {}
-  const run = async (name: string, spawn: (signal: AbortSignal) => ReplayHandle) => {
-    const service = new VerificationService({
-      workspaceRoot: config.workspaceRoot,
-      verification: config.verification,
-      subprocess: { spawn: ({ signal }: { readonly signal: AbortSignal }) => spawn(signal) } as never,
-      appendEvidence: () => undefined,
-    })
-    outcomes[name] = await service.run('typecheck', [], new AbortController().signal)
+  return {
+    failed: await executeTargetedVerify(
+      'replay-failed',
+      () => handle(Promise.resolve({ exitCode: 1, signal: null }), '', 'typecheck failed'),
+    ),
+    'timed-out': await executeTargetedVerify(
+      'replay-timed-out',
+      signal => handle(new Promise(resolve => {
+        signal.addEventListener('abort', () => resolve({ exitCode: null, signal: 'SIGTERM' }), { once: true })
+      })),
+    ),
+    'spawn-error': await executeTargetedVerify(
+      'replay-spawn-error',
+      () => handle(Promise.reject(new Error('spawn unavailable'))),
+    ),
+    truncated: await executeTargetedVerify(
+      'replay-truncated',
+      () => handle(Promise.resolve({ exitCode: 0, signal: null }), '0123456789'),
+    ),
   }
-
-  await run('failed', () => handle(Promise.resolve({ exitCode: 1, signal: null }), '', 'typecheck failed'))
-  await run('timed-out', signal => handle(new Promise(resolve => {
-    signal.addEventListener('abort', () => resolve({ exitCode: null, signal: 'SIGTERM' }), { once: true })
-  })))
-  await run('spawn-error', () => handle(Promise.reject(new Error('spawn unavailable'))))
-  await run('truncated', () => handle(Promise.resolve({ exitCode: 0, signal: null }), '0123456789'))
-
-  return Object.fromEntries(Object.entries(outcomes).map(([name, evidence]) => [name, evidenceProjection(evidence)]))
 }

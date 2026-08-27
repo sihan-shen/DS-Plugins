@@ -24,12 +24,21 @@ describe('DSH v0.1 keyless replay fixtures', () => {
   })
 
   it('normalizes non-passing verification variants without a provider or platform-specific path', async () => {
-    await expect(replayVerificationVariants()).resolves.toEqual({
-      failed: { commandName: 'typecheck', args: [], exitCode: 1, status: 'failed', stdout: '', stderr: 'k failed', truncated: true },
-      'timed-out': { commandName: 'typecheck', args: [], exitCode: null, status: 'timed-out', stdout: '', stderr: '', truncated: false },
-      'spawn-error': { commandName: 'typecheck', args: [], exitCode: null, status: 'spawn-error', stdout: '', stderr: '', truncated: false },
-      truncated: { commandName: 'typecheck', args: [], exitCode: 0, status: 'passed', stdout: '23456789', stderr: '', truncated: true },
-    })
+    const replay = await replayVerificationVariants()
+    const expected = {
+      failed: { exitCode: 1, status: 'failed', stdout: '', stderr: 'k failed', truncated: true },
+      'timed-out': { exitCode: null, status: 'timed-out', stdout: '', stderr: '', truncated: false },
+      'spawn-error': { exitCode: null, status: 'spawn-error', stdout: '', stderr: '', truncated: false },
+      truncated: { exitCode: 0, status: 'passed', stdout: '23456789', stderr: '', truncated: true },
+    }
+
+    for (const [name, outcome] of Object.entries(replay)) {
+      expect(outcome.evidence).toMatchObject({ commandName: 'typecheck', args: [], ...expected[name as keyof typeof expected] })
+      expect(outcome.events).toEqual([{
+        type: 'dsh-plugin/verification-finished',
+        data: expect.objectContaining({ commandName: 'typecheck', ...expected[name as keyof typeof expected] }),
+      }])
+    }
   })
 
   it('continues from a bounded Handoff, rejects a second child, and never leaks malformed raw output', async () => {
