@@ -24,7 +24,9 @@
     }
   },
   "scripts": {
-    "build": "tsdown --out-dir lib"
+    "build": "tsdown --out-dir lib",
+    "prepack": "pnpm run build",
+    "test:package-entry": "pnpm run build && pnpm exec vitest run tests/package-entry.spec.ts"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
