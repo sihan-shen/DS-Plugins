@@ -11,6 +11,8 @@ export interface VerificationCommand {
 
 /** Configuration validated before the orchestrator plugin is loaded. */
 export interface OrchestratorConfig {
+  /** Deployment-controlled repository root used by direct verification processes. */
+  readonly workspaceRoot: string
   readonly mode: 'direct' | 'single-worker'
   readonly worker: {
     readonly provider: string

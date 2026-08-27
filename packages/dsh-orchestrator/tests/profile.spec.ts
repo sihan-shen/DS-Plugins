@@ -67,6 +67,7 @@ describe('DSH v0.1 profile', () => {
 
     const orchestrator = rows.find(row => row.id === 'ds-orchestrator')
     expect(orchestrator?.config).toMatchObject({
+      workspaceRoot: '.',
       mode: 'direct',
       budgets: { maxWorkers: 0 },
       verification: {

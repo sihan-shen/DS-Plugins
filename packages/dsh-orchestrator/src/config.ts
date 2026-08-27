@@ -73,7 +73,10 @@ function verificationCommand(value: unknown, index: number): VerificationCommand
  */
 export function parseConfig(value: unknown): OrchestratorConfig {
   const config = record(value, 'config')
-  onlyKeys(config, 'config', ['mode', 'worker', 'budgets', 'verification'])
+  onlyKeys(config, 'config', ['workspaceRoot', 'mode', 'worker', 'budgets', 'verification'])
+
+  const workspaceRoot = nonEmptyString(config.workspaceRoot, 'workspaceRoot')
+  if (workspaceRoot.includes('\0')) fail('workspaceRoot', 'must not contain NUL bytes')
 
   const mode = config.mode
   if (mode !== 'direct' && mode !== 'single-worker') fail('mode', 'must be "direct" or "single-worker"')
@@ -121,6 +124,7 @@ export function parseConfig(value: unknown): OrchestratorConfig {
   )
 
   return {
+    workspaceRoot,
     mode,
     worker: { provider, model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }), maxTokens },
     budgets: { maxWorkers, maxPluginToolActions, toolTimeoutMs },

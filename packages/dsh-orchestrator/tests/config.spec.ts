@@ -6,6 +6,7 @@ import * as yaml from 'js-yaml'
 import { parseConfig } from '../src/config.ts'
 
 const validConfig = {
+  workspaceRoot: '.',
   mode: 'direct',
   worker: {
     provider: 'openai-codex',
@@ -61,6 +62,10 @@ describe('parseConfig', () => {
     expect(parseConfig(validConfig)).toEqual(validConfig)
   })
 
+  it.each(['', '/workspace\0ds-plugins'])('rejects an invalid deployment workspace root', workspaceRoot => {
+    expect(() => parseConfig({ ...validConfig, workspaceRoot })).toThrow(/workspaceRoot/i)
+  })
+
   it('accepts the v0.1 profile configuration at Cordis load time', () => {
     const root = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../..')
     const patch = yaml.load(readFileSync(resolve(root, 'profiles/v0.1/cordis.patch.yml'), 'utf8'))
@@ -71,6 +76,7 @@ describe('parseConfig', () => {
     }
 
     expect(parseConfig(entry.config)).toMatchObject({
+      workspaceRoot: '.',
       mode: 'direct',
       budgets: { maxWorkers: 0 },
       verification: {

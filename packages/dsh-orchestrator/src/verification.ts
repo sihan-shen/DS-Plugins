@@ -273,10 +273,13 @@ export class VerificationService {
       }
     } finally {
       clearTimeout(timer)
-      signal.removeEventListener('abort', rememberCallerAbort)
-      if (handle !== undefined) {
-        handle.terminate()
-        await handle.waitForExit()
+      try {
+        if (handle !== undefined) {
+          handle.terminate()
+          await handle.waitForExit()
+        }
+      } finally {
+        signal.removeEventListener('abort', rememberCallerAbort)
       }
     }
 

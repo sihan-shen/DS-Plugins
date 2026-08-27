@@ -1,8 +1,11 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-subprocess'
+import type {} from '@deepseek-ai/dsh-tools'
 import { mountBudgetControllerRegistry } from './budgets.js'
 import { Config } from './config.js'
 import { appendBudgetRejected } from './events.js'
+import { mountTargetedVerificationTool } from './verification.js'
 import type { OrchestratorConfig } from './types.js'
 
 export { BudgetController, createBudgetControllerRegistry, mountBudgetControllerRegistry } from './budgets.js'
@@ -72,7 +75,13 @@ export function apply(ctx: Context, config: OrchestratorConfig): void {
       observed: rejection.observed,
     })
   })
+  mountTargetedVerificationTool(ctx, {
+    workspaceRoot: config.workspaceRoot,
+    verification: config.verification,
+    subprocess: ctx.subprocess,
+    budgetRegistry: budgets.registry,
+  })
 }
 
 apply.Config = Config
-apply.inject = ['sessions']
+apply.inject = ['sessions', 'subprocess', 'tools']

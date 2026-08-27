@@ -5,6 +5,7 @@ import {
   VERIFICATION_CLEANUP_ALLOWANCE_MS,
   VerificationService,
 } from '../src/verification.ts'
+import { apply } from '../src/index.ts'
 
 interface FakeOutcome {
   readonly exitCode: number | null
@@ -183,6 +184,31 @@ describe('targeted verification service', () => {
     expect(finished).not.toMatchObject([{ status: 'timed-out' }])
   })
 
+  it('propagates caller cancellation that occurs while cleanup waits for process quiescence', async () => {
+    const controller = new AbortController()
+    const reason = new Error('caller cancelled during cleanup')
+    const finished: unknown[] = []
+    let signalWaitStarted = () => undefined
+    const waitStarted = new Promise<void>(resolve => { signalWaitStarted = resolve })
+    let releaseWait = (_value: boolean) => undefined
+    const quiescent = new Promise<boolean>(resolve => { releaseWait = resolve })
+    const subprocess = new FakeSubprocess(() => ({
+      ...handle(Promise.resolve({ exitCode: 0, signal: null })),
+      waitForExit: async () => {
+        signalWaitStarted()
+        return quiescent
+      },
+    }))
+    const running = service(subprocess, finished).run('typecheck', [], controller.signal)
+
+    await waitStarted
+    controller.abort(reason)
+    releaseWait(true)
+
+    await expect(running).rejects.toBe(reason)
+    expect(finished).toMatchObject([{ status: 'passed', exitCode: 0 }])
+  })
+
   it('bounds UTF-8 stdout and stderr together without leaving an invalid code point', async () => {
     const evidence = await service(new FakeSubprocess(() => handle(Promise.resolve({ exitCode: 0, signal: null }), {
       stdout: '€abc',
@@ -316,5 +342,50 @@ describe('targeted_verify tool definition', () => {
     }
 
     expect(() => createTargetedVerificationTool(options)).toThrow(/workspaceRoot/i)
+  })
+})
+
+describe('bundle targeted verification registration', () => {
+  it('registers targeted_verify through apply with the deployment-configured repository root', async () => {
+    const registrations: unknown[] = []
+    const subprocess = new FakeSubprocess(() => handle(Promise.resolve({ exitCode: 0, signal: null })))
+    const ctx = {
+      sessions: { get: () => undefined },
+      subprocess,
+      tools: {
+        register(tool: unknown) {
+          registrations.push(tool)
+          return () => undefined
+        },
+      },
+      effect(callback: () => unknown) {
+        return callback()
+      },
+    }
+    const config = {
+      workspaceRoot,
+      mode: 'direct' as const,
+      worker: { provider: 'openai-codex', model: 'gpt-5.6-codex', maxTokens: 32_000 },
+      budgets: { maxWorkers: 0 as const, maxPluginToolActions: 1, toolTimeoutMs: 60_000 },
+      verification,
+    }
+    const session = Session.create(SessionId('verification-apply-session'), undefined, {
+      version: 0,
+      id: SessionId('verification-apply-session'),
+      createdAt: 0,
+      cwd: `${workspaceRoot}/nested-session-directory`,
+    })
+
+    apply(ctx as never, config as never)
+
+    const [registered] = registrations as ReturnType<typeof createTargetedVerificationTool>[]
+    expect(registered?.name).toBe('targeted_verify')
+    if (registered === undefined) return
+
+    await expect(registered.execute(
+      { command: 'typecheck', args: [] },
+      { signal: new AbortController().signal, agent: { session } } as never,
+    )).resolves.toMatchObject({ status: 'passed' })
+    expect(subprocess.spawns[0]?.cwd).toBe(workspaceRoot)
   })
 })

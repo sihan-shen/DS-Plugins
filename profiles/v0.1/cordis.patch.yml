@@ -1,5 +1,6 @@
 - id: ds-orchestrator
   config:
+    workspaceRoot: .
     mode: direct
     worker:
       provider: openai-codex
