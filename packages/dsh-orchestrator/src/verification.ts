@@ -24,6 +24,8 @@ export interface VerificationServiceOptions {
 
 /** Dependencies for the model-facing targeted verification definition. */
 export interface TargetedVerificationToolOptions {
+  /** Deployment-supplied, trusted repository root; never derived from an agent session. */
+  readonly workspaceRoot: string
   readonly verification: OrchestratorConfig['verification']
   readonly subprocess: Pick<SubprocessRuntime, 'spawn'>
   readonly budgetRegistry: Pick<BudgetControllerRegistry, 'forRootSession'>
@@ -42,6 +44,11 @@ interface EvidenceOutput {
 
 interface TargetedVerifyInput {
   readonly command: string
+  readonly args: readonly string[]
+}
+
+interface ValidatedVerificationRequest {
+  readonly command: VerificationCommand
   readonly args: readonly string[]
 }
 
@@ -88,6 +95,22 @@ function validatedArgs(command: VerificationCommand, args: readonly string[]): r
   }
   for (const argument of args) testPath(argument)
   return [...args]
+}
+
+function validatedRequest(
+  commands: readonly VerificationCommand[],
+  commandName: string,
+  args: readonly string[],
+): ValidatedVerificationRequest {
+  const command = commandFor(commands, commandName)
+  return { command, args: validatedArgs(command, args) }
+}
+
+function trustedWorkspaceRoot(value: string): string {
+  if (value.length === 0 || value.includes('\0')) {
+    throw new TypeError('workspaceRoot must be a non-empty path without NUL bytes')
+  }
+  return value
 }
 
 function outputReader(reader: { readFrom(offset: number): { text: string; lossy: boolean } } | undefined): CapturedOutput {
@@ -181,14 +204,18 @@ export class VerificationService {
    * @returns Bounded evidence when the caller did not cancel the admitted attempt.
    */
   async run(commandName: string, args: readonly string[], signal: AbortSignal): Promise<VerificationEvidenceV1> {
-    const command = commandFor(this.options.verification.commands, commandName)
-    const admittedArgs = validatedArgs(command, args)
+    const request = validatedRequest(this.options.verification.commands, commandName, args)
+    const { command, args: admittedArgs } = request
     if (signal.aborted) throwReason(signal)
 
     const timeoutController = new AbortController()
-    let timedOut = false
+    let firstAbortCause: 'caller' | 'timeout' | undefined
+    const rememberCallerAbort = () => {
+      firstAbortCause ??= 'caller'
+    }
+    signal.addEventListener('abort', rememberCallerAbort, { once: true })
     const timer = setTimeout(() => {
-      timedOut = true
+      firstAbortCause ??= 'timeout'
       timeoutController.abort(new DOMException('Verification timed out', 'TimeoutError'))
     }, this.options.verification.timeoutMs)
     const combinedSignal = AbortSignal.any([signal, timeoutController.signal])
@@ -219,7 +246,7 @@ export class VerificationService {
         commandName: command.name,
         args: admittedArgs,
         exitCode: outcome.exitCode,
-        status: timedOut ? 'timed-out' : outcome.exitCode === 0 ? 'passed' : 'failed',
+        status: firstAbortCause === 'timeout' ? 'timed-out' : outcome.exitCode === 0 ? 'passed' : 'failed',
         stdout: output.stdout,
         stderr: output.stderr,
         truncated: output.truncated,
@@ -246,6 +273,7 @@ export class VerificationService {
       }
     } finally {
       clearTimeout(timer)
+      signal.removeEventListener('abort', rememberCallerAbort)
       if (handle !== undefined) {
         handle.terminate()
         await handle.waitForExit()
@@ -253,7 +281,7 @@ export class VerificationService {
     }
 
     this.options.appendEvidence(evidence)
-    if (signal.aborted && !timedOut) throwReason(signal)
+    if (firstAbortCause === 'caller') throwReason(signal)
     return evidence
   }
 }
@@ -263,6 +291,7 @@ export class VerificationService {
  * any process spawn, and its generic presentation never exposes an unrestricted process stream.
  */
 export function createTargetedVerificationTool(options: TargetedVerificationToolOptions): ToolDefinition {
+  const workspaceRoot = trustedWorkspaceRoot(options.workspaceRoot)
   return {
     name: 'targeted_verify',
     description: 'Run one configured targeted verification command with approved arguments only.',
@@ -297,10 +326,10 @@ export function createTargetedVerificationTool(options: TargetedVerificationTool
     timeoutMs: options.verification.timeoutMs + VERIFICATION_CLEANUP_ALLOWANCE_MS,
     async execute(rawArgs, exec) {
       const input = targetedVerifyInput(rawArgs)
+      const request = validatedRequest(options.verification.commands, input.command, input.args)
+      if (exec.signal.aborted) throwReason(exec.signal)
       const session = exec.agent?.session
       if (session === undefined) throw new Error('targeted_verify requires an active agent session')
-      const workspaceRoot = session.header.cwd
-      if (workspaceRoot === undefined) throw new Error('targeted_verify requires a repository workspace root')
       const rootSessionId = session.header.parentSession ?? session.id
       const decision = options.budgetRegistry.forRootSession(rootSessionId).admitPluginTool('targeted_verify')
       if (!decision.allowed) {
@@ -312,7 +341,7 @@ export function createTargetedVerificationTool(options: TargetedVerificationTool
         subprocess: options.subprocess,
         appendEvidence: evidence => { appendVerificationFinished(session, evidence) },
       })
-      return service.run(input.command, input.args, exec.signal)
+      return service.run(request.command.name, request.args, exec.signal)
     },
     presentCall: rawArgs => {
       try {

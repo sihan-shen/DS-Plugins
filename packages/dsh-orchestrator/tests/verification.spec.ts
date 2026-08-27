@@ -165,6 +165,24 @@ describe('targeted verification service', () => {
     expect(finished).toMatchObject([{ status: 'failed', exitCode: null }])
   })
 
+  it('preserves a caller cancellation that occurs before the deadline when process settlement crosses it', async () => {
+    const controller = new AbortController()
+    const reason = new Error('caller cancelled before deadline')
+    const finished: unknown[] = []
+    const subprocess = new FakeSubprocess(spec => handle(new Promise(resolve => {
+      spec.signal?.addEventListener('abort', () => {
+        setTimeout(() => resolve({ exitCode: null, signal: 'SIGTERM' }), verification.timeoutMs + 10)
+      }, { once: true })
+    })))
+    const running = service(subprocess, finished).run('typecheck', [], controller.signal)
+
+    controller.abort(reason)
+
+    await expect(running).rejects.toBe(reason)
+    expect(finished).toMatchObject([{ status: 'failed', exitCode: null }])
+    expect(finished).not.toMatchObject([{ status: 'timed-out' }])
+  })
+
   it('bounds UTF-8 stdout and stderr together without leaving an invalid code point', async () => {
     const evidence = await service(new FakeSubprocess(() => handle(Promise.resolve({ exitCode: 0, signal: null }), {
       stdout: '€abc',
@@ -210,15 +228,17 @@ describe('targeted_verify tool definition', () => {
       version: 0,
       id: SessionId('verification-tool-session'),
       createdAt: 0,
-      cwd: workspaceRoot,
+      cwd: `${workspaceRoot}/packages/dsh-orchestrator`,
     })
     const subprocess = new FakeSubprocess(() => handle(Promise.resolve({ exitCode: 0, signal: null })))
     const admitPluginTool = vi.fn(() => ({ allowed: false as const, code: 'PLUGIN_TOOL_LIMIT', limit: 0, observed: 1 }))
-    const tool = createTargetedVerificationTool({
+    const options = {
       verification,
+      workspaceRoot,
       subprocess,
       budgetRegistry: { forRootSession: () => ({ admitPluginTool }) },
-    })
+    }
+    const tool = createTargetedVerificationTool(options)
 
     expect(tool.name).toBe('targeted_verify')
     expect(tool.timeoutMs).toBeGreaterThanOrEqual(verification.timeoutMs + VERIFICATION_CLEANUP_ALLOWANCE_MS)
@@ -235,5 +255,66 @@ describe('targeted_verify tool definition', () => {
     expect(admitPluginTool).toHaveBeenCalledWith('targeted_verify')
     expect(subprocess.spawns).toEqual([])
     expect(session.events.filter(event => event.type === 'dsh-plugin/verification-finished')).toEqual([])
+  })
+
+  it('prevalidates requests before budget admission and uses the supplied repository root', async () => {
+    const session = Session.create(SessionId('verification-valid-tool-session'), undefined, {
+      version: 0,
+      id: SessionId('verification-valid-tool-session'),
+      createdAt: 0,
+      cwd: `${workspaceRoot}/packages/dsh-orchestrator`,
+    })
+    const subprocess = new FakeSubprocess(() => handle(Promise.resolve({ exitCode: 0, signal: null })))
+    const admitPluginTool = vi.fn(() => ({ allowed: true as const }))
+    const options = {
+      verification,
+      workspaceRoot,
+      subprocess,
+      budgetRegistry: { forRootSession: () => ({ admitPluginTool }) },
+    }
+    const tool = createTargetedVerificationTool(options)
+    const aborted = new AbortController()
+    const cancellation = new Error('already cancelled')
+    aborted.abort(cancellation)
+
+    await expect(tool.execute(
+      { command: 'shell', args: [] },
+      { signal: new AbortController().signal, agent: { session } } as never,
+    )).rejects.toThrow(/unknown verification command/i)
+    await expect(tool.execute(
+      { command: 'typecheck', args: ['--all'] },
+      { signal: new AbortController().signal, agent: { session } } as never,
+    )).rejects.toThrow(/accepts no caller arguments/i)
+    await expect(tool.execute(
+      { command: 'typecheck', args: [] },
+      { signal: aborted.signal, agent: { session } } as never,
+    )).rejects.toBe(cancellation)
+
+    expect(admitPluginTool).not.toHaveBeenCalled()
+    expect(subprocess.spawns).toEqual([])
+    expect(session.events.filter(event => event.type === 'dsh-plugin/verification-finished')).toEqual([])
+
+    await expect(tool.execute(
+      { command: 'typecheck', args: [] },
+      { signal: new AbortController().signal, agent: { session } } as never,
+    )).resolves.toMatchObject({ status: 'passed' })
+
+    expect(admitPluginTool).toHaveBeenCalledTimes(1)
+    expect(subprocess.spawns).toHaveLength(1)
+    expect(subprocess.spawns[0]?.cwd).toBe(workspaceRoot)
+    expect(session.events.filter(event => event.type === 'dsh-plugin/verification-finished')).toHaveLength(1)
+  })
+
+  it.each(['', '/workspace\0ds-plugins'])('rejects an invalid trusted repository root at tool construction', value => {
+    const subprocess = new FakeSubprocess(() => handle(Promise.resolve({ exitCode: 0, signal: null })))
+    const admitPluginTool = vi.fn(() => ({ allowed: true as const }))
+    const options = {
+      verification,
+      workspaceRoot: value,
+      subprocess,
+      budgetRegistry: { forRootSession: () => ({ admitPluginTool }) },
+    }
+
+    expect(() => createTargetedVerificationTool(options)).toThrow(/workspaceRoot/i)
   })
 })
