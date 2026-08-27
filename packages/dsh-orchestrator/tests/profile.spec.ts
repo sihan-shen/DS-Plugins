@@ -71,8 +71,8 @@ describe('DSH v0.1 profile', () => {
       budgets: { maxWorkers: 0 },
       verification: {
         commands: [
-          { name: 'typecheck', executable: 'pnpm', args: ['typecheck'] },
-          { name: 'test:profile', executable: 'pnpm', args: ['test:profile'] },
+          { name: 'typecheck', executable: 'pnpm', fixedArgs: ['typecheck'] },
+          { name: 'test:profile', executable: 'pnpm', fixedArgs: ['test:profile'] },
         ],
       },
     })

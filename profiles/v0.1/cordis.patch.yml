@@ -13,9 +13,9 @@
       commands:
         - name: typecheck
           executable: pnpm
-          args: [typecheck]
+          fixedArgs: [typecheck]
         - name: test:profile
           executable: pnpm
-          args: [test:profile]
+          fixedArgs: [test:profile]
       timeoutMs: 120000
       maxOutputBytes: 65536
