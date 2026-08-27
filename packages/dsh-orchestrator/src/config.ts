@@ -1,4 +1,4 @@
-import type { OrchestratorConfig, VerificationCommand } from './types.js'
+import type { OrchestratorConfig, VerificationAllowedArgs, VerificationCommand } from './types.js'
 
 /** Maximum number of plugin-owned tool actions admitted in one run. */
 export const MAX_PLUGIN_TOOL_ACTIONS = 32
@@ -50,7 +50,7 @@ function positiveInteger(value: unknown, path: string, maximum?: number): number
 function verificationCommand(value: unknown, index: number): VerificationCommand {
   const path = `verification.commands[${index}]`
   const command = record(value, path)
-  onlyKeys(command, path, ['name', 'executable', 'fixedArgs'])
+  onlyKeys(command, path, ['name', 'executable', 'fixedArgs', 'allowedArgs'])
   const name = nonEmptyString(command.name, `${path}.name`)
   const executable = nonEmptyString(command.executable, `${path}.executable`)
   if (/\s/u.test(executable)) fail(`${path}.executable`, 'must be one path/name token')
@@ -58,7 +58,11 @@ function verificationCommand(value: unknown, index: number): VerificationCommand
   const fixedArgs = command.fixedArgs.map((argument, argumentIndex) =>
     nonEmptyString(argument, `${path}.fixedArgs[${argumentIndex}]`),
   )
-  return { name, executable, fixedArgs }
+  const allowedArgs = command.allowedArgs
+  if (allowedArgs !== 'none' && allowedArgs !== 'orchestrator-test-paths') {
+    fail(`${path}.allowedArgs`, 'must be "none" or "orchestrator-test-paths"')
+  }
+  return { name, executable, fixedArgs, allowedArgs: allowedArgs as VerificationAllowedArgs }
 }
 
 /**

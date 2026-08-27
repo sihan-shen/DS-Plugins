@@ -1,8 +1,12 @@
-/** A named verification program whose executable and fixed argument prefix are deployment controlled. */
+/** Caller-argument policy for one deployment-controlled verification program. */
+export type VerificationAllowedArgs = 'none' | 'orchestrator-test-paths'
+
+/** A named verification program whose executable, fixed prefix, and caller arguments are deployment controlled. */
 export interface VerificationCommand {
   readonly name: string
   readonly executable: string
   readonly fixedArgs: readonly string[]
+  readonly allowedArgs: VerificationAllowedArgs
 }
 
 /** Configuration validated before the orchestrator plugin is loaded. */

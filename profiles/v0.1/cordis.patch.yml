@@ -14,8 +14,10 @@
         - name: typecheck
           executable: pnpm
           fixedArgs: [typecheck]
+          allowedArgs: none
         - name: test:profile
           executable: pnpm
           fixedArgs: [test:profile]
+          allowedArgs: orchestrator-test-paths
       timeoutMs: 120000
       maxOutputBytes: 65536

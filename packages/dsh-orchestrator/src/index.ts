@@ -1,8 +1,11 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-subprocess'
+import type {} from '@deepseek-ai/dsh-tools'
 import { mountBudgetControllerRegistry } from './budgets.js'
 import { Config } from './config.js'
 import { appendBudgetRejected } from './events.js'
+import { mountTargetedVerificationTool } from './verification.js'
 import type { OrchestratorConfig } from './types.js'
 
 export { BudgetController, createBudgetControllerRegistry, mountBudgetControllerRegistry } from './budgets.js'
@@ -34,6 +37,18 @@ export type {
   WorkerFinishedV1,
 } from './events.js'
 export { failedHandoff, normalizeWorkerOutput, parseHandoff } from './handoff.js'
+export {
+  createTargetedVerificationTool,
+  mountTargetedVerificationTool,
+  VerificationService,
+  VERIFICATION_CLEANUP_ALLOWANCE_MS,
+  VERIFICATION_TERMINATION_GRACE_MS,
+} from './verification.js'
+export type {
+  TargetedVerificationToolOptions,
+  VerificationEvidenceAppender,
+  VerificationServiceOptions,
+} from './verification.js'
 export type {
   HandoffV1,
   OrchestratorConfig,
@@ -51,7 +66,7 @@ export const name = 'ds-orchestrator'
  * @param config - Validated deployment configuration whose budget limits are enforced.
  */
 export function apply(ctx: Context, config: OrchestratorConfig): void {
-  mountBudgetControllerRegistry(ctx, config.budgets, rootSessionId => rejection => {
+  const budgets = mountBudgetControllerRegistry(ctx, config.budgets, rootSessionId => rejection => {
     const session = ctx.sessions.get(rootSessionId)
     if (session === undefined) return
     appendBudgetRejected(session, {
@@ -60,7 +75,12 @@ export function apply(ctx: Context, config: OrchestratorConfig): void {
       observed: rejection.observed,
     })
   })
+  mountTargetedVerificationTool(ctx, {
+    verification: config.verification,
+    subprocess: ctx.subprocess,
+    budgetRegistry: budgets.registry,
+  })
 }
 
 apply.Config = Config
-apply.inject = ['sessions']
+apply.inject = ['sessions', 'subprocess', 'tools']

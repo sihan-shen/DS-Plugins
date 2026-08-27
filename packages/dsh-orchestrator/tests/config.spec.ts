@@ -23,6 +23,7 @@ const validConfig = {
         name: 'typecheck',
         executable: 'pnpm',
         fixedArgs: ['typecheck'],
+        allowedArgs: 'none',
       },
     ],
     timeoutMs: 120_000,
@@ -74,8 +75,13 @@ describe('parseConfig', () => {
       budgets: { maxWorkers: 0 },
       verification: {
         commands: [
-          { name: 'typecheck', executable: 'pnpm', fixedArgs: ['typecheck'] },
-          { name: 'test:profile', executable: 'pnpm', fixedArgs: ['test:profile'] },
+          { name: 'typecheck', executable: 'pnpm', fixedArgs: ['typecheck'], allowedArgs: 'none' },
+          {
+            name: 'test:profile',
+            executable: 'pnpm',
+            fixedArgs: ['test:profile'],
+            allowedArgs: 'orchestrator-test-paths',
+          },
         ],
       },
     })
@@ -110,7 +116,7 @@ describe('parseConfig', () => {
         ...validConfig.verification,
         commands: [
           validConfig.verification.commands[0],
-          { name: 'typecheck', executable: 'pnpm', fixedArgs: ['test'] },
+          { name: 'typecheck', executable: 'pnpm', fixedArgs: ['test'], allowedArgs: 'none' },
         ],
       },
     })).toThrow(/verification\.commands.*duplicate.*typecheck/i)

@@ -71,8 +71,13 @@ describe('DSH v0.1 profile', () => {
       budgets: { maxWorkers: 0 },
       verification: {
         commands: [
-          { name: 'typecheck', executable: 'pnpm', fixedArgs: ['typecheck'] },
-          { name: 'test:profile', executable: 'pnpm', fixedArgs: ['test:profile'] },
+          { name: 'typecheck', executable: 'pnpm', fixedArgs: ['typecheck'], allowedArgs: 'none' },
+          {
+            name: 'test:profile',
+            executable: 'pnpm',
+            fixedArgs: ['test:profile'],
+            allowedArgs: 'orchestrator-test-paths',
+          },
         ],
       },
     })
