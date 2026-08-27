@@ -6,3 +6,6 @@
 
 # Independently cloned upstream source
 /upstream/deepseek-harness/
+
+# Isolated feature worktrees
+/.worktrees/
