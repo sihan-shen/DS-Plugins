@@ -148,4 +148,47 @@ describe('Direct orchestrator mode', () => {
     await secondFiber.dispose()
     await first.sessionStore.dispose()
   })
+
+  it('preserves one durable run record when HMR remounts an active root session', async () => {
+    const first = await mountedDirectMode()
+    const root = appendRootRequest(first.ctx, 'direct-hmr-root')
+    await Promise.resolve()
+    expect(root.events.filter(event => event.type === 'dsh-plugin/run-started')).toHaveLength(1)
+
+    await first.fiber.dispose()
+    const secondFiber = await first.ctx.plugin(apply, config)
+    root.append('request/header', {
+      header: { config: { provider: 'openai-codex', model: 'gpt-5.6-codex' } },
+      reason: 'resume',
+    })
+    await Promise.resolve()
+
+    expect(root.events.filter(event => event.type === 'dsh-plugin/run-started')).toHaveLength(1)
+
+    await secondFiber.dispose()
+    await first.sessionStore.dispose()
+  })
+
+  it('cancels a disposed root queued record before the same id begins a new lifecycle', async () => {
+    const mounted = await mountedDirectMode()
+    const disposed = mounted.ctx.sessions.prepare(SessionId('direct-reused-root'), {
+      meta: { cwd: '/workspace/ds-plugins' },
+    })
+    const detach = mounted.ctx.sessions.enter(disposed)
+    mounted.ctx.sessions.announce(disposed)
+    disposed.append('request/header', {
+      header: { config: { provider: 'openai-codex', model: 'gpt-5.6-codex' } },
+      reason: 'initial',
+    })
+    detach()
+
+    const replacement = appendRootRequest(mounted.ctx, 'direct-reused-root')
+    await Promise.resolve()
+
+    expect(disposed.events.filter(event => event.type === 'dsh-plugin/run-started')).toHaveLength(0)
+    expect(replacement.events.filter(event => event.type === 'dsh-plugin/run-started')).toHaveLength(1)
+
+    await mounted.fiber.dispose()
+    await mounted.sessionStore.dispose()
+  })
 })

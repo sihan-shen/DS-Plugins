@@ -1,5 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
-import type { SessionId } from '@deepseek-ai/dsh-session'
+import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { appendRunStarted } from './events.js'
 import type { OrchestratorConfig } from './types.js'
 
@@ -42,7 +42,7 @@ export function mountDirectMode(ctx: Context, config: OrchestratorConfig): void 
   const systemPrompt = requiredSystemPrompt(ctx)
 
   ctx.effect(() => {
-    const started = new Set<SessionId>()
+    const pending = new Map<SessionId, Session>()
     let active = true
     const disposePrompt = systemPrompt.section({
       name: DIRECT_PROMPT_SECTION,
@@ -50,12 +50,14 @@ export function mountDirectMode(ctx: Context, config: OrchestratorConfig): void 
       text: DIRECT_PROMPT,
     })
     const disposeEvents = ctx.on('session/event', (session, event) => {
-      if (event.type !== 'request/header' || session.header.parentSession !== undefined || started.has(session.id)) return
+      if (event.type !== 'request/header' || session.header.parentSession !== undefined) return
+      if (session.events.some(entry => entry.type === 'dsh-plugin/run-started') || pending.has(session.id)) return
       // Session observers run while the triggering append holds its no-reentry guard.
       // Publish the durable companion record immediately after that boundary closes.
-      started.add(session.id)
+      pending.set(session.id, session)
       queueMicrotask(() => {
-        if (!active || !started.has(session.id)) return
+        if (!active || pending.get(session.id) !== session) return
+        pending.delete(session.id)
         appendRunStarted(session, {
           mode: 'direct',
           provider: config.worker.provider,
@@ -63,11 +65,15 @@ export function mountDirectMode(ctx: Context, config: OrchestratorConfig): void 
         })
       })
     })
+    const disposeSessions = ctx.on('session/disposed', session => {
+      if (pending.get(session.id) === session) pending.delete(session.id)
+    })
     return () => {
       active = false
       disposeEvents()
+      disposeSessions()
       disposePrompt()
-      started.clear()
+      pending.clear()
     }
   }, 'ds-orchestrator: direct mode')
 }
