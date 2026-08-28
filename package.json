@@ -1,6 +1,7 @@
 {
   "name": "ds-plugins",
   "private": true,
+  "type": "module",
   "packageManager": "pnpm@11.7.0",
   "engines": {
     "node": "^22.19.0 || >=24"
@@ -9,7 +10,8 @@
     "build": "pnpm --filter @ds-plugins/dsh-orchestrator run build",
     "typecheck": "tsc -b",
     "test": "pnpm build && node --expose-internals ./node_modules/vitest/vitest.mjs run",
-    "test:profile": "vitest run packages/dsh-orchestrator/tests/profile.spec.ts"
+    "test:profile": "vitest run packages/dsh-orchestrator/tests/profile.spec.ts",
+    "test:provider": "node --experimental-strip-types tests/provider/openai-codex.smoke.ts"
   },
   "devDependencies": {
     "@deepseek-ai/dsh-app-boot": "0.1.1-rc.2",
