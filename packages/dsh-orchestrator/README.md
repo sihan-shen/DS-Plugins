@@ -104,7 +104,7 @@ It performs no provider import or network call unless explicitly enabled. With a
 DSH_RUN_OPENAI_CODEX_SMOKE=1 nix develop --command pnpm test:provider
 ```
 
-`DSH_HARNESS_ROOT` may point to the pinned `deepseek-harness` checkout when it is not at `upstream/deepseek-harness`. The smoke creates a disposable fixture repository and temporary DSH profile, disables telemetry, runs a bounded Direct task and a bounded Single Worker task, and checks terminal output plus canonical event evidence. It never prints provider output, credentials, authorization headers, or token-store contents. A skipped run is **not** provider validation.
+`DSH_HARNESS_ROOT` may point to the pinned `deepseek-harness` checkout when it is not at `upstream/deepseek-harness`; otherwise discovery walks all ancestors and the repository's Git common directory, so arbitrary linked-worktree layouts are supported. The smoke creates a disposable fixture repository and temporary DSH profile, disables telemetry, and runs bounded Direct and Single Worker tasks. Direct must print `DSH_V0_1_ACCEPTED`; Single Worker must record a completed `HandoffV1` whose summary includes that marker, then expose exactly one bounded parent Handoff projection with no raw transcript or diagnostic fields. It never prints provider output, credentials, authorization headers, or token-store contents. A skipped run is **not** provider validation.
 
 ## v0.1 limitations
 
