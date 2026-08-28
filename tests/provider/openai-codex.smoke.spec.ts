@@ -256,7 +256,10 @@ describe('openai-codex provider smoke command', () => {
     const fixtureRoot = await mkdtemp(join(tmpdir(), 'dsh-git-environment-'))
     const harness = join(fixtureRoot, 'upstream', 'deepseek-harness')
     const candidate = join(harness, 'apps', 'cli', 'src', 'bin.ts')
-    const pinnedHarness = resolve(fileURLToPath(new URL('../../../../upstream/deepseek-harness', import.meta.url)))
+    const pinnedHarness = await findHarnessRoot()
+    expect(existsSync(join(pinnedHarness, '.git'))).toBe(true)
+    expect(await gitOutput(pinnedHarness, ['rev-parse', 'HEAD']))
+      .toBe('b150a551b8d465e31e418e1b2eaf5e79bbb7d28e')
     const preserved = new Map<string, string | undefined>()
     const injected = {
       GIT_DIR: join(pinnedHarness, '.git'),
