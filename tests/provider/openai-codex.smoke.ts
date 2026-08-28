@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 const OPT_IN = 'DSH_RUN_OPENAI_CODEX_SMOKE'
 const SKIP_MESSAGE = 'SKIP: set DSH_RUN_OPENAI_CODEX_SMOKE=1 to run the authorized OpenAI Codex smoke.'
 const ACCEPTANCE_MARKER = 'DSH_V0_1_ACCEPTED'
+const PINNED_HARNESS_COMMIT = 'b150a551b8d465e31e418e1b2eaf5e79bbb7d28e'
 const SMOKE_TIMEOUT_MS = 180_000
 const PROFILE_PREFIX = 'dsh-v0.1-openai-codex-smoke-'
 const SCRIPT_ROOT = resolve(fileURLToPath(new URL('../..', import.meta.url)))
@@ -52,7 +53,7 @@ function ancestors(start: string): string[] {
 async function gitCommonRoot(start: string): Promise<string | undefined> {
   try {
     const { stdout } = await execFileAsync('git', [
-      '-C', start, 'rev-parse', '--path-format=absolute', '--git-common-dir',
+      '-c', 'core.hooksPath=/dev/null', '-C', start, 'rev-parse', '--path-format=absolute', '--git-common-dir',
     ], { timeout: 1_000 })
     const commonDir = stdout.trim()
     return commonDir === '' ? undefined : dirname(commonDir)
@@ -61,22 +62,36 @@ async function gitCommonRoot(start: string): Promise<string | undefined> {
   }
 }
 
-export async function findHarnessRoot(searchFrom = SCRIPT_ROOT): Promise<string> {
+async function isPinnedHarnessCheckout(candidate: string, expectedCommit: string): Promise<boolean> {
+  if (!await exists(join(candidate, 'apps/cli/src/bin.ts'))) return false
+  try {
+    const { stdout } = await execFileAsync('git', [
+      '-c', 'core.hooksPath=/dev/null', '-C', candidate, 'rev-parse', '--verify', 'HEAD^{commit}',
+    ], { timeout: 1_000 })
+    return stdout.trim() === expectedCommit
+  } catch {
+    return false
+  }
+}
+
+export async function findHarnessRoot(searchFrom = SCRIPT_ROOT, expectedCommit = PINNED_HARNESS_COMMIT): Promise<string> {
   const configured = process.env.DSH_HARNESS_ROOT
   if (configured !== undefined) {
     const candidate = resolve(configured)
-    if (await exists(join(candidate, 'apps/cli/src/bin.ts'))) return candidate
-    throw new Error('Harness source checkout is unavailable; set DSH_HARNESS_ROOT to the pinned deepseek-harness checkout.')
+    if (await isPinnedHarnessCheckout(candidate, expectedCommit)) return candidate
+    throw new Error(`Harness source checkout is unavailable at pinned commit ${expectedCommit}; set DSH_HARNESS_ROOT to the pinned deepseek-harness checkout.`)
   }
 
-  const roots = ancestors(searchFrom)
+  const ancestorRoots = ancestors(searchFrom)
   const commonRoot = await gitCommonRoot(searchFrom)
-  if (commonRoot !== undefined && !roots.includes(commonRoot)) roots.push(commonRoot)
+  const roots = commonRoot === undefined
+    ? ancestorRoots
+    : [commonRoot, ...ancestorRoots.filter(root => root !== commonRoot)]
   const candidates = roots.map(root => join(root, 'upstream/deepseek-harness'))
   for (const candidate of candidates) {
-    if (await exists(join(candidate, 'apps/cli/src/bin.ts'))) return candidate
+    if (await isPinnedHarnessCheckout(candidate, expectedCommit)) return candidate
   }
-  throw new Error('Harness source checkout is unavailable; set DSH_HARNESS_ROOT to the pinned deepseek-harness checkout.')
+  throw new Error(`Harness source checkout is unavailable at pinned commit ${expectedCommit}; set DSH_HARNESS_ROOT to the pinned deepseek-harness checkout.`)
 }
 
 function run(command: string, args: readonly string[], cwd: string, env: NodeJS.ProcessEnv): Promise<CommandResult> {
