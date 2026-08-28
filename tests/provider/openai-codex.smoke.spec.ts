@@ -251,4 +251,40 @@ describe('openai-codex provider smoke command', () => {
       await rm(fixtureRoot, { recursive: true, force: true })
     }
   })
+
+  it('does not inherit Git repository-location, object, or config variables for a Harness override', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'dsh-git-environment-'))
+    const harness = join(fixtureRoot, 'upstream', 'deepseek-harness')
+    const candidate = join(harness, 'apps', 'cli', 'src', 'bin.ts')
+    const pinnedHarness = resolve(fileURLToPath(new URL('../../../../upstream/deepseek-harness', import.meta.url)))
+    const preserved = new Map<string, string | undefined>()
+    const injected = {
+      GIT_DIR: join(pinnedHarness, '.git'),
+      GIT_WORK_TREE: pinnedHarness,
+      GIT_COMMON_DIR: join(pinnedHarness, '.git'),
+      GIT_OBJECT_DIRECTORY: join(pinnedHarness, '.git', 'objects'),
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: join(pinnedHarness, '.git', 'objects'),
+      GIT_CONFIG_GLOBAL: join(fixtureRoot, 'malicious.gitconfig'),
+      GIT_CONFIG_NOSYSTEM: '1',
+    }
+    const previousHarnessRoot = process.env.DSH_HARNESS_ROOT
+    try {
+      await mkdir(dirname(candidate), { recursive: true })
+      await writeFile(candidate, '')
+      for (const [key, value] of Object.entries(injected)) {
+        preserved.set(key, process.env[key])
+        process.env[key] = value
+      }
+      process.env.DSH_HARNESS_ROOT = harness
+      await expect(findHarnessRoot(fixtureRoot)).rejects.toThrow('pinned deepseek-harness checkout')
+    } finally {
+      for (const [key, value] of preserved) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      if (previousHarnessRoot === undefined) delete process.env.DSH_HARNESS_ROOT
+      else process.env.DSH_HARNESS_ROOT = previousHarnessRoot
+      await rm(fixtureRoot, { recursive: true, force: true })
+    }
+  })
 })

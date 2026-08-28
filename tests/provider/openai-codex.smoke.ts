@@ -50,11 +50,17 @@ function ancestors(start: string): string[] {
   }
 }
 
+function sanitizedGitEnvironment(): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_')),
+  )
+}
+
 async function gitCommonRoot(start: string): Promise<string | undefined> {
   try {
     const { stdout } = await execFileAsync('git', [
-      '-c', 'core.hooksPath=/dev/null', '-C', start, 'rev-parse', '--path-format=absolute', '--git-common-dir',
-    ], { timeout: 1_000 })
+      '-c', 'core.hooksPath=/dev/null', '--no-optional-locks', 'rev-parse', '--path-format=absolute', '--git-common-dir',
+    ], { cwd: start, env: sanitizedGitEnvironment(), timeout: 1_000 })
     const commonDir = stdout.trim()
     return commonDir === '' ? undefined : dirname(commonDir)
   } catch {
@@ -66,8 +72,8 @@ async function isPinnedHarnessCheckout(candidate: string, expectedCommit: string
   if (!await exists(join(candidate, 'apps/cli/src/bin.ts'))) return false
   try {
     const { stdout } = await execFileAsync('git', [
-      '-c', 'core.hooksPath=/dev/null', '-C', candidate, 'rev-parse', '--verify', 'HEAD^{commit}',
-    ], { timeout: 1_000 })
+      '-c', 'core.hooksPath=/dev/null', '--no-optional-locks', 'rev-parse', '--verify', 'HEAD^{commit}',
+    ], { cwd: candidate, env: sanitizedGitEnvironment(), timeout: 1_000 })
     return stdout.trim() === expectedCommit
   } catch {
     return false
