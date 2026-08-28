@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { describe, expect, it } from 'vitest'
-import { findHarnessRoot } from './openai-codex.smoke.ts'
+import { findHarnessRoot, runProviderSmoke } from './openai-codex.smoke.ts'
 
 const scriptPath = fileURLToPath(new URL('./openai-codex.smoke.ts', import.meta.url))
 const profileManifestPath = fileURLToPath(new URL('../../profiles/v0.1/package.json', import.meta.url))
@@ -19,6 +19,20 @@ async function runGit(cwd: string, args: readonly string[]): Promise<void> {
 async function gitOutput(cwd: string, args: readonly string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', ['-c', 'core.hooksPath=/dev/null', '-C', cwd, ...args])
   return stdout.trim()
+}
+
+async function initHarnessRepository(root: string, trackCli = true): Promise<string> {
+  await mkdir(dirname(root), { recursive: true })
+  await runGit(dirname(root), ['init', '--initial-branch=main', root])
+  await runGit(root, ['config', 'user.email', 'smoke@example.invalid'])
+  await runGit(root, ['config', 'user.name', 'Provider smoke fixture'])
+  await mkdir(join(root, 'apps', 'cli', 'src'), { recursive: true })
+  await writeFile(join(root, 'apps', 'cli', 'src', 'bin.ts'), 'process.stdout.write("trusted harness\\n")\n')
+  await writeFile(join(root, 'README.md'), 'trusted harness fixture\n')
+  await runGit(root, ['add', 'README.md'])
+  if (trackCli) await runGit(root, ['add', 'apps/cli/src/bin.ts'])
+  await runGit(root, ['commit', '-m', 'trusted harness fixture'])
+  return gitOutput(root, ['rev-parse', 'HEAD'])
 }
 
 function runKeylessSmoke(): Promise<{ readonly code: number | null; readonly stdout: string; readonly stderr: string }> {
@@ -112,9 +126,19 @@ if (direct) {
 }
 `
 
-function run(command: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<FakeSmokeResult> {
+function executeFakeCli(cli: string, args: readonly string[], cwd: string, env: NodeJS.ProcessEnv): Promise<{
+  readonly code: number | null
+  readonly stdout: string
+  readonly stderr: string
+}> {
   return new Promise((resolveRun, reject) => {
-    const child = spawn(command, args, { env, stdio: ['ignore', 'pipe', 'pipe'] })
+    const profileIndex = args.indexOf('--profile')
+    if (profileIndex < 0) return reject(new Error('missing provider-smoke profile argument'))
+    const child = spawn(process.execPath, ['--experimental-strip-types', cli, ...args.slice(profileIndex)], {
+      cwd,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
     let stdout = ''
     let stderr = ''
     child.stdout.setEncoding('utf8').on('data', (chunk: string) => { stdout += chunk })
@@ -125,26 +149,36 @@ function run(command: string, args: readonly string[], env: NodeJS.ProcessEnv): 
 }
 
 async function runAuthorizedFakeSmoke(scenario: FakeSmokeScenario): Promise<FakeSmokeResult> {
-  const harnessWorkspace = await findHarnessRoot()
-  const fakeHarness = await mkdtemp(join(harnessWorkspace, '.fake-harness-'))
+  const fakeHarness = await mkdtemp(join(tmpdir(), 'dsh-provider-smoke-harness-'))
   const fakeHome = await mkdtemp(join(tmpdir(), 'dsh-provider-smoke-home-'))
   const capturePath = join(fakeHarness, 'capture.jsonl')
+  const previousScenario = process.env.DSH_FAKE_SMOKE_SCENARIO
+  const previousCapturePath = process.env.DSH_FAKE_CAPTURE_PATH
   try {
     const cli = join(fakeHarness, 'apps/cli/src/bin.ts')
     await mkdir(dirname(cli), { recursive: true })
     await writeFile(cli, fakeCli)
-    const result = await run(process.execPath, ['--experimental-strip-types', scriptPath], {
-      ...process.env,
-      DSH_RUN_OPENAI_CODEX_SMOKE: '1',
-      DSH_HARNESS_ROOT: fakeHarness,
-      DSH_HOME: fakeHome,
-      DSH_FAKE_SMOKE_SCENARIO: scenario,
-      DSH_FAKE_CAPTURE_PATH: capturePath,
-      TMPDIR: harnessWorkspace,
-    })
+    const installedHarness = await findHarnessRoot()
+    process.env.DSH_FAKE_SMOKE_SCENARIO = scenario
+    process.env.DSH_FAKE_CAPTURE_PATH = capturePath
+    let code = 0
+    let stderr = ''
+    try {
+      await runProviderSmoke(fakeHarness, fakeHome, {
+        fixtureParent: installedHarness,
+        execute: (_command, args, cwd, env) => executeFakeCli(cli, args, cwd, env),
+      })
+    } catch (error) {
+      code = 1
+      stderr = error instanceof Error ? error.message : String(error)
+    }
     const trace = await readFile(capturePath, 'utf8').catch(() => '')
-    return { ...result, trace }
+    return { code, stdout: '', stderr, trace }
   } finally {
+    if (previousScenario === undefined) delete process.env.DSH_FAKE_SMOKE_SCENARIO
+    else process.env.DSH_FAKE_SMOKE_SCENARIO = previousScenario
+    if (previousCapturePath === undefined) delete process.env.DSH_FAKE_CAPTURE_PATH
+    else process.env.DSH_FAKE_CAPTURE_PATH = previousCapturePath
     await rm(fakeHarness, { recursive: true, force: true })
     await rm(fakeHome, { recursive: true, force: true })
   }
@@ -176,7 +210,7 @@ describe('openai-codex provider smoke command', () => {
 
   it('uses the pinned read tool in the actual single-worker tool filter', async () => {
     const result = await runAuthorizedFakeSmoke('require-read')
-    expect(result.code).toBe(0)
+    expect(result.code, `${result.stderr}; trace=${result.trace}`).toBe(0)
     expect(capturedTask(result.trace, false)).toContain('allowedTools ["read"]')
     expect(capturedTask(result.trace, false)).not.toContain('read_file')
   })
@@ -219,13 +253,9 @@ describe('openai-codex provider smoke command', () => {
       await runGit(repository, ['commit', '-m', 'fixture'])
       await mkdir(dirname(linkedWorktree), { recursive: true })
       await runGit(repository, ['worktree', 'add', '--detach', linkedWorktree, 'HEAD'])
-      await runGit(repository, ['worktree', 'add', '--detach', decoy, 'HEAD'])
-      await mkdir(join(harness, 'apps', 'cli', 'src'), { recursive: true })
-      await writeFile(join(harness, 'apps', 'cli', 'src', 'bin.ts'), '')
-      await mkdir(join(decoy, 'apps', 'cli', 'src'), { recursive: true })
-      await writeFile(join(decoy, 'apps', 'cli', 'src', 'bin.ts'), '')
+      const expectedCommit = await initHarnessRepository(harness)
+      await runGit(fixtureRoot, ['clone', '--no-hardlinks', harness, decoy])
       delete process.env.DSH_HARNESS_ROOT
-      const expectedCommit = await gitOutput(repository, ['rev-parse', 'HEAD'])
       const discover = findHarnessRoot as unknown as (searchFrom: string, expectedCommit: string) => Promise<string>
       await expect(discover(linkedWorktree, expectedCommit)).resolves.toBe(harness)
     } finally {
@@ -285,6 +315,101 @@ describe('openai-codex provider smoke command', () => {
         if (value === undefined) delete process.env[key]
         else process.env[key] = value
       }
+      if (previousHarnessRoot === undefined) delete process.env.DSH_HARNESS_ROOT
+      else process.env.DSH_HARNESS_ROOT = previousHarnessRoot
+      await rm(fixtureRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a Harness candidate that is a tracked subdirectory instead of the repository top level', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'dsh-harness-top-level-'))
+    const repository = join(fixtureRoot, 'repository')
+    const candidate = join(repository, 'upstream', 'deepseek-harness')
+    const previousHarnessRoot = process.env.DSH_HARNESS_ROOT
+    try {
+      await runGit(fixtureRoot, ['init', '--initial-branch=main', 'repository'])
+      await runGit(repository, ['config', 'user.email', 'smoke@example.invalid'])
+      await runGit(repository, ['config', 'user.name', 'Provider smoke fixture'])
+      await mkdir(join(candidate, 'apps', 'cli', 'src'), { recursive: true })
+      await writeFile(join(candidate, 'apps', 'cli', 'src', 'bin.ts'), 'nested fake\n')
+      await runGit(repository, ['add', 'upstream/deepseek-harness/apps/cli/src/bin.ts'])
+      await runGit(repository, ['commit', '-m', 'tracked nested candidate'])
+      const expectedCommit = await gitOutput(repository, ['rev-parse', 'HEAD'])
+      process.env.DSH_HARNESS_ROOT = candidate
+      const discover = findHarnessRoot as unknown as (searchFrom: string, expectedCommit: string) => Promise<string>
+      await expect(discover(fixtureRoot, expectedCommit)).rejects.toThrow('pinned deepseek-harness checkout')
+    } finally {
+      if (previousHarnessRoot === undefined) delete process.env.DSH_HARNESS_ROOT
+      else process.env.DSH_HARNESS_ROOT = previousHarnessRoot
+      await rm(fixtureRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an untracked fake Harness subdirectory that borrows its parent repository identity', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'dsh-untracked-harness-subdir-'))
+    const repository = join(fixtureRoot, 'repository')
+    const candidate = join(repository, 'untracked', 'deepseek-harness')
+    const previousHarnessRoot = process.env.DSH_HARNESS_ROOT
+    try {
+      const expectedCommit = await initHarnessRepository(repository)
+      await mkdir(join(candidate, 'apps', 'cli', 'src'), { recursive: true })
+      await writeFile(join(candidate, 'apps', 'cli', 'src', 'bin.ts'), 'untracked fake\n')
+      process.env.DSH_HARNESS_ROOT = candidate
+      const discover = findHarnessRoot as unknown as (searchFrom: string, expectedCommit: string) => Promise<string>
+      await expect(discover(fixtureRoot, expectedCommit)).rejects.toThrow('pinned deepseek-harness checkout')
+    } finally {
+      if (previousHarnessRoot === undefined) delete process.env.DSH_HARNESS_ROOT
+      else process.env.DSH_HARNESS_ROOT = previousHarnessRoot
+      await rm(fixtureRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a pinned Harness checkout with tracked worktree changes', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'dsh-dirty-harness-'))
+    const harness = join(fixtureRoot, 'deepseek-harness')
+    const previousHarnessRoot = process.env.DSH_HARNESS_ROOT
+    try {
+      const expectedCommit = await initHarnessRepository(harness)
+      await appendFile(join(harness, 'README.md'), 'dirty tracked state\n')
+      process.env.DSH_HARNESS_ROOT = harness
+      const discover = findHarnessRoot as unknown as (searchFrom: string, expectedCommit: string) => Promise<string>
+      await expect(discover(fixtureRoot, expectedCommit)).rejects.toThrow('pinned deepseek-harness checkout')
+    } finally {
+      if (previousHarnessRoot === undefined) delete process.env.DSH_HARNESS_ROOT
+      else process.env.DSH_HARNESS_ROOT = previousHarnessRoot
+      await rm(fixtureRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a CLI entry that is present in the worktree but absent from the pinned HEAD tree', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'dsh-untracked-harness-cli-'))
+    const harness = join(fixtureRoot, 'deepseek-harness')
+    const previousHarnessRoot = process.env.DSH_HARNESS_ROOT
+    try {
+      const expectedCommit = await initHarnessRepository(harness, false)
+      process.env.DSH_HARNESS_ROOT = harness
+      const discover = findHarnessRoot as unknown as (searchFrom: string, expectedCommit: string) => Promise<string>
+      await expect(discover(fixtureRoot, expectedCommit)).rejects.toThrow('pinned deepseek-harness checkout')
+    } finally {
+      if (previousHarnessRoot === undefined) delete process.env.DSH_HARNESS_ROOT
+      else process.env.DSH_HARNESS_ROOT = previousHarnessRoot
+      await rm(fixtureRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a CLI entry whose bytes differ from HEAD even when Git status is hidden', async () => {
+    const fixtureRoot = await mkdtemp(join(tmpdir(), 'dsh-hidden-dirty-harness-cli-'))
+    const harness = join(fixtureRoot, 'deepseek-harness')
+    const previousHarnessRoot = process.env.DSH_HARNESS_ROOT
+    try {
+      const expectedCommit = await initHarnessRepository(harness)
+      await runGit(harness, ['update-index', '--assume-unchanged', 'apps/cli/src/bin.ts'])
+      await writeFile(join(harness, 'apps', 'cli', 'src', 'bin.ts'), 'process.stdout.write("forged harness\\n")\n')
+      expect(await gitOutput(harness, ['status', '--porcelain', '--untracked-files=no'])).toBe('')
+      process.env.DSH_HARNESS_ROOT = harness
+      const discover = findHarnessRoot as unknown as (searchFrom: string, expectedCommit: string) => Promise<string>
+      await expect(discover(fixtureRoot, expectedCommit)).rejects.toThrow('pinned deepseek-harness checkout')
+    } finally {
       if (previousHarnessRoot === undefined) delete process.env.DSH_HARNESS_ROOT
       else process.env.DSH_HARNESS_ROOT = previousHarnessRoot
       await rm(fixtureRoot, { recursive: true, force: true })

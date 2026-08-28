@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process'
-import { access, lstat, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { access, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -24,6 +24,11 @@ interface CommandResult {
 interface JsonRecord {
   readonly type?: unknown
   readonly data?: unknown
+}
+
+interface ProviderSmokeRuntime {
+  readonly fixtureParent?: string
+  readonly execute?: (command: string, args: readonly string[], cwd: string, env: NodeJS.ProcessEnv) => Promise<CommandResult>
 }
 
 function yamlString(value: string): string {
@@ -69,12 +74,33 @@ async function gitCommonRoot(start: string): Promise<string | undefined> {
 }
 
 async function isPinnedHarnessCheckout(candidate: string, expectedCommit: string): Promise<boolean> {
-  if (!await exists(join(candidate, 'apps/cli/src/bin.ts'))) return false
   try {
-    const { stdout } = await execFileAsync('git', [
+    const environment = sanitizedGitEnvironment()
+    const canonicalCandidate = await realpath(candidate)
+    const { stdout: topLevelOutput } = await execFileAsync('git', [
+      '-c', 'core.hooksPath=/dev/null', '--no-optional-locks', 'rev-parse', '--path-format=absolute', '--show-toplevel',
+    ], { cwd: canonicalCandidate, env: environment, timeout: 1_000 })
+    const topLevel = topLevelOutput.trim()
+    if (topLevel === '' || await realpath(topLevel) !== canonicalCandidate) return false
+
+    const { stdout: headOutput } = await execFileAsync('git', [
       '-c', 'core.hooksPath=/dev/null', '--no-optional-locks', 'rev-parse', '--verify', 'HEAD^{commit}',
-    ], { cwd: candidate, env: sanitizedGitEnvironment(), timeout: 1_000 })
-    return stdout.trim() === expectedCommit
+    ], { cwd: canonicalCandidate, env: environment, timeout: 1_000 })
+    if (headOutput.trim() !== expectedCommit) return false
+
+    const { stdout: statusOutput } = await execFileAsync('git', [
+      '-c', 'core.hooksPath=/dev/null', '--no-optional-locks', 'status', '--porcelain', '--untracked-files=no',
+    ], { cwd: canonicalCandidate, env: environment, timeout: 1_000 })
+    if (statusOutput !== '') return false
+
+    const cliPath = join(canonicalCandidate, 'apps/cli/src/bin.ts')
+    const [{ stdout: committedCli }, worktreeCli] = await Promise.all([
+      execFileAsync('git', [
+        '-c', 'core.hooksPath=/dev/null', '--no-optional-locks', 'show', 'HEAD:apps/cli/src/bin.ts',
+      ], { cwd: canonicalCandidate, env: environment, timeout: 1_000, encoding: 'buffer' }),
+      readFile(cliPath),
+    ])
+    return worktreeCli.equals(committedCli)
   } catch {
     return false
   }
@@ -322,16 +348,10 @@ async function removeProfile(profileDir: string): Promise<void> {
   }
 }
 
-async function main(): Promise<void> {
-  const dshHome = process.env.DSH_HOME
-  if (dshHome === undefined || dshHome.trim() === '') {
-    throw new Error('DSH_HOME must point at the existing official OpenAI Codex authorization store.')
-  }
-  if (!await exists(PROFILE_MODULES)) {
-    throw new Error('The v0.1 profile dependencies are unavailable; run pnpm install before the provider smoke.')
-  }
-  const harnessRoot = await findHarnessRoot()
-  const fixtureRoot = await mkdtemp(join(tmpdir(), 'dsh-openai-codex-smoke-'))
+/** Execute the smoke after the caller has validated the Harness checkout boundary. */
+export async function runProviderSmoke(harnessRoot: string, dshHome: string, runtime: ProviderSmokeRuntime = {}): Promise<void> {
+  const fixtureRoot = await mkdtemp(join(runtime.fixtureParent ?? tmpdir(), 'dsh-openai-codex-smoke-'))
+  const execute = runtime.execute ?? run
   const sessionRoot = join(fixtureRoot, 'sessions')
   const profileName = `${PROFILE_PREFIX}${process.pid}`
   const profileDir = await installSmokeProfile(resolve(dshHome), profileName, fixtureRoot, sessionRoot)
@@ -344,22 +364,34 @@ async function main(): Promise<void> {
   const cli = join(harnessRoot, 'apps/cli/src/bin.ts')
   try {
     await writeFile(join(fixtureRoot, 'acceptance-task.txt'), 'The required phrase is DSH_V0_1_ACCEPTED.\n')
-    const direct = await run(process.execPath, ['--expose-internals', '--import', 'tsx/esm', cli, '--profile', profileName,
+    const direct = await execute(process.execPath, ['--expose-internals', '--import', 'tsx/esm', cli, '--profile', profileName,
       `Read acceptance-task.txt and reply exactly ${ACCEPTANCE_MARKER}. Do not modify files.`], fixtureRoot, commandEnv)
     assertDirectTerminalOutput(direct)
     assertDirectEvidence(await recordsFrom(sessionRoot))
 
     await rm(sessionRoot, { recursive: true, force: true })
     await writeFile(join(profileDir, 'cordis.patch.yml'), profilePatch('single-worker', fixtureRoot, sessionRoot))
-    const worker = await run(process.execPath, ['--expose-internals', '--import', 'tsx/esm', cli, '--profile', profileName,
+    const worker = await execute(process.execPath, ['--expose-internals', '--import', 'tsx/esm', cli, '--profile', profileName,
       `Call delegate_worker exactly once with allowedTools ["read"]. Ask it to read acceptance-task.txt and return only a completed HandoffV1 whose summary includes ${ACCEPTANCE_MARKER}. Then give a brief final answer.`], fixtureRoot, commandEnv)
     assertTerminalOutput('Single Worker', worker)
     assertSingleWorkerEvidence(await recordsFrom(sessionRoot))
-    process.stdout.write('PASS: official openai-codex Direct and Single Worker smoke completed.\n')
   } finally {
     await removeProfile(profileDir)
     await rm(fixtureRoot, { recursive: true, force: true })
   }
+}
+
+async function main(): Promise<void> {
+  const dshHome = process.env.DSH_HOME
+  if (dshHome === undefined || dshHome.trim() === '') {
+    throw new Error('DSH_HOME must point at the existing official OpenAI Codex authorization store.')
+  }
+  if (!await exists(PROFILE_MODULES)) {
+    throw new Error('The v0.1 profile dependencies are unavailable; run pnpm install before the provider smoke.')
+  }
+  const harnessRoot = await findHarnessRoot()
+  await runProviderSmoke(harnessRoot, dshHome)
+  process.stdout.write('PASS: official openai-codex Direct and Single Worker smoke completed.\n')
 }
 
 if (process.env[OPT_IN] !== '1') {
