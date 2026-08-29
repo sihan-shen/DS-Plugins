@@ -93,6 +93,14 @@ function appendRootRequest(ctx: Context, sessionId: string) {
   return session
 }
 
+function appendRootHeader(ctx: Context, sessionId: string, header: unknown) {
+  const session = ctx.sessions.create(SessionId(sessionId), {
+    meta: { cwd: '/workspace/ds-plugins' },
+  })
+  session.append('request/header', { header, reason: 'initial' } as never)
+  return session
+}
+
 describe('Direct orchestrator mode', () => {
   it('registers only targeted verification, a bounded prompt section, and one durable root run record', async () => {
     const { ctx, sessionStore, fiber, prompts, tools } = await mountedDirectMode()
@@ -147,6 +155,32 @@ describe('Direct orchestrator mode', () => {
 
     await secondFiber.dispose()
     await first.sessionStore.dispose()
+  })
+
+  it('records the actual request route and ignores malformed route snapshots instead of falling back to worker configuration', async () => {
+    const mounted = await mountedDirectMode()
+
+    const routed = appendRootHeader(mounted.ctx, 'direct-resolved-route', {
+      config: { provider: 'deepseek', model: 'deepseek-reasoner' },
+    })
+    const missingModel = appendRootHeader(mounted.ctx, 'direct-missing-route-field', {
+      config: { provider: 'deepseek' },
+    })
+    const malformedConfig = appendRootHeader(mounted.ctx, 'direct-malformed-route-shape', {
+      config: 'not-a-route',
+    })
+    await Promise.resolve()
+
+    expect(routed.events.filter(event => event.type === 'dsh-plugin/run-started')).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({ mode: 'direct', provider: 'deepseek', model: 'deepseek-reasoner' }),
+      }),
+    ])
+    expect(missingModel.events.filter(event => event.type === 'dsh-plugin/run-started')).toEqual([])
+    expect(malformedConfig.events.filter(event => event.type === 'dsh-plugin/run-started')).toEqual([])
+
+    await mounted.fiber.dispose()
+    await mounted.sessionStore.dispose()
   })
 
   it('preserves one durable run record when HMR remounts an active root session', async () => {

@@ -9,6 +9,9 @@ export const MAX_TOOL_TIMEOUT_MS = 600_000
 /** Maximum bytes retained from one verification command's combined output. */
 export const MAX_VERIFICATION_OUTPUT_BYTES = 1_048_576
 
+/** Maximum output tokens admitted for one foreground worker. */
+export const MAX_WORKER_TOKENS = 128_000
+
 /** Maximum UTF-8 byte length for one handoff string field. */
 export const MAX_HANDOFF_STRING_BYTES = 16_384
 
@@ -88,7 +91,7 @@ export function parseConfig(value: unknown): OrchestratorConfig {
   const reasoningEffort = worker.reasoningEffort === undefined
     ? undefined
     : nonEmptyString(worker.reasoningEffort, 'worker.reasoningEffort')
-  const maxTokens = positiveInteger(worker.maxTokens, 'worker.maxTokens')
+  const maxTokens = positiveInteger(worker.maxTokens, 'worker.maxTokens', MAX_WORKER_TOKENS)
 
   const budgets = record(config.budgets, 'budgets')
   onlyKeys(budgets, 'budgets', ['maxWorkers', 'maxPluginToolActions', 'toolTimeoutMs'])

@@ -2,7 +2,7 @@ import { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-subagent'
 import type {} from '@deepseek-ai/dsh-tools'
 import { describe, expect, it, vi } from 'vitest'
-import { Session, SessionId } from '@deepseek-ai/dsh-session'
+import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { createDelegateWorkerTool, HANDOFF_V1_JSON_SCHEMA, mountSingleWorkerMode, runWorker } from '../src/worker.ts'
 import type { HandoffV1, OrchestratorConfig } from '../src/types.ts'
 
@@ -159,6 +159,26 @@ function toolRegistry() {
       return tools.get(name)
     },
   }
+}
+
+async function mountedSingleWorkerMode() {
+  const ctx = new Context()
+  const sessionStore = await ctx.plugin(SessionStore)
+  const tools = toolRegistry()
+  ctx.provide('tools', tools as never)
+  ctx.provide('subagents', new FakeSubagents(async () => {
+    throw new Error('worker should not start while testing root route evidence')
+  }) as never)
+  const budgetRegistry = {
+    forRootSession: () => ({
+      admitPluginTool: () => ({ allowed: true as const }),
+      admitWorker: () => ({ allowed: true as const }),
+    }),
+  }
+  const fiber = await ctx.plugin(child => {
+    mountSingleWorkerMode(child, config, budgetRegistry)
+  })
+  return { ctx, sessionStore, fiber }
 }
 
 describe('one-shot worker runtime', () => {
@@ -475,5 +495,42 @@ describe('single-worker service lifecycle', () => {
 
     await fiber.dispose()
     expect(tools.get('delegate_worker')).toBeUndefined()
+  })
+
+  it('records the actual root request route and ignores malformed route snapshots', async () => {
+    const mounted = await mountedSingleWorkerMode()
+    const routed = mounted.ctx.sessions.create(SessionId('worker-resolved-route'), {
+      meta: { cwd: workspaceRoot },
+    })
+    routed.append('request/header', {
+      header: { config: { provider: 'deepseek', model: 'deepseek-reasoner' } },
+      reason: 'initial',
+    })
+    const missingModel = mounted.ctx.sessions.create(SessionId('worker-missing-route-field'), {
+      meta: { cwd: workspaceRoot },
+    })
+    missingModel.append('request/header', {
+      header: { config: { provider: 'deepseek' } },
+      reason: 'initial',
+    } as never)
+    const malformedConfig = mounted.ctx.sessions.create(SessionId('worker-malformed-route-shape'), {
+      meta: { cwd: workspaceRoot },
+    })
+    malformedConfig.append('request/header', {
+      header: { config: 'not-a-route' },
+      reason: 'initial',
+    } as never)
+    await Promise.resolve()
+
+    expect(routed.events.filter(event => event.type === 'dsh-plugin/run-started')).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({ mode: 'single-worker', provider: 'deepseek', model: 'deepseek-reasoner' }),
+      }),
+    ])
+    expect(missingModel.events.filter(event => event.type === 'dsh-plugin/run-started')).toEqual([])
+    expect(malformedConfig.events.filter(event => event.type === 'dsh-plugin/run-started')).toEqual([])
+
+    await mounted.fiber.dispose()
+    await mounted.sessionStore.dispose()
   })
 })

@@ -1,7 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { appendRunStarted } from './events.js'
-import type { OrchestratorConfig } from './types.js'
+import { parseRequestRoute, type OrchestratorConfig } from './types.js'
 
 /** Stable prompt-section name consumed by replay and prompt assembly tests. */
 export const DIRECT_PROMPT_SECTION = 'ds-plugins:orchestrator'
@@ -51,6 +51,8 @@ export function mountDirectMode(ctx: Context, config: OrchestratorConfig): void 
     })
     const disposeEvents = ctx.on('session/event', (session, event) => {
       if (event.type !== 'request/header' || session.header.parentSession !== undefined) return
+      const route = parseRequestRoute(event.data.header)
+      if (route === undefined) return
       if (session.events.some(entry => entry.type === 'dsh-plugin/run-started') || pending.has(session.id)) return
       // Session observers run while the triggering append holds its no-reentry guard.
       // Publish the durable companion record immediately after that boundary closes.
@@ -60,8 +62,8 @@ export function mountDirectMode(ctx: Context, config: OrchestratorConfig): void 
         pending.delete(session.id)
         appendRunStarted(session, {
           mode: 'direct',
-          provider: config.worker.provider,
-          model: config.worker.model,
+          provider: route.provider,
+          model: route.model,
         })
       })
     })

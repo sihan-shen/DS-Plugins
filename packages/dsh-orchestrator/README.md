@@ -57,7 +57,7 @@ All top-level fields are required, unknown keys are rejected, and values are val
 | `mode` | Exactly `direct` or `single-worker`. |
 | `worker.provider`, `worker.model` | Non-empty strings. |
 | `worker.reasoningEffort` | Optional non-empty string retained in the WorkerSpec/event. The pinned Agent API does not receive it as an undocumented option. |
-| `worker.maxTokens` | Positive integer. v0.1 has no additional schema maximum. |
+| `worker.maxTokens` | Positive integer, maximum **128000**. The checked-in profile uses **32000**. |
 | `budgets.maxWorkers` | `0` for Direct, `1` for Single Worker; no other value is valid. |
 | `budgets.maxPluginToolActions` | Positive integer, maximum **32**. Counts only `targeted_verify` and `delegate_worker`, not all Harness tools or steps. |
 | `budgets.toolTimeoutMs` | Positive integer, maximum **600000 ms**. |
@@ -87,7 +87,7 @@ schemaVersion, status, summary, changedFiles, decisions, verification, blockers
 
 String fields are capped at **16384 UTF-8 bytes** and every Handoff array at **128 items**. Changed-file paths are slash-normalized, repository-relative, and reject traversal or absolute Windows/POSIX forms. Invalid child output becomes a fixed failed Handoff without copying raw output.
 
-Canonical session evidence consists of versioned `dsh-plugin/` events: `run-started`, `worker-requested`, `worker-finished`, `budget-rejected`, and `verification-finished`. Events project only the configured mode/model, bounded worker spec, validated Handoff, admission counters, and verification evidence. They exclude credentials, authorization headers, tokens, raw model output, and worker transcripts.
+Canonical session evidence consists of versioned `dsh-plugin/` events: `run-started`, `worker-requested`, `worker-finished`, `budget-rejected`, and `verification-finished`. `run-started` projects the actual root `request/header` provider/model route, never the worker deployment fallback; malformed route snapshots produce no record. The other events project bounded worker specs, validated Handoffs, admission counters, and verification evidence. They exclude credentials, authorization headers, tokens, raw model output, and worker transcripts.
 
 ## Provider-smoke boundary
 

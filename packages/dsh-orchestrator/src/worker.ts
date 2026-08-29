@@ -8,7 +8,7 @@ import type { BudgetControllerRegistry } from './budgets.js'
 import { MAX_HANDOFF_ITEMS, MAX_HANDOFF_STRING_BYTES } from './config.js'
 import { appendRunStarted, appendWorkerFinished, appendWorkerRequested } from './events.js'
 import { failedHandoff, normalizeWorkerOutput } from './handoff.js'
-import type { HandoffV1, OrchestratorConfig, WorkerSpecV1 } from './types.js'
+import { parseRequestRoute, type HandoffV1, type OrchestratorConfig, type WorkerSpecV1 } from './types.js'
 
 /** Exact structured result contract requested from every v0.1 child worker. */
 export const HANDOFF_V1_JSON_SCHEMA: ObjectJsonSchema = {
@@ -310,12 +310,14 @@ export function mountSingleWorkerMode(
       const disposeTool = workerCtx.tools.register(createDelegateWorkerTool({ config, subagents: workerCtx.subagents, budgetRegistry }))
       const disposeEvents = workerCtx.on('session/event', (session, event) => {
         if (event.type !== 'request/header' || session.header.parentSession !== undefined) return
+        const route = parseRequestRoute(event.data.header)
+        if (route === undefined) return
         if (session.events.some(entry => entry.type === 'dsh-plugin/run-started') || pending.has(session.id)) return
         pending.set(session.id, session)
         queueMicrotask(() => {
           if (!active || pending.get(session.id) !== session) return
           pending.delete(session.id)
-          appendRunStarted(session, { mode: 'single-worker', provider: config.worker.provider, model: config.worker.model })
+          appendRunStarted(session, { mode: 'single-worker', provider: route.provider, model: route.model })
         })
       })
       const disposeSessions = workerCtx.on('session/disposed', session => {

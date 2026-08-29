@@ -134,4 +134,15 @@ describe('parseConfig', () => {
   ])('rejects an empty worker %s', (_field, config) => {
     expect(() => parseConfig(config)).toThrow(/worker\.(provider|model)/)
   })
+
+  it('accepts the documented worker token ceiling and rejects an excessive value', () => {
+    expect(parseConfig({
+      ...validConfig,
+      worker: { ...validConfig.worker, maxTokens: 128_000 },
+    }).worker.maxTokens).toBe(128_000)
+    expect(() => parseConfig({
+      ...validConfig,
+      worker: { ...validConfig.worker, maxTokens: 128_001 },
+    })).toThrow(/worker\.maxTokens.*128000/i)
+  })
 })

@@ -32,6 +32,27 @@ export interface OrchestratorConfig {
   }
 }
 
+/** Canonical provider route reconstructed from a root request-header snapshot. */
+export interface RequestRouteV1 {
+  readonly provider: string
+  readonly model: string
+}
+
+/**
+ * Project the root request's actual provider route without accepting a deployment fallback.
+ * @param value - Untrusted request-header payload observed from the session event log.
+ * @returns The resolved route only when both canonical identifiers are non-empty strings.
+ */
+export function parseRequestRoute(value: unknown): RequestRouteV1 | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
+  const header = value as { readonly config?: unknown }
+  if (typeof header.config !== 'object' || header.config === null || Array.isArray(header.config)) return undefined
+  const config = header.config as { readonly provider?: unknown; readonly model?: unknown }
+  if (typeof config.provider !== 'string' || config.provider.trim() === '') return undefined
+  if (typeof config.model !== 'string' || config.model.trim() === '') return undefined
+  return { provider: config.provider, model: config.model }
+}
+
 /** Bounded child-session request persisted by a later orchestration task. */
 export interface WorkerSpecV1 {
   readonly schemaVersion: 1
