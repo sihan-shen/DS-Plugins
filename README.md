@@ -2,7 +2,7 @@
 
 基于 DeepSeek Harness（DSH）的个人 Coding Agent 插件方案。目标是构建一个 **ChatGPT/Codex-first、上下文经济、按需多 Agent、可评估演进** 的开发代理，而不是重写一个通用 Agent runtime。
 
-> 当前状态：DSH v0.1 已实现 Direct / Single Worker、Handoff、预算与 targeted verification，并通过 keyless Loader/replay 验收。官方 OpenAI Codex provider 仅提供显式 opt-in smoke；在没有授权账号与配额的环境中，它必须显示跳过，不能被表述为真实 provider 验证。使用和限制见 [`packages/dsh-orchestrator/README.md`](packages/dsh-orchestrator/README.md)。
+> 当前状态：DSH v0.1 已实现 Direct / Single Worker、Handoff、预算与 targeted verification，并通过 keyless Loader/replay 验收。本仓库不执行本地源码或付费 provider smoke；`pnpm test:provider` 始终安全禁用。使用和限制见 [`packages/dsh-orchestrator/README.md`](packages/dsh-orchestrator/README.md)。
 
 ## DeepSeek Harness 开发环境
 
@@ -938,7 +938,7 @@ DS-Plugins/
 
 ### v0.1：基础运行闭环
 
-实现、配置、hard limit、Handoff、验证 allowlist 及 provider-smoke 边界见 [`@ds-plugins/dsh-orchestrator`](packages/dsh-orchestrator/README.md)。当前的 keyless 验收不等同于授权 provider 或真实 coding-task 验收；只有实际运行带 `DSH_RUN_OPENAI_CODEX_SMOKE=1` 的官方路径后才能满足该项。
+实现、配置、hard limit、Handoff、验证 allowlist 及 provider-smoke 边界见 [`@ds-plugins/dsh-orchestrator`](packages/dsh-orchestrator/README.md)。当前仅提供 keyless 验收；本仓库没有真实 provider 或 coding-task 验收路径。
 
 交付：
 

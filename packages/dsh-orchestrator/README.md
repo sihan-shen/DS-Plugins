@@ -89,24 +89,18 @@ String fields are capped at **16384 UTF-8 bytes** and every Handoff array at **1
 
 Canonical session evidence consists of versioned `dsh-plugin/` events: `run-started`, `worker-requested`, `worker-finished`, `budget-rejected`, and `verification-finished`. Events project only the configured mode/model, bounded worker spec, validated Handoff, admission counters, and verification evidence. They exclude credentials, authorization headers, tokens, raw model output, and worker transcripts.
 
-## Official provider smoke
+## Provider-smoke boundary
 
-The opt-in smoke is intentionally keyless by default:
+`pnpm test:provider` is retained as a safe compatibility command, but provider execution is intentionally unavailable:
 
 ```sh
 nix develop --command pnpm test:provider
-# SKIP: set DSH_RUN_OPENAI_CODEX_SMOKE=1 to run the authorized OpenAI Codex smoke.
+# DISABLED: local OpenAI Codex provider smoke is intentionally unavailable; keyless verification only.
 ```
 
-It performs no provider import or network call unless explicitly enabled. With an already authorized official DSH OpenAI Codex account, a pinned Harness source checkout, and quota, run:
+The command exits successfully whether or not `DSH_RUN_OPENAI_CODEX_SMOKE` or `DSH_HARNESS_ROOT` is set. It does not locate or execute a Harness checkout, load an OpenAI/Codex provider, inspect Git state, create a temporary profile, access credentials, or make a network request. The profile therefore does not carry the smoke-only `dsh-headless` dependency.
 
-```sh
-DSH_RUN_OPENAI_CODEX_SMOKE=1 nix develop --command pnpm test:provider
-```
-
-`DSH_HARNESS_ROOT` may point to the pinned `deepseek-harness` checkout when it is not at `upstream/deepseek-harness`; its canonical path must be that checkout's Git top level at commit `b150a551b8d465e31e418e1b2eaf5e79bbb7d28e`. Otherwise discovery first uses the repository's Git common-directory root, then walks ancestors, so an ancestor decoy cannot override the repository checkout in an arbitrary linked-worktree layout. Every Git read disables hooks and optional locks, runs from the candidate with an environment that removes every `GIT_*` variable, and requires a clean tracked worktree. The actual `apps/cli/src/bin.ts` must be a blob in the pinned `HEAD` and byte-for-byte match that blob; an untracked fake directory cannot borrow a parent repository's identity.
-
-This source-integrity gate does not authenticate installed `node_modules`, the package-manager store, or the Node/Git executables selected by `PATH`. Those installed runtime dependencies remain an operator-controlled trust boundary and should come from the reviewed lockfile and installation workflow; the smoke deliberately does not attempt to hash the entire installed dependency tree. After checkout validation, it creates a disposable fixture repository and temporary DSH profile, disables telemetry, and runs bounded Direct and Single Worker tasks. Direct must print `DSH_V0_1_ACCEPTED`; Single Worker must record a completed `HandoffV1` whose summary includes that marker, then expose exactly one bounded parent Handoff projection with no raw transcript or diagnostic fields. It never prints provider output, credentials, authorization headers, or token-store contents. A skipped run is **not** provider validation.
+Keyless Loader/replay tests remain the repository's executable coverage for Direct, Single Worker, Handoff, budgets, and targeted verification. They do not constitute provider or real coding-task acceptance.
 
 ## v0.1 limitations
 
@@ -114,4 +108,4 @@ This source-integrity gate does not authenticate installed `node_modules`, the p
 - The action budget counts plugin-owned tools only, not a total Harness tool or step budget.
 - No adaptive routing, retry policy, model fallback, or paid-provider fallback.
 - No community runtime dependency.
-- The Direct and Single Worker modes, keyless Loader/replay coverage, and the skip path can be verified without a provider. A real-provider acceptance run remains required before claiming v0.1 release completion.
+- The Direct and Single Worker modes and keyless Loader/replay coverage can be verified without a provider. This repository intentionally has no real-provider acceptance path.
