@@ -9,7 +9,7 @@
   "scripts": {
     "build": "pnpm --filter @ds-plugins/dsh-orchestrator run build",
     "typecheck": "tsc -b",
-    "test": "pnpm build && node --expose-internals ./node_modules/vitest/vitest.mjs run",
+    "test": "pnpm build && node --expose-internals ./node_modules/vitest/vitest.mjs run --config vitest.config.ts",
     "test:profile": "vitest run packages/dsh-orchestrator/tests/profile.spec.ts",
     "test:provider": "node --experimental-strip-types tests/provider/openai-codex.smoke.ts"
   },
