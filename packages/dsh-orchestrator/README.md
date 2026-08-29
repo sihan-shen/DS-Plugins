@@ -22,6 +22,8 @@ nix develop --command pnpm test:profile
 
 The checked-in profile selects Direct mode. Change `mode` and the matching `budgets.maxWorkers` together to select Single Worker mode:
 
+Single Worker mode requires the official `subagents` service. Startup waits up to 5 seconds for that service and then fails explicitly if it is unavailable; this is a dependency error, not a Loader hang.
+
 ```yaml
 - id: ds-orchestrator
   config:
