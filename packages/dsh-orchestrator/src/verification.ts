@@ -52,6 +52,11 @@ interface ValidatedVerificationRequest {
   readonly args: readonly string[]
 }
 
+interface ProcessCompletion<T> {
+  readonly outcome?: T
+  readonly spawnFailed: boolean
+}
+
 const utf8Encoder = new TextEncoder()
 
 function utf8ByteLength(value: string): number {
@@ -165,6 +170,44 @@ function throwReason(signal: AbortSignal): never {
   throw signal.reason ?? new DOMException('Verification cancelled', 'AbortError')
 }
 
+/**
+ * Observe process settlement without allowing a cancellation to leave the caller
+ * waiting on a provider that has not yet reported direct-child completion.
+ */
+function settleOrAbort<T>(done: Promise<T>, signal: AbortSignal): Promise<ProcessCompletion<T>> {
+  return new Promise(resolve => {
+    let settled = false
+    const finish = (completion: ProcessCompletion<T>) => {
+      if (settled) return
+      settled = true
+      signal.removeEventListener('abort', onAbort)
+      resolve(completion)
+    }
+    const onAbort = () => { finish({ spawnFailed: false }) }
+    signal.addEventListener('abort', onAbort, { once: true })
+    if (signal.aborted) onAbort()
+    done.then(
+      outcome => { finish({ outcome, spawnFailed: false }) },
+      () => { finish({ spawnFailed: true }) },
+    )
+  })
+}
+
+/** Bound process-tree quiescence through the pinned SubprocessHandle API. */
+async function waitForCleanup(handle: ReturnType<SubprocessRuntime['spawn']>): Promise<void> {
+  const cleanup = new AbortController()
+  const timer = setTimeout(() => {
+    cleanup.abort(new DOMException('Verification cleanup timed out', 'TimeoutError'))
+  }, VERIFICATION_CLEANUP_ALLOWANCE_MS)
+  try {
+    await handle.waitForExit(cleanup.signal)
+  } catch {
+    // Cleanup is best effort after the bounded wait. Evidence must still be durable.
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 function targetedVerifyInput(value: unknown): TargetedVerifyInput {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new TypeError('targeted_verify arguments must be an object')
@@ -221,7 +264,9 @@ export class VerificationService {
     const combinedSignal = AbortSignal.any([signal, timeoutController.signal])
     const startedAt = Date.now()
     let handle: ReturnType<SubprocessRuntime['spawn']> | undefined
-    let evidence: VerificationEvidenceV1
+    let completion: ProcessCompletion<Awaited<ReturnType<SubprocessRuntime['spawn']>['done']>> = {
+      spawnFailed: true,
+    }
 
     try {
       handle = this.options.subprocess.spawn({
@@ -235,54 +280,46 @@ export class VerificationService {
         graceMs: Math.min(VERIFICATION_TERMINATION_GRACE_MS, this.options.verification.timeoutMs),
         signal: combinedSignal,
       })
-      const outcome = await handle.done
-      const output = boundEvidenceOutput(
-        outputReader(handle.collected.stdout),
-        outputReader(handle.collected.stderr),
-        this.options.verification.maxOutputBytes,
-      )
-      evidence = {
-        schemaVersion: 1,
-        commandName: command.name,
-        args: admittedArgs,
-        exitCode: outcome.exitCode,
-        status: firstAbortCause === 'timeout' ? 'timed-out' : outcome.exitCode === 0 ? 'passed' : 'failed',
-        stdout: output.stdout,
-        stderr: output.stderr,
-        truncated: output.truncated,
-        durationMs: Date.now() - startedAt,
-      }
+      completion = await settleOrAbort(handle.done, combinedSignal)
     } catch {
-      const output = handle === undefined
-        ? { stdout: '', stderr: '', truncated: false }
-        : boundEvidenceOutput(
-          outputReader(handle.collected.stdout),
-          outputReader(handle.collected.stderr),
-          this.options.verification.maxOutputBytes,
-        )
-      evidence = {
-        schemaVersion: 1,
-        commandName: command.name,
-        args: admittedArgs,
-        exitCode: null,
-        status: 'spawn-error',
-        stdout: output.stdout,
-        stderr: output.stderr,
-        truncated: output.truncated,
-        durationMs: Date.now() - startedAt,
-      }
+      completion = { spawnFailed: true }
     } finally {
       clearTimeout(timer)
       try {
         if (handle !== undefined) {
           handle.terminate()
-          await handle.waitForExit()
+          await waitForCleanup(handle)
         }
       } finally {
         signal.removeEventListener('abort', rememberCallerAbort)
       }
     }
 
+    const output = handle === undefined
+      ? { stdout: '', stderr: '', truncated: false }
+      : boundEvidenceOutput(
+        outputReader(handle.collected.stdout),
+        outputReader(handle.collected.stderr),
+        this.options.verification.maxOutputBytes,
+      )
+    const outcome = completion.outcome
+    const evidence: VerificationEvidenceV1 = {
+      schemaVersion: 1,
+      commandName: command.name,
+      args: admittedArgs,
+      exitCode: outcome?.exitCode ?? null,
+      status: firstAbortCause === 'timeout'
+        ? 'timed-out'
+        : completion.spawnFailed
+          ? 'spawn-error'
+          : outcome?.exitCode === 0
+            ? 'passed'
+            : 'failed',
+      stdout: output.stdout,
+      stderr: output.stderr,
+      truncated: output.truncated,
+      durationMs: Date.now() - startedAt,
+    }
     this.options.appendEvidence(evidence)
     if (firstAbortCause === 'caller') throwReason(signal)
     return evidence

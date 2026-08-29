@@ -142,6 +142,31 @@ describe('targeted verification service', () => {
     expect(finished).toEqual([evidence])
   })
 
+  it('bounds a non-quiescing process cleanup to the advertised timeout allowance', async () => {
+    vi.useFakeTimers()
+    try {
+      const finished: unknown[] = []
+      const waitForExit = vi.fn(async (signal?: AbortSignal) => new Promise<boolean>(resolve => {
+        signal?.addEventListener('abort', () => resolve(false), { once: true })
+      }))
+      const subprocess = new FakeSubprocess(() => ({
+        ...handle(new Promise<FakeOutcome>(() => undefined)),
+        waitForExit,
+      }))
+
+      const running = service(subprocess, finished).run('typecheck', [], new AbortController().signal)
+
+      await vi.advanceTimersByTimeAsync(verification.timeoutMs + VERIFICATION_CLEANUP_ALLOWANCE_MS)
+
+      await expect(running).resolves.toMatchObject({ status: 'timed-out', exitCode: null })
+      expect(waitForExit).toHaveBeenCalledTimes(1)
+      expect(waitForExit.mock.calls[0]?.[0]?.aborted).toBe(true)
+      expect(finished).toMatchObject([{ status: 'timed-out', exitCode: null }])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('maps a spawn-level failure to spawn-error and records it', async () => {
     const finished: unknown[] = []
     const evidence = await service(new FakeSubprocess(() => handle(Promise.reject(new Error('spawn failed')))), finished)
