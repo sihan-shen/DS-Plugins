@@ -54,6 +54,7 @@ export {
   mountSingleWorkerMode,
   parseDelegateWorkerInput,
   runWorker,
+  SINGLE_WORKER_STARTUP_TIMEOUT_MS,
 } from './worker.js'
 export type {
   DelegateWorkerInput,
@@ -84,7 +85,7 @@ export const inject = ['systemPrompt', 'tools', 'sessions', 'subprocess']
  * @param ctx - Cordis context that owns session lifecycle and teardown.
  * @param config - Validated deployment configuration whose budget limits are enforced.
  */
-export function apply(ctx: Context, config: OrchestratorConfig): void {
+export const apply = (ctx: Context, config: OrchestratorConfig): void | Promise<void> => {
   const budgets = mountBudgetControllerRegistry(ctx, config.budgets, rootSessionId => rejection => {
     const session = ctx.sessions.get(rootSessionId)
     if (session === undefined) return
@@ -103,7 +104,7 @@ export function apply(ctx: Context, config: OrchestratorConfig): void {
   if (config.mode === 'direct') {
     mountDirectMode(ctx, config)
   } else {
-    mountSingleWorkerMode(ctx, config, budgets.registry)
+    return mountSingleWorkerMode(ctx, config, budgets.registry)
   }
 }
 

@@ -44,6 +44,9 @@ export const HANDOFF_V1_JSON_SCHEMA: ObjectJsonSchema = {
   required: ['schemaVersion', 'status', 'summary', 'changedFiles', 'decisions', 'verification', 'blockers'],
 }
 
+/** Maximum time a Single Worker deployment waits for the required subagents service. */
+export const SINGLE_WORKER_STARTUP_TIMEOUT_MS = 5_000
+
 /** The bounded caller input allowed by the foreground delegation tool. */
 export interface DelegateWorkerInput {
   readonly task: string
@@ -301,9 +304,20 @@ export function mountSingleWorkerMode(
   ctx: Context,
   config: OrchestratorConfig,
   budgetRegistry: Pick<BudgetControllerRegistry, 'forRootSession'>,
-): void {
+): Promise<void> {
   if (config.mode !== 'single-worker') throw new TypeError('mountSingleWorkerMode requires mode "single-worker"')
-  ctx.inject(['subagents'], workerCtx => {
+  return new Promise((resolve, reject) => {
+    let settled = false
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    const settle = (callback: () => void) => {
+      if (settled) return false
+      settled = true
+      if (timeout !== undefined) clearTimeout(timeout)
+      callback()
+      return true
+    }
+    const injection = ctx.inject(['subagents'], workerCtx => {
+      if (!settle(resolve)) return
     workerCtx.effect(() => {
       const pending = new Map<SessionId, Session>()
       let active = true
@@ -330,6 +344,17 @@ export function mountSingleWorkerMode(
         disposeSessions()
         pending.clear()
       }
-    }, 'ds-orchestrator: single worker mode')
+      }, 'ds-orchestrator: single worker mode')
+    })
+    let injectionDispose: Promise<void> | undefined
+    const disposeInjection = () => injectionDispose ??= injection.dispose()
+    timeout = setTimeout(() => {
+      if (!settle(() => reject(new TypeError('single-worker subagents startup timeout')))) return
+      void disposeInjection()
+    }, SINGLE_WORKER_STARTUP_TIMEOUT_MS)
+    ctx.effect(() => async () => {
+      settle(resolve)
+      await disposeInjection()
+    }, 'ds-orchestrator: single worker startup')
   })
 }

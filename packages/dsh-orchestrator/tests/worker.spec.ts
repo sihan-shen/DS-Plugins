@@ -3,7 +3,7 @@ import type {} from '@deepseek-ai/dsh-subagent'
 import type {} from '@deepseek-ai/dsh-tools'
 import { describe, expect, it, vi } from 'vitest'
 import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
-import { createDelegateWorkerTool, HANDOFF_V1_JSON_SCHEMA, mountSingleWorkerMode, runWorker } from '../src/worker.ts'
+import { createDelegateWorkerTool, HANDOFF_V1_JSON_SCHEMA, mountSingleWorkerMode, runWorker, SINGLE_WORKER_STARTUP_TIMEOUT_MS } from '../src/worker.ts'
 import type { HandoffV1, OrchestratorConfig } from '../src/types.ts'
 
 const workspaceRoot = '/workspace/ds-plugins'
@@ -472,7 +472,8 @@ describe('delegate_worker tool', () => {
 })
 
 describe('single-worker service lifecycle', () => {
-  it('mounts delegate_worker only while the optional subagents service is available', async () => {
+  it('waits for a late subagents service before the fixed startup deadline', async () => {
+    vi.useFakeTimers()
     const ctx = new Context()
     const tools = toolRegistry()
     ctx.provide('tools', tools as never)
@@ -482,19 +483,46 @@ describe('single-worker service lifecycle', () => {
         admitWorker: () => ({ allowed: true as const }),
       }),
     }
-    const fiber = await ctx.plugin(child => {
-      mountSingleWorkerMode(child, config, budgetRegistry)
-    })
+    const fiber = ctx.plugin(child => mountSingleWorkerMode(child, config, budgetRegistry))
 
     expect(tools.get('delegate_worker')).toBeUndefined()
-
+    await vi.advanceTimersByTimeAsync(SINGLE_WORKER_STARTUP_TIMEOUT_MS - 1)
     ctx.provide('subagents', new FakeSubagents(async () => {
       throw new Error('worker should not start in this lifecycle test')
     }) as never)
-    await vi.waitFor(() => expect(tools.get('delegate_worker')).toBeDefined())
+    await fiber
+    expect(tools.get('delegate_worker')).toBeDefined()
 
     await fiber.dispose()
     expect(tools.get('delegate_worker')).toBeUndefined()
+    vi.useRealTimers()
+  })
+
+  it('rejects Single Worker startup after the fixed missing-subagents deadline', async () => {
+    vi.useFakeTimers()
+    const ctx = new Context()
+    ctx.provide('tools', toolRegistry() as never)
+    const fiber = ctx.plugin(child => mountSingleWorkerMode(child, config, {
+      forRootSession: () => ({ admitPluginTool: () => ({ allowed: true as const }), admitWorker: () => ({ allowed: true as const }) }),
+    }))
+    await vi.advanceTimersByTimeAsync(SINGLE_WORKER_STARTUP_TIMEOUT_MS)
+    await expect(fiber).rejects.toThrow(/single-worker.*subagents.*timeout/i)
+    vi.useRealTimers()
+  })
+
+  it('cancels a pending Single Worker startup on disposal without mounting late', async () => {
+    vi.useFakeTimers()
+    const ctx = new Context()
+    const tools = toolRegistry()
+    ctx.provide('tools', tools as never)
+    const fiber = ctx.plugin(child => mountSingleWorkerMode(child, config, {
+      forRootSession: () => ({ admitPluginTool: () => ({ allowed: true as const }), admitWorker: () => ({ allowed: true as const }) }),
+    }))
+    await fiber.dispose()
+    await vi.advanceTimersByTimeAsync(SINGLE_WORKER_STARTUP_TIMEOUT_MS)
+    ctx.provide('subagents', new FakeSubagents(async () => { throw new Error('must not mount') }) as never)
+    expect(tools.get('delegate_worker')).toBeUndefined()
+    vi.useRealTimers()
   })
 
   it('records the actual root request route and ignores malformed route snapshots', async () => {
