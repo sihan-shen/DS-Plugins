@@ -28,6 +28,13 @@ import type {
 
 const CACHE_DIRECTORY = '.dsh-context-cache'
 const CACHE_VERSION = 'v1'
+// Keep the public v1 directory and canonical filenames stable. Record schema 1
+// was emitted with incompatible shapes: d40dba4 stored LRU fields in JSON and
+// omitted tool-result byte limits, while 3796cbd reused version 1 after moving
+// LRU data to filesystem metadata. Quarantine every schema-1 record because a
+// tool result without its write-time limit cannot be migrated safely.
+const RECORD_SCHEMA_VERSION = 2
+const KEY_SCHEMA_VERSION = 1
 const MAX_ENTRIES = 10_000
 const MAX_BYTES = 268_435_456
 const MAX_QUARANTINE_FILES = 32
@@ -53,23 +60,23 @@ type CachePaths = {
   readonly clock: string
 }
 
-type StoredEntryV1 = {
-  schemaVersion: 1
+type StoredEntryV2 = {
+  schemaVersion: typeof RECORD_SCHEMA_VERSION
   block: ContextBlockV1
   boundary: CacheBoundaryV1
   dependencyHashes: readonly string[]
   createdAt: number
 }
 
-type StoredLookupV1 = {
-  schemaVersion: 1
+type StoredLookupV2 = {
+  schemaVersion: typeof RECORD_SCHEMA_VERSION
   key: CacheLookupKeyV1
   blockIds: readonly string[]
   dependencyHashes: readonly string[]
 }
 
-type StoredToolResultV1 = {
-  schemaVersion: 1
+type StoredToolResultV2 = {
+  schemaVersion: typeof RECORD_SCHEMA_VERSION
   entryType: 'tool-result'
   key: string
   boundary: CacheBoundaryV1
@@ -81,21 +88,21 @@ type StoredToolResultV1 = {
 
 type EntryFile = {
   readonly name: string
-  readonly record: StoredEntryV1 | StoredToolResultV1
+  readonly record: StoredEntryV2 | StoredToolResultV2
   readonly bytes: number
   readonly lastAccessAt: number
 }
 
 type BlockEntryFile = {
   readonly name: string
-  readonly record: StoredEntryV1
+  readonly record: StoredEntryV2
   readonly bytes: number
   readonly lastAccessAt: number
 }
 
 type LookupFile = {
   readonly name: string
-  readonly record: StoredLookupV1
+  readonly record: StoredLookupV2
   readonly bytes: number
   readonly lastAccessAt: number
 }
@@ -228,17 +235,17 @@ async function cachePaths(deploymentRoot: string): Promise<CachePaths> {
   return { root, entries, lookups, quarantine, lock: join(root, '.lock'), clock }
 }
 
-function parseStoredEntry(value: unknown): StoredEntryV1 {
+function parseStoredEntry(value: unknown): StoredEntryV2 {
   if (!isRecord(value)) throw new TypeError('entry must be an object')
+  if (value.schemaVersion !== RECORD_SCHEMA_VERSION) throw new TypeError(`entry.schemaVersion must be ${RECORD_SCHEMA_VERSION}`)
   exactKeys(value, ['schemaVersion', 'block', 'boundary', 'dependencyHashes', 'createdAt'], 'entry')
-  if (value.schemaVersion !== 1) throw new TypeError('entry.schemaVersion must be 1')
   const block = parseContextBlockV1(value.block)
   const boundary = normalizeBoundary(value.boundary)
   assertBlockBoundary(block, boundary)
   const dependencyHashes = normalizeHashes(value.dependencyHashes, 'entry.dependencyHashes')
   if (!sameStrings(dependencyHashes, dependencyHashesForBlock(block))) throw new TypeError('entry dependency hashes do not match block sources')
   return {
-    schemaVersion: 1,
+    schemaVersion: RECORD_SCHEMA_VERSION,
     block,
     boundary,
     dependencyHashes,
@@ -246,10 +253,10 @@ function parseStoredEntry(value: unknown): StoredEntryV1 {
   }
 }
 
-function parseStoredLookup(value: unknown): StoredLookupV1 {
+function parseStoredLookup(value: unknown): StoredLookupV2 {
   if (!isRecord(value)) throw new TypeError('lookup must be an object')
+  if (value.schemaVersion !== RECORD_SCHEMA_VERSION) throw new TypeError(`lookup.schemaVersion must be ${RECORD_SCHEMA_VERSION}`)
   exactKeys(value, ['schemaVersion', 'key', 'blockIds', 'dependencyHashes'], 'lookup')
-  if (value.schemaVersion !== 1) throw new TypeError('lookup.schemaVersion must be 1')
   const key = normalizeLookupKey(value.key)
   const dependencyHashes = normalizeHashes(value.dependencyHashes, 'lookup.dependencyHashes')
   if (!sameStrings(dependencyHashes, key.dependencyHashes)) throw new TypeError('lookup dependency hashes do not match key')
@@ -260,7 +267,7 @@ function parseStoredLookup(value: unknown): StoredLookupV1 {
   })
   if (new Set(blockIds).size !== blockIds.length) throw new TypeError('lookup.blockIds must not contain duplicates')
   return {
-    schemaVersion: 1,
+    schemaVersion: RECORD_SCHEMA_VERSION,
     key,
     blockIds,
     dependencyHashes,
@@ -276,13 +283,13 @@ function normalizeJsonValue(value: unknown, path: string): { readonly serialized
   }
 }
 
-function parseStoredToolResult(value: unknown): StoredToolResultV1 {
+function parseStoredToolResult(value: unknown): StoredToolResultV2 {
   if (!isRecord(value)) throw new TypeError('tool result must be an object')
+  if (value.schemaVersion !== RECORD_SCHEMA_VERSION) throw new TypeError(`toolResult.schemaVersion must be ${RECORD_SCHEMA_VERSION}`)
   exactKeys(value, [
     'schemaVersion', 'entryType', 'key', 'boundary', 'value', 'maxBytes',
     'valueByteLength', 'createdAt',
   ], 'toolResult')
-  if (value.schemaVersion !== 1) throw new TypeError('toolResult.schemaVersion must be 1')
   if (value.entryType !== 'tool-result') throw new TypeError('toolResult.entryType must be tool-result')
   const normalizedValue = normalizeJsonValue(value.value, 'toolResult.value')
   const maxBytes = requiredInteger(value.maxBytes, 'toolResult.maxBytes')
@@ -292,7 +299,7 @@ function parseStoredToolResult(value: unknown): StoredToolResultV1 {
   if (valueByteLength !== actualByteLength) throw new TypeError('toolResult.valueByteLength does not match value')
   if (actualByteLength > maxBytes) throw new TypeError('toolResult.value exceeds maxBytes')
   return {
-    schemaVersion: 1,
+    schemaVersion: RECORD_SCHEMA_VERSION,
     entryType: 'tool-result',
     key: requiredString(value.key, 'toolResult.key'),
     boundary: normalizeBoundary(value.boundary),
@@ -304,7 +311,7 @@ function parseStoredToolResult(value: unknown): StoredToolResultV1 {
 }
 
 function lookupId(key: CacheLookupKeyV1): string {
-  return sha256Utf8(canonicalJson({ schemaVersion: 1, ...key }))
+  return sha256Utf8(canonicalJson({ schemaVersion: KEY_SCHEMA_VERSION, ...key }))
 }
 
 function lookupName(key: CacheLookupKeyV1): string {
@@ -320,7 +327,7 @@ function hashFileStem(hash: string): string {
 }
 
 function toolResultName(key: string, boundary: CacheBoundaryV1): string {
-  const id = sha256Utf8(canonicalJson({ schemaVersion: 1, key, boundary }))
+  const id = sha256Utf8(canonicalJson({ schemaVersion: KEY_SCHEMA_VERSION, key, boundary }))
   return `tool-result.${hashFileStem(id)}.json`
 }
 
@@ -336,7 +343,7 @@ function variantEntryName(blockId: string, boundary: CacheBoundaryV1): string {
   return `block.${hashFileStem(blockId)}.${hashFileStem(boundaryId(boundary))}.json`
 }
 
-function unionDependencies(entries: readonly StoredEntryV1[]): readonly string[] {
+function unionDependencies(entries: readonly StoredEntryV2[]): readonly string[] {
   return [...new Set(entries.flatMap(entry => entry.dependencyHashes))].sort()
 }
 
@@ -402,8 +409,8 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
       const direct = await this.readEntryLocked(directName)
       const name = direct === undefined ? directName : variantEntryName(parsedBlock.blockId, normalizedBoundary)
       const now = Date.now()
-      const entry: StoredEntryV1 = {
-        schemaVersion: 1,
+      const entry: StoredEntryV2 = {
+        schemaVersion: RECORD_SCHEMA_VERSION,
         block: parsedBlock,
         boundary: normalizedBoundary,
         dependencyHashes,
@@ -443,8 +450,8 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
       const name = toolResultName(normalizedKey, normalizedBoundary)
       if (await this.readToolResultLocked(name) !== undefined) return
       const now = Date.now()
-      const result: StoredToolResultV1 = {
-        schemaVersion: 1,
+      const result: StoredToolResultV2 = {
+        schemaVersion: RECORD_SCHEMA_VERSION,
         entryType: 'tool-result',
         key: normalizedKey,
         boundary: normalizedBoundary,
@@ -465,7 +472,7 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
       const name = lookupName(normalizedKey)
       const lookup = await this.readLookupLocked(name)
       if (lookup === undefined || !sameLookupKey(lookup.key, normalizedKey)) return undefined
-      const entries: StoredEntryV1[] = []
+      const entries: StoredEntryV2[] = []
       for (const blockId of lookup.blockIds) {
         const entry = await this.findEntryLocked(blockId, normalizedKey)
         if (entry === undefined) return undefined
@@ -487,7 +494,7 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
     })
     if (new Set(normalizedBlockIds).size !== normalizedBlockIds.length) throw new TypeError('blockIds must not contain duplicates')
     await this.withLock(async () => {
-      const entries: StoredEntryV1[] = []
+      const entries: StoredEntryV2[] = []
       for (const blockId of normalizedBlockIds) {
         const entry = await this.findEntryLocked(blockId, normalizedKey)
         if (entry === undefined) return
@@ -495,9 +502,9 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
       }
       if (!sameStrings(unionDependencies(entries), normalizedKey.dependencyHashes)) return
       const name = lookupName(normalizedKey)
-      if (await this.readLookupLocked(name) !== undefined) return
-      const lookup: StoredLookupV1 = {
-        schemaVersion: 1,
+      await this.readLookupLocked(name)
+      const lookup: StoredLookupV2 = {
+        schemaVersion: RECORD_SCHEMA_VERSION,
         key: normalizedKey,
         blockIds: normalizedBlockIds,
         dependencyHashes: normalizedKey.dependencyHashes,
@@ -528,7 +535,7 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
           await unlink(join(this.paths.lookups, name)).catch(error => { if (!isMissing(error)) throw error })
           continue
         }
-        const retainedEntries: StoredEntryV1[] = []
+        const retainedEntries: StoredEntryV2[] = []
         for (const blockId of retained) {
           const entry = await this.findEntryLocked(blockId, lookup.key)
           if (entry !== undefined) retainedEntries.push(entry)
@@ -603,7 +610,7 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
     return children.filter((child: Dirent) => child.isFile() && child.name.endsWith('.json')).map(child => child.name)
   }
 
-  private async readEntryLocked(name: string): Promise<StoredEntryV1 | undefined> {
+  private async readEntryLocked(name: string): Promise<StoredEntryV2 | undefined> {
     const path = join(this.paths.entries, name)
     let raw: string
     try {
@@ -617,14 +624,14 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
       const record = parseStoredEntry(JSON.parse(raw))
       const expectedNames = [directEntryName(record.block.blockId), variantEntryName(record.block.blockId, record.boundary)]
       if (!expectedNames.includes(name)) throw new TypeError('entry filename does not match block identity')
-      return Object.assign(record, { __fileName: name }) as StoredEntryV1 & { __fileName: string }
+      return Object.assign(record, { __fileName: name }) as StoredEntryV2 & { __fileName: string }
     } catch {
       await this.quarantineLocked(path)
       return undefined
     }
   }
 
-  private async readLookupLocked(name: string): Promise<StoredLookupV1 | undefined> {
+  private async readLookupLocked(name: string): Promise<StoredLookupV2 | undefined> {
     const path = join(this.paths.lookups, name)
     let raw: string
     try {
@@ -644,7 +651,7 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
     }
   }
 
-  private async readToolResultLocked(name: string): Promise<StoredToolResultV1 | undefined> {
+  private async readToolResultLocked(name: string): Promise<StoredToolResultV2 | undefined> {
     const path = join(this.paths.entries, name)
     let raw: string
     try {
@@ -664,10 +671,10 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
     }
   }
 
-  private async findEntryLocked(blockId: string, boundary: CacheBoundaryV1): Promise<(StoredEntryV1 & { __fileName: string }) | undefined> {
+  private async findEntryLocked(blockId: string, boundary: CacheBoundaryV1): Promise<(StoredEntryV2 & { __fileName: string }) | undefined> {
     const names = [directEntryName(blockId), variantEntryName(blockId, boundary)]
     for (const name of names) {
-      const entry = await this.readEntryLocked(name) as (StoredEntryV1 & { __fileName: string }) | undefined
+      const entry = await this.readEntryLocked(name) as (StoredEntryV2 & { __fileName: string }) | undefined
       if (entry === undefined) continue
       if (entry.block.blockId !== blockId) {
         await this.quarantineLocked(join(this.paths.entries, name))
@@ -717,8 +724,8 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
     return files
   }
 
-  private async lookupIsCompleteLocked(lookup: StoredLookupV1): Promise<boolean> {
-    const entries: StoredEntryV1[] = []
+  private async lookupIsCompleteLocked(lookup: StoredLookupV2): Promise<boolean> {
+    const entries: StoredEntryV2[] = []
     for (const blockId of lookup.blockIds) {
       const entry = await this.findEntryLocked(blockId, lookup.key)
       if (entry === undefined) return false

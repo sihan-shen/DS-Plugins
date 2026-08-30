@@ -256,6 +256,22 @@ describe('ContextCacheStore layout and boundaries', () => {
     await store.close()
   })
 
+  it('replaces an existing lookup when the canonical key is written with new block ids', async () => {
+    const root = await makeRoot()
+    const store = await ContextCacheStore.open({ deploymentRoot: root })
+    const first = makeBlock(root, 'first lookup result')
+    const second = makeBlock(root, 'second lookup result')
+    const key = lookupKey(first.boundary, 'find symbols', [sourceHashA])
+    await store.putBlock(first.block, first.boundary)
+    await store.putBlock(second.block, second.boundary)
+    await store.putLookup(key, [first.block.blockId])
+
+    await store.putLookup(key, [second.block.blockId])
+
+    expect(await store.getLookup(key)).toEqual([second.block.blockId])
+    await store.close()
+  })
+
   it('does not expose a final entry when only a partial temporary write exists', async () => {
     const root = await makeRoot()
     const store = await ContextCacheStore.open({ deploymentRoot: root })
@@ -280,6 +296,76 @@ describe('ContextCacheStore layout and boundaries', () => {
     expect(names).not.toHaveLength(0)
     for (const name of names) expect(name).toMatch(/^[a-z0-9.-]+\.json$/)
     await store.close()
+  })
+
+  it('quarantines record schema 1 instead of silently reusing it in the v1 cache directory', async () => {
+    const root = await makeRoot()
+    const store = await ContextCacheStore.open({ deploymentRoot: root })
+    const { block, boundary: currentBoundary } = makeBlock(root, 'cached')
+    const key = lookupKey(currentBoundary, 'find symbols', [sourceHashA])
+    await store.putBlock(block, currentBoundary)
+    await store.putToolResult('tool', currentBoundary, { ok: true }, 128)
+    await store.putLookup(key, [block.blockId])
+    await store.close()
+
+    const cacheRoot = join(root, '.dsh-context-cache', 'v1')
+    for (const directory of ['entries', 'lookups'] as const) {
+      for (const name of await readdir(join(cacheRoot, directory))) {
+        if (!name.endsWith('.json')) continue
+        const path = join(cacheRoot, directory, name)
+        const record = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
+        record.schemaVersion = 1
+        await writeFile(path, JSON.stringify(record), 'utf8')
+      }
+    }
+
+    const reopened = await ContextCacheStore.open({ deploymentRoot: root })
+    expect(await reopened.getBlock(block.blockId, currentBoundary)).toBeUndefined()
+    expect(await reopened.getToolResult('tool', currentBoundary)).toBeUndefined()
+    expect(await reopened.getLookup(key)).toBeUndefined()
+    expect((await cacheFiles(root, 'entries')).filter(name => name.endsWith('.json'))).toEqual([])
+    expect((await cacheFiles(root, 'lookups')).filter(name => name.endsWith('.json'))).toEqual([])
+    expect(await cacheFiles(root, 'quarantine')).toHaveLength(3)
+    await reopened.close()
+  })
+
+  it('quarantines d40dba4 record shapes under the explicit record schema policy', async () => {
+    const root = await makeRoot()
+    const store = await ContextCacheStore.open({ deploymentRoot: root })
+    const { block, boundary: currentBoundary } = makeBlock(root, 'cached')
+    const key = lookupKey(currentBoundary, 'find symbols', [sourceHashA])
+    await store.putBlock(block, currentBoundary)
+    await store.putToolResult('tool', currentBoundary, { ok: true }, 128)
+    await store.putLookup(key, [block.blockId])
+    await store.close()
+
+    const cacheRoot = join(root, '.dsh-context-cache', 'v1')
+    const entries = join(cacheRoot, 'entries')
+    for (const name of await readdir(entries)) {
+      if (!name.endsWith('.json')) continue
+      const path = join(entries, name)
+      const record = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
+      record.schemaVersion = 1
+      record.lastAccessAt = 1_000
+      if (name.startsWith('tool-result.')) {
+        delete record.maxBytes
+        delete record.valueByteLength
+      }
+      await writeFile(path, JSON.stringify(record), 'utf8')
+    }
+    const lookups = join(cacheRoot, 'lookups')
+    const lookupName = (await readdir(lookups)).find(name => name.endsWith('.json')) as string
+    const lookupRecord = JSON.parse(await readFile(join(lookups, lookupName), 'utf8')) as Record<string, unknown>
+    lookupRecord.schemaVersion = 1
+    lookupRecord.lastAccessAt = 1_000
+    await writeFile(join(lookups, lookupName), JSON.stringify(lookupRecord), 'utf8')
+
+    const reopened = await ContextCacheStore.open({ deploymentRoot: root })
+    expect(await reopened.getBlock(block.blockId, currentBoundary)).toBeUndefined()
+    expect(await reopened.getToolResult('tool', currentBoundary)).toBeUndefined()
+    expect(await reopened.getLookup(key)).toBeUndefined()
+    expect(await cacheFiles(root, 'quarantine')).toHaveLength(3)
+    await reopened.close()
   })
 
   it('keeps cached JSON content immutable across successful reads', async () => {
