@@ -94,12 +94,21 @@ export type PluginCompatibilityReportV1 = {
   status: 'direct-compatible' | 'patch-required' | 'rejected'
   peer_range: string
   peer_accepts_dsh: boolean
+  node_range: string
+  node_version_checked: string
+  node_compatible: boolean
   permissions: readonly string[]
+  network_permission: boolean
+  network_isolation_proven: boolean
   lifecycle_scripts: readonly string[]
+  lifecycle_safe: boolean
   registration_tools: readonly string[]
+  registration_write_tools: readonly string[]
+  read_only_session_sufficient: boolean
   manifest_sha256: string
   registration_snapshot_sha256: string
   artifact_integrity: 'verified' | 'not-provided' | 'failed'
+  artifact_metadata_bound: boolean
   next_action: string
 }
 

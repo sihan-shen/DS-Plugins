@@ -107,8 +107,8 @@ const validAggregate = {
 const validPromotion = {
   schema_version: 1,
   corpus_id: 'corpus-1',
-  task_count: 1,
-  repository_shape_count: 1,
+  task_count: 12,
+  repository_shape_count: 3,
   thresholds: {
     min_median_source_token_reduction: 0.25,
     min_mean_symbol_query_recall_at_5: 0.95,
@@ -161,7 +161,10 @@ describe('v0.2a context contracts', () => {
 
   it('rejects unsafe paths and malformed bounded page metadata', () => {
     expect(() => parseRepositorySnapshotV1({ ...validSnapshot, files: [{ ...validSnapshot.files[0], path: '/etc/passwd' }] })).toThrow()
+    expect(() => parseRepositorySnapshotV1({ ...validSnapshot, files: [{ ...validSnapshot.files[0], path: 'src\\a.ts' }] })).toThrow()
+    expect(() => parseRepositorySnapshotV1({ ...validSnapshot, files: [{ ...validSnapshot.files[0], path: 'src/./a.ts' }] })).toThrow()
     expect(() => parseRepoMapPageV1({ ...validRepoMapPage, items: [{ ...validRepoMapPage.items[0], path: '../secret' }] })).toThrow()
+    expect(() => parseRepoMapPageV1({ ...validRepoMapPage, items: [{ ...validRepoMapPage.items[0], path: 'src/./a.ts' }] })).toThrow()
     expect(() => parseRepoMapPageV1({ ...validRepoMapPage, truncated: true })).toThrow()
     expect(() => parseRepoMapPageV1({ ...validRepoMapPage, nextCursor: '' })).toThrow()
     expect(() => parseRepoMapPageV1({ ...validRepoMapPage, totalItems: 0 })).toThrow()
@@ -194,6 +197,7 @@ describe('v0.2a context contracts', () => {
     expect(() => parseFixtureVerifierV1({ ...validVerifier, id: 'other' })).toThrow()
     expect(() => parseFixtureVerifierV1({ ...validVerifier, required_paths: ['src/a.ts', 'src/a.ts'] })).toThrow()
     expect(() => parseEvaluationTaskV1({ ...validTask, target_symbols: [] })).toThrow()
+    expect(() => parseEvaluationTaskV1({ ...validTask, target_symbols: [{ path: 'src/a.ts', name: 'main' }, { path: 'src/a.ts', name: 'other' }] })).toThrow()
     expect(() => parseEvaluationTaskV1({ ...validTask, baseline_paths: [] })).toThrow()
     expect(() => parseEvaluationTaskV1({ ...validTask, verifier: { ...validVerifier, expected_revision: 'rev-2' } })).toThrow()
     expect(() => parseContextBlockV1({ ...validContextBlock, sources: [{ path: 'src/a.ts', contentHash: 'x', extra: true }] })).toThrow()
@@ -209,13 +213,30 @@ describe('v0.2a context contracts', () => {
     expect(() => parseEvaluationRecordV1({ ...validRecord, run_index: 4 })).toThrow()
     expect(() => parseEvaluationRecordV1({ ...validRecord, symbol_query_mrr: 1.1 })).toThrow()
     expect(() => parseEvaluationRecordV1({ ...validRecord, source_token_estimate: -1 })).toThrow()
+    expect(() => parseEvaluationRecordV1({ ...validRecord, oracle_success: true, verification_status: 'failed' })).toThrow()
+    expect(() => parseEvaluationRecordV1({ ...validRecord, oracle_success: true, verification_status: 'not-run' })).toThrow()
   })
 
   it('rejects invalid promotion status and failure combinations', () => {
+    expect(() => parsePromotionReportV1({ ...validPromotion, task_count: 0 })).toThrow()
+    expect(() => parsePromotionReportV1({
+      ...validPromotion,
+      aggregates: {
+        cold: { ...validAggregate, mean_oracle_success: 0 },
+        warm: validAggregate,
+      },
+    })).toThrow()
     expect(() => parsePromotionReportV1({ ...validPromotion, status: 'failed', passes: true })).toThrow()
     expect(() => parsePromotionReportV1({ ...validPromotion, status: 'not-ready', passes: true })).toThrow()
     expect(() => parsePromotionReportV1({ ...validPromotion, status: 'failed', passes: false })).toThrow()
     expect(() => parsePromotionReportV1({ ...validPromotion, status: 'not-ready', passes: false, failure_class: 'threshold_failed' })).toThrow()
     expect(parsePromotionReportV1({ ...validPromotion, passes: false, status: 'failed', failure_class: 'threshold_failed' })).toMatchObject({ status: 'failed' })
+    expect(parsePromotionReportV1({
+      ...validPromotion,
+      aggregates: {
+        cold: { ...validAggregate, uncached_tokens_per_success: 100.5 },
+        warm: validAggregate,
+      },
+    }).aggregates.cold?.uncached_tokens_per_success).toBe(100.5)
   })
 })

@@ -1,10 +1,18 @@
 export { canonicalJson, sha256Utf8 } from './canonical.js'
 export {
+  assertSafeRepoPath,
+  assertSnapshotHash,
+  isIndexableFile,
+  normalizeRepoPath,
+} from './safe-paths.js'
+export type { IgnoreRules, IndexableFileStat } from './safe-paths.js'
+export {
   parseContextBlockV1,
   parseEvaluationRecordV1,
   parseEvaluationTaskV1,
   parseFixtureVerifierV1,
   parsePromotionReportV1,
+  parsePluginCompatibilityReportV1,
   parseRepoMapPageV1,
   parseRepositorySnapshotV1,
   parseSymbolQueryResultV1,

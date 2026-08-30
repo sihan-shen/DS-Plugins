@@ -1,0 +1,8 @@
+tool:lsp_diagnostics
+tool:lsp_symbols
+tool:lsp_completion
+tool:lsp_signature_help
+tool:lsp_inlay_hints
+tool:lsp_format
+tool:lsp_code_action
+tool:lsp_rename

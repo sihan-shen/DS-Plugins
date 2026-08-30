@@ -2,6 +2,7 @@
   "files": [],
   "references": [
     { "path": "./packages/dsh-context" },
+    { "path": "./packages/dsh-eval" },
     { "path": "./packages/dsh-orchestrator" }
   ]
 }

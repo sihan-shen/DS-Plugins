@@ -3,6 +3,7 @@ import type {
   EvaluationRecordV1,
   EvaluationTaskV1,
   FixtureVerifierV1,
+  PluginCompatibilityReportV1,
   PromotionAggregateV1,
   PromotionReportV1,
   RepoFileSummaryV1,
@@ -63,11 +64,11 @@ function schema(value: RecordValue, field: 'schemaVersion' | 'schema_version', p
 
 function safePath(value: unknown, path: string): string {
   const result = stringValue(value, path)
-  if (result.includes('\0') || result.startsWith('/') || result.startsWith('\\') || /^[A-Za-z]:/.test(result)) {
+  if (result.includes('\0') || result.includes('\\') || result.startsWith('/') || /^[A-Za-z]:/.test(result)) {
     throw new TypeError(`${path} must be repository-relative`)
   }
-  const parts = result.split(/[\\/]/u)
-  if (parts.some(part => part === '..' || part === '')) throw new TypeError(`${path} must not contain traversal or empty path segments`)
+  const parts = result.split('/')
+  if (parts.some(part => part === '.' || part === '..' || part === '')) throw new TypeError(`${path} must not contain traversal, dot, or empty path segments`)
   return result
 }
 
@@ -262,6 +263,8 @@ export function parseEvaluationRecordV1(value: unknown): EvaluationRecordV1 {
   for (const name of ['symbol_query_precision', 'symbol_query_recall_at_5', 'symbol_query_mrr', 'target_coverage'] as const) bounded(required(object, name, '$'), `$.${name}`)
   const verificationStatus = required(object, 'verification_status', '$')
   if (verificationStatus !== 'passed' && verificationStatus !== 'failed' && verificationStatus !== 'not-run') throw new TypeError('$.verification_status is invalid')
+  const oracleSuccess = booleanValue(required(object, 'oracle_success', '$'), '$.oracle_success')
+  if (oracleSuccess && verificationStatus !== 'passed') throw new TypeError('$.oracle_success requires passed verification_status')
   if (Object.prototype.hasOwnProperty.call(object, 'failure_class')) stringValue(object.failure_class, '$.failure_class')
   return {
     schema_version: 1,
@@ -281,7 +284,7 @@ export function parseEvaluationRecordV1(value: unknown): EvaluationRecordV1 {
     symbol_query_recall_at_5: object.symbol_query_recall_at_5 as number,
     symbol_query_mrr: object.symbol_query_mrr as number,
     target_coverage: object.target_coverage as number,
-    oracle_success: booleanValue(required(object, 'oracle_success', '$'), '$.oracle_success'),
+    oracle_success: oracleSuccess,
     verification_status: verificationStatus,
     ...(Object.prototype.hasOwnProperty.call(object, 'failure_class') ? { failure_class: object.failure_class as string } : {}),
     duration_ms: bounded(required(object, 'duration_ms', '$'), '$.duration_ms', 0, Number.POSITIVE_INFINITY),
@@ -300,7 +303,10 @@ function parseAggregate(value: unknown, path: string): PromotionAggregateV1 {
       const item = required(object, 'median_source_token_reduction', path)
       return item === null ? null : bounded(item, `${path}.median_source_token_reduction`, Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY)
     })(),
-    uncached_tokens_per_success: (() => { const item = required(object, 'uncached_tokens_per_success', path); return item === null ? null : integer(item, `${path}.uncached_tokens_per_success`) })(),
+    uncached_tokens_per_success: (() => {
+      const item = required(object, 'uncached_tokens_per_success', path)
+      return item === null ? null : bounded(item, `${path}.uncached_tokens_per_success`, 0, Number.POSITIVE_INFINITY)
+    })(),
     mean_symbol_query_recall_at_5: nullable('mean_symbol_query_recall_at_5', 1),
     mean_target_coverage: nullable('mean_target_coverage', 1),
     mean_oracle_success: nullable('mean_oracle_success', 1),
@@ -323,7 +329,12 @@ export function parsePromotionReportV1(value: unknown): PromotionReportV1 {
   if (status !== 'not-ready' && status !== 'passed' && status !== 'failed') throw new TypeError('$.status is invalid')
   const failureClass = object.failure_class
   if (failureClass !== undefined && failureClass !== 'optimized_records_missing' && failureClass !== 'threshold_failed' && failureClass !== 'invalid_pairing' && failureClass !== 'baseline_zero') throw new TypeError('$.failure_class is invalid')
-  if (status === 'passed' && (!passes || failureClass !== undefined || cold === null || warm === null)) throw new TypeError('passed reports require both aggregates and no failure')
+  const meetsThresholds = (aggregate: PromotionAggregateV1 | null): boolean => aggregate !== null &&
+    aggregate.median_source_token_reduction !== null && aggregate.median_source_token_reduction >= 0.25 &&
+    aggregate.mean_symbol_query_recall_at_5 !== null && aggregate.mean_symbol_query_recall_at_5 >= 0.95 &&
+    aggregate.mean_target_coverage !== null && aggregate.mean_target_coverage >= 0.95 &&
+    aggregate.mean_oracle_success !== null && aggregate.mean_oracle_success >= 0.95
+  if (status === 'passed' && (!passes || failureClass !== undefined || object.task_count === undefined || integer(object.task_count, '$.task_count') < 12 || object.repository_shape_count === undefined || integer(object.repository_shape_count, '$.repository_shape_count') < 3 || !meetsThresholds(cold) || !meetsThresholds(warm))) throw new TypeError('passed reports require the complete corpus and passing aggregates')
   if (status === 'not-ready' && (passes || failureClass !== 'optimized_records_missing' || cold !== null || warm !== null)) throw new TypeError('not-ready reports require missing optimized records')
   if (status === 'failed' && (passes || failureClass === undefined || failureClass === 'optimized_records_missing')) throw new TypeError('failed reports require a non-ready failure class')
   return {
@@ -336,5 +347,56 @@ export function parsePromotionReportV1(value: unknown): PromotionReportV1 {
     passes,
     status,
     ...(failureClass === undefined ? {} : { failure_class: failureClass }),
+  }
+}
+
+function stringArray(value: unknown, path: string): string[] {
+  return array(value, path).map((item, index) => stringValue(item, `${path}[${index}]`))
+}
+
+export function parsePluginCompatibilityReportV1(value: unknown): PluginCompatibilityReportV1 {
+  const object = record(value, '$')
+  keys(object, [
+    'schema_version', 'package_name', 'package_version', 'reviewed_commit', 'dsh_version', 'status', 'peer_range',
+    'peer_accepts_dsh', 'node_range', 'node_version_checked', 'node_compatible', 'permissions', 'network_permission',
+    'network_isolation_proven', 'lifecycle_scripts', 'lifecycle_safe', 'registration_tools', 'registration_write_tools',
+    'read_only_session_sufficient', 'manifest_sha256', 'registration_snapshot_sha256', 'artifact_integrity',
+    'artifact_metadata_bound', 'next_action',
+  ], '$')
+  schema(object, 'schema_version', '$')
+  const status = required(object, 'status', '$')
+  if (status !== 'direct-compatible' && status !== 'patch-required' && status !== 'rejected') throw new TypeError('$.status is invalid')
+  const artifactIntegrity = required(object, 'artifact_integrity', '$')
+  if (artifactIntegrity !== 'verified' && artifactIntegrity !== 'not-provided' && artifactIntegrity !== 'failed') throw new TypeError('$.artifact_integrity is invalid')
+  const hash = (name: string): string => {
+    const value = stringValue(required(object, name, '$'), `$.${name}`)
+    if (!/^sha256:[0-9a-f]{64}$/.test(value)) throw new TypeError(`$.${name} must be a sha256 value`)
+    return value
+  }
+  return {
+    schema_version: 1,
+    package_name: stringValue(required(object, 'package_name', '$'), '$.package_name'),
+    package_version: stringValue(required(object, 'package_version', '$'), '$.package_version'),
+    reviewed_commit: stringValue(required(object, 'reviewed_commit', '$'), '$.reviewed_commit'),
+    dsh_version: stringValue(required(object, 'dsh_version', '$'), '$.dsh_version'),
+    status,
+    peer_range: stringValue(required(object, 'peer_range', '$'), '$.peer_range'),
+    peer_accepts_dsh: booleanValue(required(object, 'peer_accepts_dsh', '$'), '$.peer_accepts_dsh'),
+    node_range: stringValue(required(object, 'node_range', '$'), '$.node_range'),
+    node_version_checked: stringValue(required(object, 'node_version_checked', '$'), '$.node_version_checked'),
+    node_compatible: booleanValue(required(object, 'node_compatible', '$'), '$.node_compatible'),
+    permissions: stringArray(required(object, 'permissions', '$'), '$.permissions'),
+    network_permission: booleanValue(required(object, 'network_permission', '$'), '$.network_permission'),
+    network_isolation_proven: booleanValue(required(object, 'network_isolation_proven', '$'), '$.network_isolation_proven'),
+    lifecycle_scripts: stringArray(required(object, 'lifecycle_scripts', '$'), '$.lifecycle_scripts'),
+    lifecycle_safe: booleanValue(required(object, 'lifecycle_safe', '$'), '$.lifecycle_safe'),
+    registration_tools: stringArray(required(object, 'registration_tools', '$'), '$.registration_tools'),
+    registration_write_tools: stringArray(required(object, 'registration_write_tools', '$'), '$.registration_write_tools'),
+    read_only_session_sufficient: booleanValue(required(object, 'read_only_session_sufficient', '$'), '$.read_only_session_sufficient'),
+    manifest_sha256: hash('manifest_sha256'),
+    registration_snapshot_sha256: hash('registration_snapshot_sha256'),
+    artifact_integrity: artifactIntegrity,
+    artifact_metadata_bound: booleanValue(required(object, 'artifact_metadata_bound', '$'), '$.artifact_metadata_bound'),
+    next_action: stringValue(required(object, 'next_action', '$'), '$.next_action'),
   }
 }

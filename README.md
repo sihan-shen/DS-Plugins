@@ -739,6 +739,8 @@ task evidence -> failure analysis -> candidate change -> eval -> promote or reje
 
 ### Telemetry
 
+v0.2 evaluation serializes the per-run source metric as `source_token_estimate` (the legacy `source_tokens_per_task` name means the same quantity). Per-run uncached input is `uncached_source_tokens`; aggregate `uncached_tokens_per_success` is reported only by `PromotionReportV1`.
+
 关键指标：
 
 ```text
@@ -746,7 +748,8 @@ task_success_rate
 accepted_result_rate
 cache_hit_ratio
 uncached_tokens_per_success
-source_tokens_per_task
+source_token_estimate
+uncached_source_tokens
 lsp_to_source_ratio
 worker_spawn_rate
 worker_reuse_rate
@@ -960,6 +963,12 @@ DS-Plugins/
 - Progressive Disclosure 和有界工具输出。
 
 退出标准：相对 `grep + full file read` 基线，成功任务的源码输入和 uncached tokens 可测量下降，成功率不显著降低。
+
+#### v0.2a 当前基线与安全边界
+
+v0.2a 只验证固定 fixture corpus 的 baseline、共享契约、路径安全、评估指标和插件兼容性 checker：12 个 task，覆盖 `ts-small`、`ts-medium`、`ts-layered` 三种 repository shape；tokenizer 固定为 `@dqbd/tiktoken@1.0.22` 的 `cl100k_base`。v0.2a 不实现 snapshot、Symbol Index、Repo Map、cache，也不证明 provider 或真实 coding-task acceptance。
+
+v0.2b promotion thresholds 已记录但尚未测量：cold 与 warm 两种条件都必须达到 source token reduction ≥ 0.25、mean symbol-query recall@5 ≥ 0.95、mean target coverage ≥ 0.95、mean oracle success ≥ 0.95；在 v0.2a baseline-only 阶段不生成 promotion 结论。`dsh-lsp-actions` 当前决策为 `patch-required`，未安装、未进入默认 profile；详见 [`dsh-lsp-actions compatibility review`](docs/superpowers/reviews/2026-08-30-dsh-lsp-actions-compatibility.md)。
 
 ### v0.3：Adaptive Scheduling
 

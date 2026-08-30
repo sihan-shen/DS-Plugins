@@ -10,6 +10,7 @@
     "build": "pnpm --filter @ds-plugins/dsh-orchestrator run build",
     "typecheck": "tsc -b",
     "test": "pnpm build && node --expose-internals ./node_modules/vitest/vitest.mjs run --config vitest.config.ts",
+    "test:v0.2a": "pnpm --filter @ds-plugins/dsh-context build && pnpm --filter @ds-plugins/dsh-eval build && pnpm exec vitest run packages/dsh-context/tests packages/dsh-eval/tests tests/eval tests/plugins",
     "test:profile": "vitest run packages/dsh-orchestrator/tests/profile.spec.ts",
     "test:provider": "node --experimental-strip-types tests/provider/openai-codex.smoke.ts"
   },

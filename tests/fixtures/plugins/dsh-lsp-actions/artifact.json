@@ -1,0 +1,10 @@
+{
+  "reviewed_commit": "ea0354ca444075b37b791bd8638fecdbc40fb5d0",
+  "package_version": "0.4.0",
+  "artifact_kind": "source-snapshot",
+  "artifact_url": null,
+  "integrity": null,
+  "manifest_sha256": "sha256:672e057fcc49cf809a0d6e0418ccc4b4779ec027015d8696f4b3f632720d9ac7",
+  "registration_snapshot_sha256": "sha256:e020db6f7e24a48d61a2ce1b74bff1a48abfe61a6bc40b4284b62e7d86aad1cf",
+  "snapshot_source": "src/index.ts at reviewed_commit"
+}
