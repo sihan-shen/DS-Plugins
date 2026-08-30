@@ -11,6 +11,23 @@ export type SnapshotConfigV1 = {
   readonly nestedCheckoutRoots: readonly string[]
 }
 
+export type LspDeploymentEnvironmentKey = 'LANG' | 'LC_ALL' | 'TMPDIR' | 'TEMP' | 'TMP'
+
+export type LspDeploymentConfigV1 = {
+  readonly executable: string
+  readonly fixedArgs: readonly string[]
+  readonly environment: Readonly<Partial<Record<LspDeploymentEnvironmentKey, string>>>
+  readonly cwd: string
+  readonly timeoutMs: number
+  readonly maxMessageBytes: number
+  readonly maxStderrBytes: number
+  readonly graceMs: number
+}
+
+export type HostNetworkIsolation =
+  | { readonly networkIsolation: 'enforced'; readonly capabilityId: symbol }
+  | { readonly networkIsolation: 'unavailable' }
+
 export type SourceMeasurementV1 = {
   readonly path: string
   readonly sourceHash: string
@@ -22,6 +39,14 @@ export type SourceMeasurementV1 = {
 
 export type SnapshotTestHooks = {
   readonly afterOpenForTest?: (absolutePath: string) => void | Promise<void>
+}
+
+export type AdapterUnavailableCode = 'network-isolation-unavailable' | 'spawn-failed' | 'timed-out' | 'protocol-invalid' | 'capability-missing'
+
+export type AdapterUnavailableV1 = {
+  readonly adapterId: 'typescript-lsp'
+  readonly adapterVersion: string
+  readonly code: AdapterUnavailableCode
 }
 
 export type InternalSymbolRelationV1 = {
