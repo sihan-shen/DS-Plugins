@@ -1,3 +1,6 @@
 export { parseSnapshotConfig } from './config.js'
 export { RepositorySnapshotStore } from './snapshot.js'
+export { extractFallbackSymbols } from './fallback.js'
+export { buildSymbolIndex, InternalSymbolIndexStore } from './symbol-index.js'
 export type { SnapshotConfigV1, SourceMeasurementV1, RepositorySnapshotV1, RepoFileSummaryV1 } from './types.js'
+export type { InternalSymbolRelationV1, SymbolAdapterResultV1, InternalSymbolEntryV1 } from './types.js'

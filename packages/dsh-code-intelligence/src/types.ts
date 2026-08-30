@@ -1,4 +1,4 @@
-import type { RepositorySnapshotV1, RepoFileSummaryV1 } from '@ds-plugins/dsh-context'
+import type { InternalSymbolEntryV1, RepositorySnapshotV1, RepoFileSummaryV1 } from '@ds-plugins/dsh-context'
 
 export type SnapshotConfigV1 = {
   readonly deploymentRoot: string
@@ -24,4 +24,17 @@ export type SnapshotTestHooks = {
   readonly afterOpenForTest?: (absolutePath: string) => void | Promise<void>
 }
 
-export type { RepoFileSummaryV1, RepositorySnapshotV1 }
+export type InternalSymbolRelationV1 = {
+  readonly kind: 'imports' | 'exports' | 'contains' | 'calls'
+  readonly targetName: string
+  readonly targetPath?: string
+}
+
+export type SymbolAdapterResultV1 = {
+  readonly adapterId: 'typescript-ast-fallback' | 'typescript-lsp'
+  readonly adapterVersion: string
+  readonly entries: readonly InternalSymbolEntryV1[]
+  readonly relations: Readonly<Record<string, readonly InternalSymbolRelationV1[]>>
+}
+
+export type { InternalSymbolEntryV1, RepoFileSummaryV1, RepositorySnapshotV1 }
