@@ -1,8 +1,9 @@
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
-import { parseRepoMapPageV1, parseSymbolQueryResultV1, type RepoMapPageV1, type SymbolQueryResultV1 } from '@ds-plugins/dsh-context'
+import { parseContextBlockV1, parseRepoMapPageV1, parseSymbolQueryResultV1, type ContextBlockV1, type RepoMapPageV1, type SymbolQueryResultV1 } from '@ds-plugins/dsh-context'
 import { buildRepoMap, querySymbols, type RepoMapOptionsV1, type SymbolQueryV1 } from './projections.js'
 import type { InternalSymbolIndexStore } from './symbol-index.js'
 import type { RepositorySnapshotStore } from './snapshot.js'
+import type { ContextCompiler } from './types.js'
 
 type ToolExecution = { readonly signal: AbortSignal }
 type ToolRuntime = { readonly snapshot: RepositorySnapshotStore['snapshot']; readonly index: InternalSymbolIndexStore }
@@ -70,4 +71,66 @@ export function createCodeIntelligenceTools(runtime: ToolRuntime): readonly Tool
     },
   } as ToolDefinition
   return Object.freeze([repoMap, symbolQuery])
+}
+
+const contextParameters = (kind: 'repo-map' | 'symbol' | 'source-window') => ({
+  type: 'object',
+  additionalProperties: false,
+  properties: kind === 'repo-map'
+    ? { snapshotId: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 50 }, cursor: { type: 'string' } }
+    : kind === 'symbol'
+      ? { snapshotId: { type: 'string' }, query: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 50 }, cursor: { type: 'string' } }
+      : {
+          blockId: { type: 'string' },
+          path: { type: 'string' },
+          sourceHash: { type: 'string' },
+          startOffset: { type: 'integer', minimum: 0 },
+          endOffset: { type: 'integer', minimum: 0 },
+        },
+  required: kind === 'repo-map'
+    ? ['snapshotId', 'limit']
+    : kind === 'symbol'
+      ? ['snapshotId', 'query', 'limit']
+      : ['blockId', 'path', 'sourceHash', 'startOffset', 'endOffset'],
+})
+
+function contextOutput(): { readonly schema: { readonly type: 'object' }; readonly render: (args: unknown, value: unknown) => Array<{ type: 'text'; text: string }> } {
+  return {
+    schema: { type: 'object' },
+    render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
+  }
+}
+
+export function createContextTools(compiler: ContextCompiler): readonly ToolDefinition[] {
+  const repoMap = {
+    name: 'context_repo_map',
+    description: 'Compile a bounded repository map Context Block for the current immutable snapshot.',
+    parameters: contextParameters('repo-map'),
+    output: contextOutput(),
+    async execute(rawArgs: unknown, exec: ToolExecution): Promise<ContextBlockV1> {
+      if (exec.signal.aborted) throw exec.signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
+      return parseContextBlockV1(await compiler.repoMap(rawArgs as { snapshotId: string; limit: number; cursor?: string }, exec.signal))
+    },
+  } as ToolDefinition
+  const symbolQuery = {
+    name: 'context_symbol_query',
+    description: 'Compile bounded symbol matches into a Context Block for the current immutable snapshot.',
+    parameters: contextParameters('symbol'),
+    output: contextOutput(),
+    async execute(rawArgs: unknown, exec: ToolExecution): Promise<ContextBlockV1> {
+      if (exec.signal.aborted) throw exec.signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
+      return parseContextBlockV1(await compiler.symbolQuery(rawArgs as { snapshotId: string; query: string; limit: number; cursor?: string }, exec.signal))
+    },
+  } as ToolDefinition
+  const expandSource = {
+    name: 'context_expand_source',
+    description: 'Expand one bounded, provenance-checked source window from a cached Context Block.',
+    parameters: contextParameters('source-window'),
+    output: contextOutput(),
+    async execute(rawArgs: unknown, exec: ToolExecution): Promise<ContextBlockV1> {
+      if (exec.signal.aborted) throw exec.signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
+      return parseContextBlockV1(await compiler.expandSource(rawArgs as { blockId: string; path: string; sourceHash: string; startOffset: number; endOffset: number }, exec.signal))
+    },
+  } as ToolDefinition
+  return Object.freeze([repoMap, symbolQuery, expandSource])
 }

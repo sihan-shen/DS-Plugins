@@ -32,6 +32,9 @@ importers:
       '@ds-plugins/dsh-context':
         specifier: workspace:*
         version: link:../dsh-context
+      '@ds-plugins/dsh-context-cache':
+        specifier: workspace:*
+        version: link:../dsh-context-cache
       picomatch:
         specifier: 4.0.7
         version: 4.0.7

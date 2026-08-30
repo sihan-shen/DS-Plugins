@@ -1,4 +1,8 @@
 import type { InternalSymbolEntryV1, RepositorySnapshotV1, RepoFileSummaryV1 } from '@ds-plugins/dsh-context'
+import type { ContextBlockV1 } from '@ds-plugins/dsh-context'
+import type { ContextCacheStoreApiV1 } from '@ds-plugins/dsh-context-cache'
+import type { InternalSymbolIndexStore } from './symbol-index.js'
+import type { RepositorySnapshotStore } from './snapshot.js'
 
 export type SnapshotConfigV1 = {
   readonly deploymentRoot: string
@@ -63,3 +67,23 @@ export type SymbolAdapterResultV1 = {
 }
 
 export type { InternalSymbolEntryV1, RepoFileSummaryV1, RepositorySnapshotV1 }
+
+export type ContextCompiler = {
+  repoMap(request: { snapshotId: string; limit: number; cursor?: string }, signal: AbortSignal): Promise<ContextBlockV1>
+  symbolQuery(request: { snapshotId: string; query: string; limit: number; cursor?: string }, signal: AbortSignal): Promise<ContextBlockV1>
+  expandSource(request: { blockId: string; path: string; sourceHash: string; startOffset: number; endOffset: number }, signal: AbortSignal): Promise<ContextBlockV1>
+}
+
+export type ContextCompilerStats = {
+  readonly hits: number
+  readonly misses: number
+}
+
+export type ContextCompilerOptions = {
+  readonly workspaceRoot: string
+  readonly store: RepositorySnapshotStore
+  readonly index: InternalSymbolIndexStore
+  readonly cache: ContextCacheStoreApiV1
+  readonly compilerPolicyVersion?: string
+  readonly capabilityVersion?: string
+}
