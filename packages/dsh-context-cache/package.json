@@ -1,0 +1,24 @@
+{
+  "name": "@ds-plugins/dsh-context-cache",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "main": "./lib/src/index.js",
+  "types": "./lib/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/src/index.d.ts",
+      "default": "./lib/src/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ds-plugins/dsh-context": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "26.3.0"
+  }
+}
