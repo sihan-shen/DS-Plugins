@@ -17,6 +17,8 @@
   },
   "devDependencies": {
     "@types/node": "26.3.0",
+    "@deepseek-ai/cordis": "4.0.1",
+    "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
     "tsdown": "0.18.0",
     "typescript": "5.9.3",
     "vitest": "4.0.18"
