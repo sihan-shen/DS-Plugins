@@ -11,6 +11,7 @@ export default defineConfig({
   test: {
     include: [
       'packages/dsh-context/tests/**/*.spec.ts',
+      'packages/dsh-context-cache/tests/**/*.spec.ts',
       'packages/dsh-code-intelligence/tests/**/*.spec.ts',
       'packages/dsh-eval/tests/**/*.spec.ts',
       'packages/dsh-orchestrator/tests/**/*.spec.ts',

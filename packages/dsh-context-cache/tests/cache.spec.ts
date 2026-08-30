@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdtemp, mkdir, readFile, readdir, realpath, rename, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -63,6 +63,15 @@ function lookupKey(currentBoundary: CacheBoundaryV1, normalizedQuery: string, de
 
 async function cacheFiles(root: string, directory: 'entries' | 'lookups' | 'quarantine'): Promise<string[]> {
   return readdir(join(root, '.dsh-context-cache', 'v1', directory))
+}
+
+async function liveBytes(root: string): Promise<number> {
+  let total = 0
+  for (const directory of ['entries', 'lookups'] as const) {
+    const path = join(root, '.dsh-context-cache', 'v1', directory)
+    for (const name of await readdir(path)) total += (await stat(join(path, name))).size
+  }
+  return total
 }
 
 afterEach(async () => {
@@ -174,6 +183,64 @@ describe('ContextCacheStore layout and boundaries', () => {
     await store.close()
   })
 
+  it('never returns a stored tool result that exceeds its persisted write limit', async () => {
+    const root = await makeRoot()
+    const store = await ContextCacheStore.open({ deploymentRoot: root })
+    const currentBoundary = boundary()
+    await store.putToolResult('tool', currentBoundary, { ok: true }, 32)
+    const entries = join(root, '.dsh-context-cache', 'v1', 'entries')
+    const name = (await readdir(entries)).find(file => file.startsWith('tool-result.')) as string
+    const record = JSON.parse(await readFile(join(entries, name), 'utf8')) as Record<string, unknown>
+    record.value = 'x'.repeat(1_024)
+    record.valueByteLength = 1_026
+    await writeFile(join(entries, name), JSON.stringify(record), 'utf8')
+
+    expect(await store.getToolResult('tool', currentBoundary)).toBeUndefined()
+    expect((await cacheFiles(root, 'entries')).filter(file => file.startsWith('tool-result.'))).toEqual([])
+    expect(await cacheFiles(root, 'quarantine')).toHaveLength(1)
+    await store.close()
+  })
+
+  it.each([
+    ['key', (record: Record<string, unknown>) => { record.key = 'forged-tool' }],
+    ['boundary', (record: Record<string, unknown>) => {
+      (record.boundary as Record<string, unknown>).capabilityVersion = 'forged-capability'
+    }],
+  ])('quarantines a tool result with corrupt %s identity and permits repair', async (_name, corrupt) => {
+    const root = await makeRoot()
+    const store = await ContextCacheStore.open({ deploymentRoot: root })
+    const currentBoundary = boundary()
+    await store.putToolResult('tool', currentBoundary, { version: 1 }, 128)
+    const entries = join(root, '.dsh-context-cache', 'v1', 'entries')
+    const name = (await readdir(entries)).find(file => file.startsWith('tool-result.')) as string
+    const record = JSON.parse(await readFile(join(entries, name), 'utf8')) as Record<string, unknown>
+    corrupt(record)
+    await writeFile(join(entries, name), JSON.stringify(record), 'utf8')
+
+    expect(await store.getToolResult('tool', currentBoundary)).toBeUndefined()
+    expect(await cacheFiles(root, 'quarantine')).toHaveLength(1)
+    await store.putToolResult('tool', currentBoundary, { version: 2 }, 128)
+    expect(await store.getToolResult('tool', currentBoundary)).toEqual({ version: 2 })
+    await store.close()
+  })
+
+  it('quarantines corrupt tool-result identity when putToolResult repairs the target', async () => {
+    const root = await makeRoot()
+    const store = await ContextCacheStore.open({ deploymentRoot: root })
+    const currentBoundary = boundary()
+    await store.putToolResult('tool', currentBoundary, { version: 1 }, 128)
+    const entries = join(root, '.dsh-context-cache', 'v1', 'entries')
+    const name = (await readdir(entries)).find(file => file.startsWith('tool-result.')) as string
+    const record = JSON.parse(await readFile(join(entries, name), 'utf8')) as Record<string, unknown>
+    record.key = 'forged-tool'
+    await writeFile(join(entries, name), JSON.stringify(record), 'utf8')
+
+    await store.putToolResult('tool', currentBoundary, { version: 2 }, 128)
+    expect(await cacheFiles(root, 'quarantine')).toHaveLength(1)
+    expect(await store.getToolResult('tool', currentBoundary)).toEqual({ version: 2 })
+    await store.close()
+  })
+
   it('uses canonical lookup keys and returns only exact dependency sets', async () => {
     const root = await makeRoot()
     const store = await ContextCacheStore.open({ deploymentRoot: root })
@@ -214,9 +281,117 @@ describe('ContextCacheStore layout and boundaries', () => {
     for (const name of names) expect(name).toMatch(/^[a-z0-9.-]+\.json$/)
     await store.close()
   })
+
+  it('keeps cached JSON content immutable across successful reads', async () => {
+    const root = await makeRoot()
+    const store = await ContextCacheStore.open({ deploymentRoot: root })
+    const { block, boundary: currentBoundary } = makeBlock(root, 'cached')
+    const key = lookupKey(currentBoundary, 'find symbols', [sourceHashA])
+    await store.putBlock(block, currentBoundary)
+    await store.putToolResult('tool', currentBoundary, { ok: true }, 128)
+    await store.putLookup(key, [block.blockId])
+    const cacheRoot = join(root, '.dsh-context-cache', 'v1')
+    const paths = [
+      ...await cacheFiles(root, 'entries').then(names => names.filter(name => name.endsWith('.json')).map(name => join(cacheRoot, 'entries', name))),
+      ...await cacheFiles(root, 'lookups').then(names => names.filter(name => name.endsWith('.json')).map(name => join(cacheRoot, 'lookups', name))),
+    ]
+    const before = await Promise.all(paths.map(path => readFile(path, 'utf8')))
+
+    expect(await store.getBlock(block.blockId, currentBoundary)).toEqual(block)
+    expect(await store.getToolResult('tool', currentBoundary)).toEqual({ ok: true })
+    expect(await store.getLookup(key)).toEqual([block.blockId])
+
+    expect(await Promise.all(paths.map(path => readFile(path, 'utf8')))).toEqual(before)
+    await store.close()
+  })
+
+  it('preserves existing entries when an atomic write fails', async () => {
+    if (process.platform === 'win32') return
+    const root = await makeRoot()
+    const store = await ContextCacheStore.open({ deploymentRoot: root })
+    const first = makeBlock(root, 'first')
+    const second = makeBlock(root, 'second', [{ path: 'src/b.ts', contentHash: sourceHashB }], { snapshotId: 'snapshot-2' })
+    await store.putBlock(first.block, first.boundary)
+    const entries = join(root, '.dsh-context-cache', 'v1', 'entries')
+    await chmod(entries, 0o500)
+    try {
+      await expect(store.putBlock(second.block, second.boundary)).rejects.toThrow()
+    } finally {
+      await chmod(entries, 0o700)
+    }
+
+    expect(await store.getBlock(first.block.blockId, first.boundary)).toEqual(first.block)
+    expect(await store.getBlock(second.block.blockId, second.boundary)).toBeUndefined()
+    expect((await cacheFiles(root, 'entries')).some(name => name.endsWith('.tmp'))).toBe(false)
+    await store.close()
+  })
 })
 
 describe('ContextCacheStore maintenance', () => {
+  it('counts lookup records toward the live entry cap', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const root = await makeRoot()
+    const store = await ContextCacheStore.open({ deploymentRoot: root, maxEntries: 3 })
+    const { block, boundary: currentBoundary } = makeBlock(root, 'cached')
+    const keys = ['first', 'second', 'third'].map(query => lookupKey(currentBoundary, query, [sourceHashA]))
+    await store.putBlock(block, currentBoundary)
+    await store.putLookup(keys[0], [block.blockId])
+    expect(await store.getBlock(block.blockId, currentBoundary)).toEqual(block)
+    await store.putLookup(keys[1], [block.blockId])
+    expect(await store.getBlock(block.blockId, currentBoundary)).toEqual(block)
+    await store.putLookup(keys[2], [block.blockId])
+
+    expect((await cacheFiles(root, 'entries')).filter(name => name.endsWith('.json'))).toHaveLength(1)
+    expect((await cacheFiles(root, 'lookups')).filter(name => name.endsWith('.json'))).toHaveLength(2)
+    expect(await store.getLookup(keys[0])).toBeUndefined()
+    expect(await store.getLookup(keys[1])).toEqual([block.blockId])
+    expect(await store.getLookup(keys[2])).toEqual([block.blockId])
+    await store.close()
+  })
+
+  it('removes lookup records made stale by entry eviction', async () => {
+    vi.spyOn(Date, 'now').mockReturnValue(1_000)
+    const root = await makeRoot()
+    const store = await ContextCacheStore.open({ deploymentRoot: root, maxEntries: 1 })
+    const { block, boundary: currentBoundary } = makeBlock(root, 'cached')
+    const key = lookupKey(currentBoundary, 'find symbols', [sourceHashA])
+    await store.putBlock(block, currentBoundary)
+    await store.putLookup(key, [block.blockId])
+
+    expect(await cacheFiles(root, 'entries')).toEqual([])
+    expect(await cacheFiles(root, 'lookups')).toEqual([])
+    expect(await store.getLookup(key)).toBeUndefined()
+    await store.close()
+  })
+
+  it('enforces the byte cap across entries and lookups', async () => {
+    const root = await makeRoot()
+    const firstStore = await ContextCacheStore.open({ deploymentRoot: root })
+    const { block, boundary: currentBoundary } = makeBlock(root, 'cached')
+    const key = lookupKey(currentBoundary, 'find symbols', [sourceHashA])
+    await firstStore.putBlock(block, currentBoundary)
+    await firstStore.putLookup(key, [block.blockId])
+    const combinedBytes = await liveBytes(root)
+    await firstStore.close()
+
+    const cappedStore = await ContextCacheStore.open({ deploymentRoot: root, maxBytes: combinedBytes - 1 })
+    expect(await liveBytes(root)).toBeLessThanOrEqual(combinedBytes - 1)
+    expect(await cappedStore.getLookup(key)).toBeUndefined()
+    await cappedStore.close()
+  })
+
+  it('removes orphan temporary files during maintenance', async () => {
+    const root = await makeRoot()
+    await (await ContextCacheStore.open({ deploymentRoot: root })).close()
+    const cacheRoot = join(root, '.dsh-context-cache', 'v1')
+    await writeFile(join(cacheRoot, 'entries', '.orphan-entry.tmp'), 'entry orphan', 'utf8')
+    await writeFile(join(cacheRoot, 'lookups', '.orphan-lookup.tmp'), 'lookup orphan', 'utf8')
+
+    await (await ContextCacheStore.open({ deploymentRoot: root })).close()
+    expect((await cacheFiles(root, 'entries')).some(name => name.endsWith('.tmp'))).toBe(false)
+    expect((await cacheFiles(root, 'lookups')).some(name => name.endsWith('.tmp'))).toBe(false)
+  })
+
   it('invalidates only entries that declare an affected source hash', async () => {
     const root = await makeRoot()
     const store = await ContextCacheStore.open({ deploymentRoot: root })
@@ -282,6 +457,21 @@ describe('ContextCacheStore maintenance', () => {
     await store.close()
   })
 
+  it('quarantines a block stored under a corrupt content address', async () => {
+    const root = await makeRoot()
+    const store = await ContextCacheStore.open({ deploymentRoot: root })
+    const { block, boundary: currentBoundary } = makeBlock(root, 'cached')
+    await store.putBlock(block, currentBoundary)
+    await store.close()
+    const entries = join(root, '.dsh-context-cache', 'v1', 'entries')
+    const name = (await readdir(entries)).find(file => file.endsWith('.json')) as string
+    await rename(join(entries, name), join(entries, `block.${sha256Utf8('forged').slice('sha256:'.length)}.json`))
+
+    await (await ContextCacheStore.open({ deploymentRoot: root })).close()
+    expect((await cacheFiles(root, 'entries')).filter(file => file.endsWith('.json'))).toEqual([])
+    expect(await cacheFiles(root, 'quarantine')).toHaveLength(1)
+  })
+
   it('evicts oldest entries at a configured entry cap', async () => {
     const root = await makeRoot()
     const store = await ContextCacheStore.open({ deploymentRoot: root, maxEntries: 2, maxBytes: 1_000_000 })
@@ -334,6 +524,45 @@ describe('ContextCacheStore maintenance', () => {
     await store.close()
   })
 
+  it('quarantines a lookup with corrupt key identity and permits repair', async () => {
+    const root = await makeRoot()
+    const store = await ContextCacheStore.open({ deploymentRoot: root })
+    const { block, boundary: currentBoundary } = makeBlock(root, 'cached')
+    const key = lookupKey(currentBoundary, 'find symbols', [sourceHashA])
+    await store.putBlock(block, currentBoundary)
+    await store.putLookup(key, [block.blockId])
+    const lookups = join(root, '.dsh-context-cache', 'v1', 'lookups')
+    const name = (await readdir(lookups)).find(file => file.endsWith('.json')) as string
+    const record = JSON.parse(await readFile(join(lookups, name), 'utf8')) as { key: { normalizedQuery: string } }
+    record.key.normalizedQuery = 'forged query'
+    await writeFile(join(lookups, name), JSON.stringify(record), 'utf8')
+
+    expect(await store.getLookup(key)).toBeUndefined()
+    expect(await cacheFiles(root, 'quarantine')).toHaveLength(1)
+    await store.putLookup(key, [block.blockId])
+    expect(await store.getLookup(key)).toEqual([block.blockId])
+    await store.close()
+  })
+
+  it('quarantines corrupt lookup identity when putLookup repairs the target', async () => {
+    const root = await makeRoot()
+    const store = await ContextCacheStore.open({ deploymentRoot: root })
+    const { block, boundary: currentBoundary } = makeBlock(root, 'cached')
+    const key = lookupKey(currentBoundary, 'find symbols', [sourceHashA])
+    await store.putBlock(block, currentBoundary)
+    await store.putLookup(key, [block.blockId])
+    const lookups = join(root, '.dsh-context-cache', 'v1', 'lookups')
+    const name = (await readdir(lookups)).find(file => file.endsWith('.json')) as string
+    const record = JSON.parse(await readFile(join(lookups, name), 'utf8')) as { key: { normalizedQuery: string } }
+    record.key.normalizedQuery = 'forged query'
+    await writeFile(join(lookups, name), JSON.stringify(record), 'utf8')
+
+    await store.putLookup(key, [block.blockId])
+    expect(await cacheFiles(root, 'quarantine')).toHaveLength(1)
+    expect(await store.getLookup(key)).toEqual([block.blockId])
+    await store.close()
+  })
+
   it('quarantines malformed lookup records during open maintenance', async () => {
     const root = await makeRoot()
     await (await ContextCacheStore.open({ deploymentRoot: root })).close()
@@ -361,6 +590,23 @@ describe('ContextCacheStore maintenance', () => {
     let bytes = 0
     for (const file of await cacheFiles(root, 'quarantine')) bytes += (await stat(join(quarantine, file))).size
     expect(bytes).toBeLessThanOrEqual(10 * 1024 * 1024)
+    await store.close()
+  })
+
+  it('propagates non-missing quarantine rename failures without deleting the source', async () => {
+    const root = await makeRoot()
+    const store = await ContextCacheStore.open({ deploymentRoot: root })
+    const { block, boundary: currentBoundary } = makeBlock(root, 'malformed')
+    await store.putBlock(block, currentBoundary)
+    const cacheRoot = join(root, '.dsh-context-cache', 'v1')
+    const entries = join(cacheRoot, 'entries')
+    const name = (await readdir(entries)).find(file => file.endsWith('.json')) as string
+    await writeFile(join(entries, name), '{not-json', 'utf8')
+    await rm(join(cacheRoot, 'quarantine'), { recursive: true })
+    await writeFile(join(cacheRoot, 'quarantine'), 'not a directory', 'utf8')
+
+    await expect(store.getBlock(block.blockId, currentBoundary)).rejects.toThrow()
+    expect((await cacheFiles(root, 'entries')).filter(file => file.endsWith('.json'))).toEqual([name])
     await store.close()
   })
 

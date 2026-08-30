@@ -11,6 +11,7 @@ import {
   rm,
   stat,
   unlink,
+  utimes,
   writeFile,
 } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
@@ -49,6 +50,7 @@ type CachePaths = {
   readonly lookups: string
   readonly quarantine: string
   readonly lock: string
+  readonly clock: string
 }
 
 type StoredEntryV1 = {
@@ -57,7 +59,6 @@ type StoredEntryV1 = {
   boundary: CacheBoundaryV1
   dependencyHashes: readonly string[]
   createdAt: number
-  lastAccessAt: number
 }
 
 type StoredLookupV1 = {
@@ -65,7 +66,6 @@ type StoredLookupV1 = {
   key: CacheLookupKeyV1
   blockIds: readonly string[]
   dependencyHashes: readonly string[]
-  lastAccessAt: number
 }
 
 type StoredToolResultV1 = {
@@ -74,19 +74,36 @@ type StoredToolResultV1 = {
   key: string
   boundary: CacheBoundaryV1
   value: unknown
+  maxBytes: number
+  valueByteLength: number
   createdAt: number
-  lastAccessAt: number
 }
 
 type EntryFile = {
   readonly name: string
   readonly record: StoredEntryV1 | StoredToolResultV1
   readonly bytes: number
+  readonly lastAccessAt: number
 }
 
 type BlockEntryFile = {
   readonly name: string
   readonly record: StoredEntryV1
+  readonly bytes: number
+  readonly lastAccessAt: number
+}
+
+type LookupFile = {
+  readonly name: string
+  readonly record: StoredLookupV1
+  readonly bytes: number
+  readonly lastAccessAt: number
+}
+
+type LiveRecordFile = {
+  readonly directory: 'entries' | 'lookups'
+  readonly name: string
+  readonly lastAccessAt: number
   readonly bytes: number
 }
 
@@ -205,12 +222,15 @@ async function cachePaths(deploymentRoot: string): Promise<CachePaths> {
   await ensurePrivateDirectory(entries, deploymentRoot)
   await ensurePrivateDirectory(lookups, deploymentRoot)
   await ensurePrivateDirectory(quarantine, deploymentRoot)
-  return { root, entries, lookups, quarantine, lock: join(root, '.lock') }
+  const clock = join(root, '.access-clock')
+  const clockHandle = await open(clock, 'a', 0o600)
+  await clockHandle.close()
+  return { root, entries, lookups, quarantine, lock: join(root, '.lock'), clock }
 }
 
 function parseStoredEntry(value: unknown): StoredEntryV1 {
   if (!isRecord(value)) throw new TypeError('entry must be an object')
-  exactKeys(value, ['schemaVersion', 'block', 'boundary', 'dependencyHashes', 'createdAt', 'lastAccessAt'], 'entry')
+  exactKeys(value, ['schemaVersion', 'block', 'boundary', 'dependencyHashes', 'createdAt'], 'entry')
   if (value.schemaVersion !== 1) throw new TypeError('entry.schemaVersion must be 1')
   const block = parseContextBlockV1(value.block)
   const boundary = normalizeBoundary(value.boundary)
@@ -223,13 +243,12 @@ function parseStoredEntry(value: unknown): StoredEntryV1 {
     boundary,
     dependencyHashes,
     createdAt: requiredInteger(value.createdAt, 'entry.createdAt'),
-    lastAccessAt: requiredInteger(value.lastAccessAt, 'entry.lastAccessAt'),
   }
 }
 
 function parseStoredLookup(value: unknown): StoredLookupV1 {
   if (!isRecord(value)) throw new TypeError('lookup must be an object')
-  exactKeys(value, ['schemaVersion', 'key', 'blockIds', 'dependencyHashes', 'lastAccessAt'], 'lookup')
+  exactKeys(value, ['schemaVersion', 'key', 'blockIds', 'dependencyHashes'], 'lookup')
   if (value.schemaVersion !== 1) throw new TypeError('lookup.schemaVersion must be 1')
   const key = normalizeLookupKey(value.key)
   const dependencyHashes = normalizeHashes(value.dependencyHashes, 'lookup.dependencyHashes')
@@ -245,7 +264,6 @@ function parseStoredLookup(value: unknown): StoredLookupV1 {
     key,
     blockIds,
     dependencyHashes,
-    lastAccessAt: requiredInteger(value.lastAccessAt, 'lookup.lastAccessAt'),
   }
 }
 
@@ -260,17 +278,28 @@ function normalizeJsonValue(value: unknown, path: string): { readonly serialized
 
 function parseStoredToolResult(value: unknown): StoredToolResultV1 {
   if (!isRecord(value)) throw new TypeError('tool result must be an object')
-  exactKeys(value, ['schemaVersion', 'entryType', 'key', 'boundary', 'value', 'createdAt', 'lastAccessAt'], 'toolResult')
+  exactKeys(value, [
+    'schemaVersion', 'entryType', 'key', 'boundary', 'value', 'maxBytes',
+    'valueByteLength', 'createdAt',
+  ], 'toolResult')
   if (value.schemaVersion !== 1) throw new TypeError('toolResult.schemaVersion must be 1')
   if (value.entryType !== 'tool-result') throw new TypeError('toolResult.entryType must be tool-result')
+  const normalizedValue = normalizeJsonValue(value.value, 'toolResult.value')
+  const maxBytes = requiredInteger(value.maxBytes, 'toolResult.maxBytes')
+  if (maxBytes < 1 || maxBytes > MAX_BYTES) throw new TypeError(`toolResult.maxBytes must be between 1 and ${MAX_BYTES}`)
+  const valueByteLength = requiredInteger(value.valueByteLength, 'toolResult.valueByteLength')
+  const actualByteLength = new TextEncoder().encode(normalizedValue.serialized).byteLength
+  if (valueByteLength !== actualByteLength) throw new TypeError('toolResult.valueByteLength does not match value')
+  if (actualByteLength > maxBytes) throw new TypeError('toolResult.value exceeds maxBytes')
   return {
     schemaVersion: 1,
     entryType: 'tool-result',
     key: requiredString(value.key, 'toolResult.key'),
     boundary: normalizeBoundary(value.boundary),
-    value: normalizeJsonValue(value.value, 'toolResult.value').value,
+    value: normalizedValue.value,
+    maxBytes,
+    valueByteLength,
     createdAt: requiredInteger(value.createdAt, 'toolResult.createdAt'),
-    lastAccessAt: requiredInteger(value.lastAccessAt, 'toolResult.lastAccessAt'),
   }
 }
 
@@ -355,10 +384,8 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
     return (await this.withLock(async () => {
       const entry = await this.findEntryLocked(blockId, normalizedBoundary)
       if (entry === undefined) return undefined
-      const { __fileName: name, ...storedEntry } = entry
-      const touched: StoredEntryV1 = { ...storedEntry, lastAccessAt: this.nextTimestampAfter(storedEntry.lastAccessAt) }
-      await this.writeJsonAtomic(this.paths.entries, name, touched)
-      return touched.block
+      await this.touchLocked(join(this.paths.entries, entry.__fileName))
+      return entry.block
     })) as ContextBlockV1 | undefined
   }
 
@@ -374,14 +401,13 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
       const directName = directEntryName(parsedBlock.blockId)
       const direct = await this.readEntryLocked(directName)
       const name = direct === undefined ? directName : variantEntryName(parsedBlock.blockId, normalizedBoundary)
-      const now = this.nextTimestamp()
+      const now = Date.now()
       const entry: StoredEntryV1 = {
         schemaVersion: 1,
         block: parsedBlock,
         boundary: normalizedBoundary,
         dependencyHashes,
         createdAt: now,
-        lastAccessAt: now,
       }
       await this.writeJsonAtomic(this.paths.entries, name, entry)
       await this.maintainLocked()
@@ -396,9 +422,8 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
       const name = toolResultName(normalizedKey, normalizedBoundary)
       const result = await this.readToolResultLocked(name)
       if (result === undefined || result.key !== normalizedKey || !sameBoundary(result.boundary, normalizedBoundary)) return undefined
-      const touched: StoredToolResultV1 = { ...result, lastAccessAt: this.nextTimestampAfter(result.lastAccessAt) }
-      await this.writeJsonAtomic(this.paths.entries, name, touched)
-      return touched.value
+      await this.touchLocked(join(this.paths.entries, name))
+      return result.value
     })
   }
 
@@ -410,21 +435,23 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
       throw new TypeError(`maxBytes must be between 1 and ${MAX_BYTES}`)
     }
     const normalizedValue = normalizeJsonValue(value, 'value')
-    if (new TextEncoder().encode(normalizedValue.serialized).byteLength > maxBytes) {
+    const valueByteLength = new TextEncoder().encode(normalizedValue.serialized).byteLength
+    if (valueByteLength > maxBytes) {
       throw new TypeError(`value exceeds ${maxBytes} UTF-8 bytes`)
     }
     await this.withLock(async () => {
       const name = toolResultName(normalizedKey, normalizedBoundary)
       if (await this.readToolResultLocked(name) !== undefined) return
-      const now = this.nextTimestamp()
+      const now = Date.now()
       const result: StoredToolResultV1 = {
         schemaVersion: 1,
         entryType: 'tool-result',
         key: normalizedKey,
         boundary: normalizedBoundary,
         value: normalizedValue.value,
+        maxBytes,
+        valueByteLength,
         createdAt: now,
-        lastAccessAt: now,
       }
       await this.writeJsonAtomic(this.paths.entries, name, result)
       await this.maintainLocked()
@@ -445,9 +472,8 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
         entries.push(entry)
       }
       if (!sameStrings(unionDependencies(entries), normalizedKey.dependencyHashes)) return undefined
-      const touched = { ...lookup, lastAccessAt: this.nextTimestampAfter(lookup.lastAccessAt) }
-      await this.writeJsonAtomic(this.paths.lookups, name, touched)
-      return Object.freeze([...touched.blockIds])
+      await this.touchLocked(join(this.paths.lookups, name))
+      return Object.freeze([...lookup.blockIds])
     })) as readonly string[] | undefined
   }
 
@@ -468,15 +494,16 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
         entries.push(entry)
       }
       if (!sameStrings(unionDependencies(entries), normalizedKey.dependencyHashes)) return
-      const now = this.nextTimestamp()
+      const name = lookupName(normalizedKey)
+      if (await this.readLookupLocked(name) !== undefined) return
       const lookup: StoredLookupV1 = {
         schemaVersion: 1,
         key: normalizedKey,
         blockIds: normalizedBlockIds,
         dependencyHashes: normalizedKey.dependencyHashes,
-        lastAccessAt: now,
       }
-      await this.writeJsonAtomic(this.paths.lookups, lookupName(normalizedKey), lookup)
+      await this.writeJsonAtomic(this.paths.lookups, name, lookup)
+      await this.maintainLocked()
     })
   }
 
@@ -520,16 +547,6 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
     this.closed = true
   }
 
-  private nextTimestamp(): number {
-    this.logicalClock = Math.max(Date.now(), this.logicalClock + 1)
-    return this.logicalClock
-  }
-
-  private nextTimestampAfter(previous: number): number {
-    this.logicalClock = Math.max(this.logicalClock, previous)
-    return this.nextTimestamp()
-  }
-
   private async withLock<T>(operation: () => Promise<T>): Promise<T | undefined> {
     if (this.closed) return undefined
     const deadline = Date.now() + this.lockTimeoutMs
@@ -559,9 +576,26 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
     try {
       await writeFile(temporary, canonicalJson(value), { encoding: 'utf8', flag: 'wx', mode: 0o600 })
       await rename(temporary, target)
+      await this.setAccessTimeLocked(target, await this.nextTimestampLocked())
     } finally {
       await unlink(temporary).catch(error => { if (!isMissing(error)) throw error })
     }
+  }
+
+  private async setAccessTimeLocked(path: string, timestamp: number): Promise<void> {
+    await utimes(path, timestamp / 1_000, timestamp / 1_000)
+  }
+
+  private async nextTimestampLocked(previous = 0): Promise<number> {
+    const persisted = (await stat(this.paths.clock)).mtimeMs
+    this.logicalClock = Math.max(Date.now(), this.logicalClock + 1, persisted + 1, previous + 1)
+    await this.setAccessTimeLocked(this.paths.clock, this.logicalClock)
+    return this.logicalClock
+  }
+
+  private async touchLocked(path: string): Promise<void> {
+    const previous = (await stat(path)).mtimeMs
+    await this.setAccessTimeLocked(path, await this.nextTimestampLocked(previous))
   }
 
   private async jsonFiles(directory: string): Promise<string[]> {
@@ -581,6 +615,8 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
     }
     try {
       const record = parseStoredEntry(JSON.parse(raw))
+      const expectedNames = [directEntryName(record.block.blockId), variantEntryName(record.block.blockId, record.boundary)]
+      if (!expectedNames.includes(name)) throw new TypeError('entry filename does not match block identity')
       return Object.assign(record, { __fileName: name }) as StoredEntryV1 & { __fileName: string }
     } catch {
       await this.quarantineLocked(path)
@@ -599,7 +635,9 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
       return undefined
     }
     try {
-      return parseStoredLookup(JSON.parse(raw))
+      const record = parseStoredLookup(JSON.parse(raw))
+      if (lookupName(record.key) !== name) throw new TypeError('lookup filename does not match key identity')
+      return record
     } catch {
       await this.quarantineLocked(path)
       return undefined
@@ -617,7 +655,9 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
       return undefined
     }
     try {
-      return parseStoredToolResult(JSON.parse(raw))
+      const record = parseStoredToolResult(JSON.parse(raw))
+      if (toolResultName(record.key, record.boundary) !== name) throw new TypeError('tool result filename does not match key identity')
+      return record
     } catch {
       await this.quarantineLocked(path)
       return undefined
@@ -644,9 +684,9 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
       if (isToolResultName(name)) continue
       const record = await this.readEntryLocked(name)
       if (record === undefined) continue
-      const bytes = (await stat(join(this.paths.entries, name))).size
-      this.logicalClock = Math.max(this.logicalClock, record.lastAccessAt)
-      files.push({ name, record, bytes })
+      const details = await stat(join(this.paths.entries, name))
+      this.logicalClock = Math.max(this.logicalClock, details.mtimeMs)
+      files.push({ name, record, bytes: details.size, lastAccessAt: details.mtimeMs })
     }
     return files
   }
@@ -658,32 +698,85 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
         ? await this.readToolResultLocked(name)
         : await this.readEntryLocked(name)
       if (record === undefined) continue
-      const bytes = (await stat(join(this.paths.entries, name))).size
-      this.logicalClock = Math.max(this.logicalClock, record.lastAccessAt)
-      files.push({ name, record, bytes })
+      const details = await stat(join(this.paths.entries, name))
+      this.logicalClock = Math.max(this.logicalClock, details.mtimeMs)
+      files.push({ name, record, bytes: details.size, lastAccessAt: details.mtimeMs })
     }
     return files
   }
 
-  private async scanLookupsLocked(): Promise<void> {
-    for (const name of await this.jsonFiles(this.paths.lookups)) await this.readLookupLocked(name)
+  private async readAllLookupsLocked(): Promise<LookupFile[]> {
+    const files: LookupFile[] = []
+    for (const name of await this.jsonFiles(this.paths.lookups)) {
+      const record = await this.readLookupLocked(name)
+      if (record === undefined) continue
+      const details = await stat(join(this.paths.lookups, name))
+      this.logicalClock = Math.max(this.logicalClock, details.mtimeMs)
+      files.push({ name, record, bytes: details.size, lastAccessAt: details.mtimeMs })
+    }
+    return files
+  }
+
+  private async lookupIsCompleteLocked(lookup: StoredLookupV1): Promise<boolean> {
+    const entries: StoredEntryV1[] = []
+    for (const blockId of lookup.blockIds) {
+      const entry = await this.findEntryLocked(blockId, lookup.key)
+      if (entry === undefined) return false
+      entries.push(entry)
+    }
+    return sameStrings(unionDependencies(entries), lookup.dependencyHashes)
+  }
+
+  private async removeStaleLookupsLocked(): Promise<void> {
+    for (const file of await this.readAllLookupsLocked()) {
+      if (await this.lookupIsCompleteLocked(file.record)) continue
+      await unlink(join(this.paths.lookups, file.name)).catch(error => { if (!isMissing(error)) throw error })
+    }
+  }
+
+  private async removeTemporaryFilesLocked(): Promise<void> {
+    for (const directory of [this.paths.entries, this.paths.lookups]) {
+      const children = await readdir(directory, { withFileTypes: true })
+      for (const child of children) {
+        if (!child.isFile() || !child.name.endsWith('.tmp')) continue
+        await unlink(join(directory, child.name)).catch(error => { if (!isMissing(error)) throw error })
+      }
+    }
   }
 
   private async maintainLocked(): Promise<void> {
-    await this.scanLookupsLocked()
-    await this.scanAndMaintainEntriesLocked()
+    await this.removeTemporaryFilesLocked()
+    await this.removeStaleLookupsLocked()
+    await this.scanAndMaintainLiveRecordsLocked()
+    await this.removeStaleLookupsLocked()
     await this.trimQuarantineLocked()
   }
 
-  private async scanAndMaintainEntriesLocked(): Promise<void> {
-    let files = await this.readAllCacheEntriesLocked()
+  private async scanAndMaintainLiveRecordsLocked(): Promise<void> {
+    const entries = await this.readAllCacheEntriesLocked()
+    const lookups = await this.readAllLookupsLocked()
+    const files: LiveRecordFile[] = [
+      ...entries.map(file => ({
+        directory: 'entries' as const,
+        name: file.name,
+        lastAccessAt: file.lastAccessAt,
+        bytes: file.bytes,
+      })),
+      ...lookups.map(file => ({
+        directory: 'lookups' as const,
+        name: file.name,
+        lastAccessAt: file.lastAccessAt,
+        bytes: file.bytes,
+      })),
+    ]
     let totalBytes = files.reduce((total, file) => total + file.bytes, 0)
     const needsEviction = () => files.length > this.maxEntries || totalBytes > this.maxBytes
     if (!needsEviction()) return
-    files = [...files].sort((left, right) => left.record.lastAccessAt - right.record.lastAccessAt || left.name.localeCompare(right.name))
+    files.sort((left, right) => left.lastAccessAt - right.lastAccessAt
+      || `${left.directory}/${left.name}`.localeCompare(`${right.directory}/${right.name}`))
     while (needsEviction() && files.length > 0) {
-      const oldest = files.shift() as EntryFile
-      await unlink(join(this.paths.entries, oldest.name)).catch(error => { if (!isMissing(error)) throw error })
+      const oldest = files.shift() as LiveRecordFile
+      await unlink(join(this.paths[oldest.directory], oldest.name)).catch(error => { if (!isMissing(error)) throw error })
       totalBytes -= oldest.bytes
     }
   }
@@ -693,7 +786,8 @@ export class ContextCacheStore implements ContextCacheStoreApiV1 {
       const destination = join(this.paths.quarantine, `${Date.now()}-${randomUUID()}-${basename(path)}`)
       await rename(path, destination)
     } catch (error) {
-      if (!isMissing(error)) return
+      if (isMissing(error)) return
+      throw error
     }
     await this.trimQuarantineLocked()
   }
