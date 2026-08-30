@@ -16,7 +16,7 @@ import type { SymbolQueryResultV1 } from '../src/types.ts'
 const symbolMatch = {
   symbolId: 'sha256:symbol',
   path: 'src/a.ts',
-  sourceHash: 'sha256:file',
+  sourceHash: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
   start: { line: 1, column: 0 },
   end: { line: 3, column: 1 },
   kind: 'function',
@@ -35,7 +35,7 @@ const validSnapshot = {
 const validRepoMapPage = {
   schemaVersion: 1,
   snapshotId: 'snap-1',
-  items: [{ path: 'src/a.ts', summary: 'function main', sourceHash: 'sha256:file' }],
+  items: [{ path: 'src/a.ts', summary: 'function main', sourceHash: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' }],
   totalItems: 1,
   truncated: false,
 } as const

@@ -84,8 +84,8 @@ function cursorPage(value: RecordValue, itemCount: number, total: number, trunca
     if (total <= itemCount) throw new TypeError(`${path}.total must exceed returned items when truncated`)
   } else if (hasCursor) {
     throw new TypeError(`${path}.nextCursor is only valid for truncated pages`)
-  } else if (total !== itemCount) {
-    throw new TypeError(`${path}.total must equal returned items when not truncated`)
+  } else if (total < itemCount) {
+    throw new TypeError(`${path}.total must cover returned items when not truncated`)
   }
 }
 
@@ -130,11 +130,11 @@ function parseMapItem(value: unknown, index: number): RepoMapItemV1 {
   const path = `items[${index}]`
   const object = record(value, path)
   keys(object, ['path', 'sourceHash', 'summary'], path)
-  return {
-    path: safePath(required(object, 'path', path), `${path}.path`),
-    sourceHash: stringValue(required(object, 'sourceHash', path), `${path}.sourceHash`),
-    summary: stringValue(required(object, 'summary', path), `${path}.summary`, false),
-  }
+  const sourceHash = stringValue(required(object, 'sourceHash', path), `${path}.sourceHash`)
+  if (!/^sha256:[0-9a-f]{64}$/.test(sourceHash)) throw new TypeError(`${path}.sourceHash must be a sha256 hash`)
+  const summary = stringValue(required(object, 'summary', path), `${path}.summary`, false)
+  if (new TextEncoder().encode(summary).byteLength > 1_024) throw new TypeError(`${path}.summary exceeds 1024 UTF-8 bytes`)
+  return { path: safePath(required(object, 'path', path), `${path}.path`), sourceHash, summary }
 }
 
 export function parseRepoMapPageV1(value: unknown): RepoMapPageV1 {
@@ -142,6 +142,8 @@ export function parseRepoMapPageV1(value: unknown): RepoMapPageV1 {
   keys(object, ['schemaVersion', 'snapshotId', 'items', 'totalItems', 'truncated', 'nextCursor'], '$')
   schema(object, 'schemaVersion', '$')
   const items = array(required(object, 'items', '$'), '$.items').map(parseMapItem)
+  if (items.length > 50) throw new TypeError('$.items must contain at most 50 items')
+  if (new TextEncoder().encode(JSON.stringify(value)).byteLength > 65_536) throw new TypeError('$ exceeds 65536 UTF-8 bytes')
   unique(items.map(item => item.path), '$.items')
   const totalItems = integer(required(object, 'totalItems', '$'), '$.totalItems')
   const truncated = booleanValue(required(object, 'truncated', '$'), '$.truncated')
@@ -162,15 +164,21 @@ function symbolMatch(value: unknown, index: number): SymbolMatchV1 {
   const start = position(required(object, 'start', path), `${path}.start`)
   const end = position(required(object, 'end', path), `${path}.end`)
   if (end.line < start.line || (end.line === start.line && end.column < start.column)) throw new TypeError(`${path}.end must not precede start`)
+  const sourceHash = stringValue(required(object, 'sourceHash', path), `${path}.sourceHash`)
+  if (!/^sha256:[0-9a-f]{64}$/.test(sourceHash)) throw new TypeError(`${path}.sourceHash must be a sha256 hash`)
+  const kind = stringValue(required(object, 'kind', path), `${path}.kind`)
+  const name = stringValue(required(object, 'name', path), `${path}.name`)
+  const container = Object.prototype.hasOwnProperty.call(object, 'container') ? stringValue(object.container, `${path}.container`) : undefined
+  if (kind.length > 512 || name.length > 512 || (container !== undefined && container.length > 512)) throw new TypeError(`${path} symbol text is too long`)
   return {
     symbolId: stringValue(required(object, 'symbolId', path), `${path}.symbolId`),
     path: safePath(required(object, 'path', path), `${path}.path`),
-    sourceHash: stringValue(required(object, 'sourceHash', path), `${path}.sourceHash`),
+    sourceHash,
     start,
     end,
-    kind: stringValue(required(object, 'kind', path), `${path}.kind`),
-    name: stringValue(required(object, 'name', path), `${path}.name`),
-    ...(Object.prototype.hasOwnProperty.call(object, 'container') ? { container: stringValue(object.container, `${path}.container`) } : {}),
+    kind,
+    name,
+    ...(container === undefined ? {} : { container }),
     score: bounded(required(object, 'score', path), `${path}.score`, 0, Number.POSITIVE_INFINITY),
   }
 }
@@ -180,6 +188,9 @@ export function parseSymbolQueryResultV1(value: unknown): SymbolQueryResultV1 {
   keys(object, ['schemaVersion', 'snapshotId', 'matches', 'totalMatches', 'truncated', 'nextCursor'], '$')
   schema(object, 'schemaVersion', '$')
   const matches = array(required(object, 'matches', '$'), '$.matches').map(symbolMatch)
+  if (matches.length > 50) throw new TypeError('$.matches must contain at most 50 matches')
+  if (new TextEncoder().encode(JSON.stringify(value)).byteLength > 65_536) throw new TypeError('$ exceeds 65536 UTF-8 bytes')
+  unique(matches.map(match => match.symbolId), '$.matches')
   const totalMatches = integer(required(object, 'totalMatches', '$'), '$.totalMatches')
   const truncated = booleanValue(required(object, 'truncated', '$'), '$.truncated')
   cursorPage(object, matches.length, totalMatches, truncated, '$')

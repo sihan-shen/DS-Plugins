@@ -8,3 +8,6 @@ export const MAX_IGNORE_BYTES = 262_144
 export const MAX_IGNORE_PATTERNS = 4_096
 
 export const HASH_PATTERN = /^sha256:[0-9a-f]{64}$/
+export const PROJECTION_POLICY_VERSION = 'dsh-projection-v1' as const
+export const MAX_OUTPUT_BYTES = 65_536
+export const MAX_CURSOR_BYTES = 1_024
