@@ -1,0 +1,23 @@
+{
+  "name": "@ds-plugins/dsh-code-intelligence",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "main": "./lib/index.mjs",
+  "types": "./lib/index.d.mts",
+  "scripts": {
+    "build": "tsdown --out-dir lib",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ds-plugins/dsh-context": "workspace:*",
+    "picomatch": "4.0.7"
+  },
+  "devDependencies": {
+    "@types/node": "26.3.0",
+    "tsdown": "0.18.0",
+    "typescript": "5.9.3",
+    "vitest": "4.0.18"
+  }
+}

@@ -26,10 +26,10 @@ const symbolMatch = {
 
 const validSnapshot = {
   schemaVersion: 1,
-  snapshotId: 'snap-1',
-  workspaceFingerprint: 'sha256:workspace',
+  snapshotId: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  workspaceFingerprint: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
   revision: 'rev-1',
-  files: [{ path: 'src/a.ts', contentHash: 'sha256:file', byteLength: 10, language: 'typescript' }],
+  files: [{ path: 'src/a.ts', contentHash: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', byteLength: 10, language: 'typescript' }],
 } as const
 
 const validRepoMapPage = {
@@ -188,6 +188,11 @@ describe('v0.2a context contracts', () => {
     expect(() => parseRepoMapPageV1({ ...validRepoMapPage, truncated: true })).toThrow()
     expect(() => parseRepoMapPageV1({ ...validRepoMapPage, nextCursor: '' })).toThrow()
     expect(() => parseRepoMapPageV1({ ...validRepoMapPage, totalItems: 0 })).toThrow()
+    expect(() => parseRepositorySnapshotV1({ ...validSnapshot, snapshotId: 'sha256:not-a-hash' })).toThrow()
+    expect(() => parseRepositorySnapshotV1({ ...validSnapshot, workspaceFingerprint: 'sha256:not-a-hash' })).toThrow()
+    expect(() => parseRepositorySnapshotV1({ ...validSnapshot, files: [{ ...validSnapshot.files[0], contentHash: 'sha256:not-a-hash' }] })).toThrow()
+    expect(() => parseRepositorySnapshotV1({ ...validSnapshot, files: Array.from({ length: 10_001 }, (_, index) => ({ ...validSnapshot.files[0], path: `src/${index}.ts` })) })).toThrow()
+    expect(() => parseRepositorySnapshotV1({ ...validSnapshot, files: [{ ...validSnapshot.files[0], byteLength: 1_048_577 }] })).toThrow()
   })
 
   it('requires model-visible result bounds and validates cursor relationships', () => {

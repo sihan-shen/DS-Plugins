@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/dsh-context" },
     { "path": "./packages/dsh-eval" },
+    { "path": "./packages/dsh-code-intelligence" },
     { "path": "./packages/dsh-orchestrator" }
   ]
 }

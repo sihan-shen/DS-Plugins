@@ -93,10 +93,14 @@ function parseFile(value: unknown, index: number): RepoFileSummaryV1 {
   const path = `files[${index}]`
   const object = record(value, path)
   keys(object, ['path', 'contentHash', 'byteLength', 'language'], path)
+  const contentHash = stringValue(required(object, 'contentHash', path), `${path}.contentHash`)
+  if (!/^sha256:[0-9a-f]{64}$/.test(contentHash)) throw new TypeError(`${path}.contentHash must be a sha256 hash`)
+  const byteLength = integer(required(object, 'byteLength', path), `${path}.byteLength`)
+  if (byteLength > 1_048_576) throw new TypeError(`${path}.byteLength must be at most 1048576`)
   return {
     path: safePath(required(object, 'path', path), `${path}.path`),
-    contentHash: stringValue(required(object, 'contentHash', path), `${path}.contentHash`),
-    byteLength: integer(required(object, 'byteLength', path), `${path}.byteLength`),
+    contentHash,
+    byteLength,
     language: stringValue(required(object, 'language', path), `${path}.language`),
   }
 }
@@ -105,8 +109,14 @@ export function parseRepositorySnapshotV1(value: unknown): RepositorySnapshotV1 
   const object = record(value, '$')
   keys(object, ['schemaVersion', 'snapshotId', 'workspaceFingerprint', 'revision', 'files'], '$')
   schema(object, 'schemaVersion', '$')
-  const files = array(required(object, 'files', '$'), '$.files').map(parseFile)
+  const fileValues = array(required(object, 'files', '$'), '$.files')
+  if (fileValues.length > 10_000) throw new TypeError('$.files must contain at most 10000 files')
+  const files = fileValues.map(parseFile)
   unique(files.map(file => file.path), '$.files')
+  for (const name of ['snapshotId', 'workspaceFingerprint'] as const) {
+    const hash = stringValue(required(object, name, '$'), `$.${name}`)
+    if (!/^sha256:[0-9a-f]{64}$/.test(hash)) throw new TypeError(`$.${name} must be a sha256 hash`)
+  }
   return {
     schemaVersion: 1,
     snapshotId: stringValue(required(object, 'snapshotId', '$'), '$.snapshotId'),

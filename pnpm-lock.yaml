@@ -24,6 +24,28 @@ importers:
         specifier: 4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.1)(@types/node@26.3.0)(yaml@2.9.0)
 
+  packages/dsh-code-intelligence:
+    dependencies:
+      '@ds-plugins/dsh-context':
+        specifier: workspace:*
+        version: link:../dsh-context
+      picomatch:
+        specifier: 4.0.7
+        version: 4.0.7
+    devDependencies:
+      '@types/node':
+        specifier: 26.3.0
+        version: 26.3.0
+      tsdown:
+        specifier: 0.18.0
+        version: 0.18.0(@emnapi/core@1.10.0)(@emnapi/runtime@1.11.3)(typescript@5.9.3)
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.1)(@types/node@26.3.0)(yaml@2.9.0)
+
   packages/dsh-context: {}
 
   packages/dsh-eval:
