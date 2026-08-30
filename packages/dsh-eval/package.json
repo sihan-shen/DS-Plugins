@@ -16,6 +16,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@ds-plugins/dsh-code-intelligence": "workspace:*",
     "@ds-plugins/dsh-context": "workspace:*",
     "@dqbd/tiktoken": "1.0.22"
   },

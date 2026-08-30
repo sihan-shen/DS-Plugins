@@ -5,6 +5,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@ds-plugins/dsh-context': fileURLToPath(new URL('./packages/dsh-context/src/index.ts', import.meta.url)),
+      '@ds-plugins/dsh-code-intelligence': fileURLToPath(new URL('./packages/dsh-code-intelligence/src/index.ts', import.meta.url)),
     },
   },
   test: {

@@ -968,7 +968,7 @@ DS-Plugins/
 
 v0.2a 只验证固定 fixture corpus 的 baseline、共享契约、路径安全、评估指标和插件兼容性 checker：12 个 task，覆盖 `ts-small`、`ts-medium`、`ts-layered` 三种 repository shape；tokenizer 固定为 `@dqbd/tiktoken@1.0.22` 的 `cl100k_base`。v0.2a 不实现 snapshot、Symbol Index、Repo Map、cache，也不证明 provider 或真实 coding-task acceptance。
 
-v0.2b promotion thresholds 已记录但尚未测量：cold 与 warm 两种条件都必须达到 source token reduction ≥ 0.25、mean symbol-query recall@5 ≥ 0.95、mean target coverage ≥ 0.95、mean oracle success ≥ 0.95；在 v0.2a baseline-only 阶段不生成 promotion 结论。`dsh-lsp-actions` 当前决策为 `patch-required`，未安装、未进入默认 profile；详见 [`dsh-lsp-actions compatibility review`](docs/superpowers/reviews/2026-08-30-dsh-lsp-actions-compatibility.md)。
+v0.2b 已在固定 12-task corpus 上完成 keyless promotion gate：cold/warm 的 median source-token reduction 均为 `0.7260683760683762`，mean symbol-query recall@5、target coverage、oracle success 均为 `1`，uncached tokens per success 为 `17.5`；两种条件均通过 `≥ 0.25/0.95/0.95/0.95` 阈值。每个 task 生成 3 次 cold 与 3 次 warm optimized 记录，明确不宣称 cache benefit。该结果只证明固定 fixture、fallback/index、read-only projections、Loader/replay 与评估链路；不证明 provider、网络隔离或真实 coding-task acceptance。`dsh-lsp-actions` 当前决策为 `patch-required`，未安装、未进入默认 profile；详见 [`dsh-lsp-actions compatibility review`](docs/superpowers/reviews/2026-08-30-dsh-lsp-actions-compatibility.md)。
 
 ### v0.3：Adaptive Scheduling
 
