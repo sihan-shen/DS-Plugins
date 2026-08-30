@@ -235,6 +235,9 @@ export function parseEvaluationTaskV1(value: unknown): EvaluationTaskV1 {
   const revision = stringValue(required(object, 'revision', '$'), '$.revision')
   if (verifier.expected_revision !== revision) throw new TypeError('$.verifier.expected_revision must match $.revision')
   for (const target of targetSymbols) if (!baselinePaths.includes(target.path)) throw new TypeError(`$.baseline_paths must include ${target.path}`)
+  const requiredPaths = new Set(verifier.required_paths)
+  for (const target of targetSymbols) if (!requiredPaths.has(target.path)) throw new TypeError(`$.verifier.required_paths must include ${target.path}`)
+  for (const path of baselinePaths) if (!requiredPaths.has(path)) throw new TypeError(`$.verifier.required_paths must include ${path}`)
   return {
     task_id: stringValue(required(object, 'task_id', '$'), '$.task_id'),
     repository_shape: (() => { const shape = required(object, 'repository_shape', '$'); if (shape !== 'ts-small' && shape !== 'ts-medium' && shape !== 'ts-layered') throw new TypeError('$.repository_shape is invalid'); return shape })(),

@@ -60,6 +60,16 @@ const retrievalRun = (overrides: Partial<RetrievalRunV1> = {}): RetrievalRunV1 =
   ...overrides,
 })
 
+const sourceMeasurement = (overrides: Partial<NonNullable<RetrievalRunV1['measurements']>[number]> = {}) => ({
+  path: 'src/auth.ts',
+  source_hash: sha256Utf8('export function loadOrder() {}'),
+  start_offset: 16,
+  end_offset: 25,
+  text: 'loadOrder',
+  byte_length: new TextEncoder().encode('loadOrder').byteLength,
+  ...overrides,
+})
+
 const record = (overrides: Partial<EvaluationRecordV1> = {}): EvaluationRecordV1 => ({
   schema_version: 1,
   run_mode: 'baseline',
@@ -132,6 +142,7 @@ describe('v0.2a deterministic tokenizer and retrieval metrics', () => {
   it('fails closed when verified files and model-visible source text diverge', () => {
     expect(() => computeRetrievalMetrics(retrievalRun({
       source_text: { 'src/auth.ts': 'export function forged() {}' },
+      measurements: [sourceMeasurement()],
     }))).toThrow(/source binding/i)
     expect(computeRetrievalMetrics(retrievalRun({
       ranked_results: [match({ end: { line: 1, column: 20 } })],
@@ -147,6 +158,51 @@ describe('v0.2a deterministic tokenizer and retrieval metrics', () => {
   it('requires explicit cache-miss token input for optimized runs', () => {
     expect(() => computeRetrievalMetrics(retrievalRun({ run_mode: 'optimized', cache_condition: 'cold' }))).toThrow(/uncached_source_tokens/i)
     expect(computeRetrievalMetrics(retrievalRun({ run_mode: 'optimized', cache_condition: 'cold', uncached_source_tokens: 7 })).uncached_source_tokens).toBe(7)
+  })
+
+  it('measures an exact UTF-16 source window from a verified file', () => {
+    const result = computeRetrievalMetrics(retrievalRun({ run_mode: 'optimized', cache_condition: 'cold', uncached_source_tokens: 2, measurements: [sourceMeasurement()] }))
+    expect(result.source_token_estimate).toBe(estimateSourceTokensV1('loadOrder'))
+  })
+
+  it('requires baseline measurements to cover each verified file in full', () => {
+    expect(() => computeRetrievalMetrics(retrievalRun({ measurements: [sourceMeasurement()] }))).toThrow(/baseline.*full|full.*measurement/i)
+  })
+
+  it('rejects forged or unverified source measurements', () => {
+    const cases = [
+      sourceMeasurement({ text: 'forged' }),
+      sourceMeasurement({ path: 'src/other.ts' }),
+      sourceMeasurement({ source_hash: 'sha256:wrong' }),
+      sourceMeasurement({ start_offset: 15 }),
+      sourceMeasurement({ end_offset: 24 }),
+      sourceMeasurement({ byte_length: 999 }),
+      sourceMeasurement({ path: 'src/other.ts', source_hash: sha256Utf8('export function loadOrder() {}') }),
+    ]
+    for (const measurement of cases) expect(() => computeRetrievalMetrics(retrievalRun({ measurements: [measurement] }))).toThrow(/measurement|source|path|hash|byte/i)
+  })
+
+  it('rejects overlapping duplicate source measurements for one path', () => {
+    expect(() => computeRetrievalMetrics(retrievalRun({ measurements: [
+      sourceMeasurement(),
+      sourceMeasurement({ start_offset: 20, end_offset: 29, text: 'rder() {}', byte_length: 9 }),
+    ] }))).toThrow(/overlap|measurement/i)
+  })
+
+  it('rejects identical zero-length source measurements', () => {
+    const empty = sourceMeasurement({ start_offset: 0, end_offset: 0, text: '', byte_length: 0 })
+    expect(() => computeRetrievalMetrics(retrievalRun({ run_mode: 'optimized', cache_condition: 'cold', uncached_source_tokens: 0, measurements: [empty, empty] }))).toThrow(/overlap|duplicate|measurement/i)
+  })
+
+  it('rejects a measurement path that has not been verified even when it is required', () => {
+    const extendedTask = {
+      ...task('metric-task'),
+      verifier: { ...task('metric-task').verifier, required_paths: ['src/auth.ts', 'src/support.ts'] },
+    }
+    expect(() => computeRetrievalMetrics(retrievalRun({
+      task: extendedTask,
+      measurements: [sourceMeasurement({ path: 'src/support.ts' })],
+    }))).toThrow(/not verified/i)
   })
 })
 
@@ -222,6 +278,12 @@ describe('v0.2b promotion report aggregation boundary', () => {
     const baseline = corpusRecords('baseline', 'none', 100)
     const cold = corpusRecords('optimized', 'cold', 70)
     expect(evaluatePromotion([...baseline, ...cold])).toMatchObject({ status: 'failed', failure_class: 'invalid_pairing' })
+  })
+
+  it('classifies an incomplete baseline as invalid pairing before optimized absence', () => {
+    const baseline = corpusRecords('baseline', 'none', 100)
+    const incomplete = baseline.filter(record => !(record.task_id === corpusTaskIds[0] && record.run_index === 3))
+    expect(evaluatePromotion(incomplete)).toMatchObject({ status: 'failed', failure_class: 'invalid_pairing' })
   })
 
   it('counts only oracle successes that also have passed verification', () => {

@@ -87,13 +87,15 @@ export function evaluatePromotion(records: readonly EvaluationRecordV1[]): Promo
   const warmByTask = new Map<string, EvaluationRecordV1[]>()
   for (const taskId of taskIds) {
     const baseline = groups.get(`${taskId}|baseline|none`)
+    if (!baseline || baseline.length !== 3) return failureReport(taskIds.length, shapeCount, 'invalid_pairing')
+    baselineByTask.set(taskId, baseline)
+  }
+  if (!hasOptimizedRecords) return failureReport(taskIds.length, shapeCount, 'optimized_records_missing')
+  for (const taskId of taskIds) {
+    const baseline = baselineByTask.get(taskId)
     const cold = groups.get(`${taskId}|optimized|cold`)
     const warm = groups.get(`${taskId}|optimized|warm`)
-    if (!baseline || baseline.length !== 3 || !cold || cold.length !== 3 || !warm || warm.length !== 3) {
-      if (!hasOptimizedRecords) return failureReport(taskIds.length, shapeCount, 'optimized_records_missing')
-      return failureReport(taskIds.length, shapeCount, 'invalid_pairing')
-    }
-    baselineByTask.set(taskId, baseline)
+    if (!baseline || !cold || cold.length !== 3 || !warm || warm.length !== 3) return failureReport(taskIds.length, shapeCount, 'invalid_pairing')
     coldByTask.set(taskId, cold)
     warmByTask.set(taskId, warm)
   }

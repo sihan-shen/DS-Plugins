@@ -151,6 +151,26 @@ describe('v0.2a context contracts', () => {
     expect(parsePromotionReportV1(validPromotion)).toEqual(validPromotion)
   })
 
+  it('requires verifier paths to cover every target and baseline path', () => {
+    const targetOnly = {
+      ...validTask,
+      target_symbols: [{ path: 'src/support.ts', name: 'support' }],
+      baseline_paths: ['src/support.ts'],
+      verifier: { ...validTask.verifier, required_paths: ['src/a.ts'] },
+    }
+    expect(() => parseEvaluationTaskV1(targetOnly)).toThrow(/required_paths.*src\/support\.ts/i)
+    const baselineOnly = {
+      ...validTask,
+      baseline_paths: ['src/a.ts', 'src/support.ts'],
+      verifier: { ...validTask.verifier, required_paths: ['src/a.ts'] },
+    }
+    expect(() => parseEvaluationTaskV1(baselineOnly)).toThrow(/required_paths.*src\/support\.ts/i)
+    expect(parseEvaluationTaskV1({
+      ...baselineOnly,
+      verifier: { ...baselineOnly.verifier, required_paths: ['src/a.ts', 'src/support.ts'] },
+    })).toMatchObject({ baseline_paths: ['src/a.ts', 'src/support.ts'] })
+  })
+
   it('rejects missing schema versions and unknown keys', () => {
     expect(() => parseRepositorySnapshotV1({ ...validSnapshot, schemaVersion: undefined })).toThrow()
     expect(() => parseRepoMapPageV1({ ...validRepoMapPage, extra: true })).toThrow()

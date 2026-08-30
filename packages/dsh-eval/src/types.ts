@@ -10,12 +10,24 @@ export type BaselineFileV1 = {
   readonly byte_length: number
 }
 
+export type SourceMeasurementV1 = {
+  readonly path: string
+  readonly source_hash: string
+  readonly start_offset: number
+  readonly end_offset: number
+  readonly text: string
+  readonly byte_length: number
+}
+
 export type RetrievalRunV1 = {
   readonly task: EvaluationTaskV1
   readonly revision: string
   readonly ranked_results: readonly SymbolMatchV1[]
-  readonly source_text: Readonly<Record<string, string>>
+  /** @deprecated Full-file verifier evidence for v0.2a compatibility; never tokenized when measurements are supplied. */
+  readonly source_text?: Readonly<Record<string, string>>
   readonly files: readonly BaselineFileV1[]
+  /** Canonical measured model-visible source; offsets are UTF-16 code-unit offsets in the verified file. */
+  readonly measurements?: readonly SourceMeasurementV1[]
   readonly verifier_result: boolean
   readonly run_mode: 'baseline' | 'optimized'
   readonly cache_condition: 'none' | 'cold' | 'warm'
@@ -32,6 +44,7 @@ export type BaselineRunOptionsV1 = {
 }
 
 export type BaselineRunV1 = RetrievalRunV1 & {
+  readonly source_text: Readonly<Record<string, string>>
   readonly selected_paths: readonly string[]
   readonly files: readonly BaselineFileV1[]
 }
