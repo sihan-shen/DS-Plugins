@@ -127,6 +127,25 @@ importers:
         specifier: workspace:*
         version: link:../../packages/dsh-orchestrator
 
+  profiles/v0.2b-readonly:
+    dependencies:
+      '@deepseek-ai/dsh-base':
+        specifier: 0.1.1-rc.2
+        version: 0.1.1-rc.2(c92576aadcd90dfc5984d616252f9698)
+      '@deepseek-ai/dsh-subprocess':
+        specifier: 0.1.1-rc.2
+        version: 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))
+      '@deepseek-ai/dsh-tools':
+        specifier: 0.1.1-rc.2
+        version: 0.1.1-rc.2(119bc70f73f8eddebfaa6b47561adeb3)
+      '@ds-plugins/dsh-code-intelligence':
+        specifier: workspace:*
+        version: link:../../packages/dsh-code-intelligence
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.1
+        version: 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
+
 packages:
 
   '@anthropic-ai/sdk@0.91.1':
