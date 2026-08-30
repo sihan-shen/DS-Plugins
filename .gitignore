@@ -10,6 +10,9 @@
 # Isolated feature worktrees
 /.worktrees/
 
+# Superpowers task ledger and review artifacts
+/.superpowers/
+
 # Workspace install and build outputs
 /node_modules/
 /packages/*/node_modules/
