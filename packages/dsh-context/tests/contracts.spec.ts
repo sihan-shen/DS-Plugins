@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   canonicalJson,
+  createContextBlockV1,
   parseContextBlockV1,
   parseEvaluationRecordV1,
   parseEvaluationTaskV1,
@@ -40,21 +41,19 @@ const validRepoMapPage = {
   truncated: false,
 } as const
 
-const validContextBlock = {
+const validContextBlock = createContextBlockV1({
   schemaVersion: 1,
-  blockId: 'block-1',
   kind: 'repo-map',
-  workspaceFingerprint: 'sha256:workspace',
-  snapshotId: 'snap-1',
+  workspaceRoot: process.cwd(),
+  workspaceFingerprint: 'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+  snapshotId: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   adapterId: 'typescript',
   adapterVersion: '1.0.0',
   compilerPolicyVersion: 'policy-1',
-  sources: [{ path: 'src/a.ts', contentHash: 'sha256:file' }],
-  contentHash: 'sha256:content',
+  sources: [{ path: 'packages/dsh-context/src/types.ts', contentHash: 'sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' }],
   text: 'function main() {}',
-  byteLength: 19,
   truncated: false,
-} as const
+})
 
 const validVerifier = {
   id: 'fixture-integrity-v1',

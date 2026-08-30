@@ -1,5 +1,7 @@
 type JsonValue = null | boolean | number | string | JsonValue[] | { readonly [key: string]: JsonValue }
 
+const textEncoder = new TextEncoder()
+
 function assertJsonValue(value: unknown, path: string): asserts value is JsonValue {
   if (value === null || typeof value === 'boolean' || typeof value === 'string') return
   if (typeof value === 'number') {
@@ -34,7 +36,7 @@ export function canonicalJson(value: unknown): string {
 
 export function sha256Utf8(value: string): string {
   if (typeof value !== 'string') throw new TypeError('sha256Utf8 requires a string')
-  const bytes = new TextEncoder().encode(value)
+  const bytes = textEncoder.encode(value)
   const words = new Uint32Array(64)
   const state = new Uint32Array([
     0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,

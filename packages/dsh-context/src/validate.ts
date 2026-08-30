@@ -13,6 +13,7 @@ import type {
   SymbolQueryResultV1,
   RepositorySnapshotV1,
 } from './types.js'
+import { buildContextBlockFromNormalizedInput, MAX_CONTEXT_BLOCK_BYTES } from './context-block.js'
 
 type RecordValue = Record<string, unknown>
 
@@ -201,7 +202,9 @@ function source(value: unknown, index: number): { path: string; contentHash: str
   const path = `sources[${index}]`
   const object = record(value, path)
   keys(object, ['path', 'contentHash'], path)
-  return { path: safePath(required(object, 'path', path), `${path}.path`), contentHash: stringValue(required(object, 'contentHash', path), `${path}.contentHash`) }
+  const contentHash = stringValue(required(object, 'contentHash', path), `${path}.contentHash`)
+  if (!/^sha256:[0-9a-f]{64}$/.test(contentHash)) throw new TypeError(`${path}.contentHash must be a sha256 hash`)
+  return { path: safePath(required(object, 'path', path), `${path}.path`), contentHash }
 }
 
 export function parseContextBlockV1(value: unknown): ContextBlockV1 {
@@ -212,9 +215,11 @@ export function parseContextBlockV1(value: unknown): ContextBlockV1 {
   unique(sources.map(item => item.path), '$.sources')
   const kind = required(object, 'kind', '$')
   if (kind !== 'repo-map' && kind !== 'symbol' && kind !== 'source-window' && kind !== 'tool-result') throw new TypeError('$.kind is invalid')
-  return {
+  const text = stringValue(required(object, 'text', '$'), '$.text', false)
+  if (new TextEncoder().encode(text).byteLength > MAX_CONTEXT_BLOCK_BYTES) throw new TypeError(`$.text exceeds ${MAX_CONTEXT_BLOCK_BYTES} UTF-8 bytes`)
+  const truncated = booleanValue(required(object, 'truncated', '$'), '$.truncated')
+  const parsed = buildContextBlockFromNormalizedInput({
     schemaVersion: 1,
-    blockId: stringValue(required(object, 'blockId', '$'), '$.blockId'),
     kind,
     workspaceFingerprint: stringValue(required(object, 'workspaceFingerprint', '$'), '$.workspaceFingerprint'),
     snapshotId: stringValue(required(object, 'snapshotId', '$'), '$.snapshotId'),
@@ -222,11 +227,16 @@ export function parseContextBlockV1(value: unknown): ContextBlockV1 {
     adapterVersion: stringValue(required(object, 'adapterVersion', '$'), '$.adapterVersion'),
     compilerPolicyVersion: stringValue(required(object, 'compilerPolicyVersion', '$'), '$.compilerPolicyVersion'),
     sources,
-    contentHash: stringValue(required(object, 'contentHash', '$'), '$.contentHash'),
-    text: stringValue(required(object, 'text', '$'), '$.text', false),
-    byteLength: integer(required(object, 'byteLength', '$'), '$.byteLength'),
-    truncated: booleanValue(required(object, 'truncated', '$'), '$.truncated'),
-  }
+    text,
+    truncated,
+  })
+  const blockId = stringValue(required(object, 'blockId', '$'), '$.blockId')
+  const contentHash = stringValue(required(object, 'contentHash', '$'), '$.contentHash')
+  if (blockId !== parsed.blockId) throw new TypeError('$.blockId does not match the block identity')
+  if (contentHash !== parsed.contentHash) throw new TypeError('$.contentHash does not match text')
+  const byteLength = integer(required(object, 'byteLength', '$'), '$.byteLength')
+  if (byteLength !== parsed.byteLength) throw new TypeError('$.byteLength does not match text')
+  return parsed
 }
 
 export function parseFixtureVerifierV1(value: unknown): FixtureVerifierV1 {

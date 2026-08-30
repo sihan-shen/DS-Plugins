@@ -70,19 +70,33 @@ export type SymbolMatchV1 = {
 }
 
 export type ContextBlockV1 = {
-  schemaVersion: 1
-  blockId: string
-  kind: 'repo-map' | 'symbol' | 'source-window' | 'tool-result'
-  workspaceFingerprint: string
-  snapshotId: string
-  adapterId: string
-  adapterVersion: string
-  compilerPolicyVersion: string
-  sources: readonly { path: string; contentHash: string }[]
-  contentHash: string
-  text: string
-  byteLength: number
-  truncated: boolean
+  readonly schemaVersion: 1
+  readonly blockId: string
+  readonly kind: 'repo-map' | 'symbol' | 'source-window' | 'tool-result'
+  readonly workspaceFingerprint: string
+  readonly snapshotId: string
+  readonly adapterId: string
+  readonly adapterVersion: string
+  readonly compilerPolicyVersion: string
+  readonly sources: readonly { readonly path: string; readonly contentHash: string }[]
+  readonly contentHash: string
+  readonly text: string
+  readonly byteLength: number
+  readonly truncated: boolean
+}
+
+export type ContextBlockInputV1 = {
+  readonly schemaVersion: 1
+  readonly workspaceRoot: string
+  readonly kind: ContextBlockV1['kind']
+  readonly workspaceFingerprint: string
+  readonly snapshotId: string
+  readonly adapterId: string
+  readonly adapterVersion: string
+  readonly compilerPolicyVersion: string
+  readonly sources: readonly { readonly path: string; readonly contentHash: string }[]
+  readonly text: string
+  readonly truncated: boolean
 }
 
 export type PluginCompatibilityReportV1 = {

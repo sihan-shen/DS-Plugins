@@ -1,5 +1,11 @@
 export { canonicalJson, sha256Utf8 } from './canonical.js'
 export {
+  createContextBlockV1,
+  MAX_CONTEXT_BLOCK_BYTES,
+  MAX_CONTEXT_SESSION_BYTES,
+  truncateUtf8ByBytes,
+} from './context-block.js'
+export {
   assertSafeRepoPath,
   assertSnapshotHash,
   isIndexableFile,
@@ -19,6 +25,7 @@ export {
 } from './validate.js'
 export type {
   ContextBlockV1,
+  ContextBlockInputV1,
   EvaluationRecordV1,
   EvaluationTaskV1,
   FixtureVerifierV1,
