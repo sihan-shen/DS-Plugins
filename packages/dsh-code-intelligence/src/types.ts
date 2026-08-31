@@ -69,9 +69,9 @@ export type SymbolAdapterResultV1 = {
 export type { InternalSymbolEntryV1, RepoFileSummaryV1, RepositorySnapshotV1 }
 
 export type ContextCompiler = {
-  repoMap(request: { snapshotId: string; limit: number; cursor?: string }, signal: AbortSignal): Promise<ContextBlockV1>
-  symbolQuery(request: { snapshotId: string; query: string; limit: number; cursor?: string }, signal: AbortSignal): Promise<ContextBlockV1>
-  expandSource(request: { blockId: string; path: string; sourceHash: string; startOffset: number; endOffset: number }, signal: AbortSignal): Promise<ContextBlockV1>
+  repoMap(request: { snapshotId: string; limit: number; cursor?: string }, signal: AbortSignal, sessionKey?: string): Promise<ContextBlockV1>
+  symbolQuery(request: { snapshotId: string; query: string; limit: number; cursor?: string }, signal: AbortSignal, sessionKey?: string): Promise<ContextBlockV1>
+  expandSource(request: { blockId: string; path: string; sourceHash: string; startOffset: number; endOffset: number }, signal: AbortSignal, sessionKey?: string): Promise<ContextBlockV1>
 }
 
 export type ContextCompilerStats = {

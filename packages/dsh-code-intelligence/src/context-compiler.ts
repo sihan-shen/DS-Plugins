@@ -27,6 +27,7 @@ const HASH_PATTERN = /^sha256:[0-9a-f]{64}$/
 type ProjectionKind = 'repo-map' | 'symbol'
 type Window = { readonly path: string; readonly startOffset: number; readonly endOffset: number }
 type SessionState = { usedBytes: number; readonly windows: Window[] }
+const SHARED_SESSION_KEY = '__shared__'
 
 type ContextCompilerHandle = ContextCompiler & {
   readonly cacheStats: ContextCompilerStats
@@ -195,6 +196,13 @@ function projectionSources(snapshot: RepositorySnapshotStore['snapshot']): reado
   return snapshot.files.map(file => ({ path: file.path, contentHash: file.contentHash }))
 }
 
+function sameSources(left: readonly { path: string; contentHash: string }[], right: readonly { path: string; contentHash: string }[]): boolean {
+  return left.length === right.length && left.every((source, index) => {
+    const expected = right[index]
+    return expected !== undefined && source.path === expected.path && source.contentHash === expected.contentHash
+  })
+}
+
 function projectionContainsSource(block: ContextBlockV1, path: string, sourceHash: string): boolean {
   const projection = block.kind === 'repo-map'
     ? parseRepoMapPageV1(JSON.parse(block.text))
@@ -203,10 +211,34 @@ function projectionContainsSource(block: ContextBlockV1, path: string, sourceHas
   return values.some(value => value.path === path && value.sourceHash === sourceHash)
 }
 
-function validateProjectionBlock(block: ContextBlockV1, kind: ProjectionKind): ContextBlockV1 {
+function validateProjectionBlock(
+  block: ContextBlockV1,
+  kind: ProjectionKind,
+  boundary: CacheBoundaryV1,
+  snapshot: RepositorySnapshotStore['snapshot'],
+): ContextBlockV1 {
   if (block.kind !== kind) throw new TypeError('cached context block kind does not match the requested projection')
-  if (kind === 'repo-map') parseRepoMapPageV1(JSON.parse(block.text))
-  else parseSymbolQueryResultV1(JSON.parse(block.text))
+  if (
+    block.workspaceFingerprint !== boundary.workspaceFingerprint
+    || block.snapshotId !== boundary.snapshotId
+    || block.adapterId !== boundary.adapterId
+    || block.adapterVersion !== boundary.adapterVersion
+    || block.compilerPolicyVersion !== boundary.compilerPolicyVersion
+  ) throw new TypeError('cached context block provenance does not match the current boundary')
+  const currentSources = projectionSources(snapshot)
+  if (!sameSources(block.sources, currentSources)) throw new TypeError('cached context block sources do not match the current snapshot')
+  const projection = kind === 'repo-map'
+    ? parseRepoMapPageV1(JSON.parse(block.text))
+    : parseSymbolQueryResultV1(JSON.parse(block.text))
+  if (projection.snapshotId !== snapshot.snapshotId) throw new TypeError('cached projection snapshotId does not match the current snapshot')
+  const blockSources = new Map(block.sources.map(source => [source.path, source.contentHash]))
+  const snapshotSources = new Map(currentSources.map(source => [source.path, source.contentHash]))
+  const values = 'items' in projection ? projection.items : projection.matches
+  for (const value of values) {
+    if (blockSources.get(value.path) !== value.sourceHash || snapshotSources.get(value.path) !== value.sourceHash) {
+      throw new TypeError('cached projection source path or hash does not match block and snapshot provenance')
+    }
+  }
   return block
 }
 
@@ -238,8 +270,8 @@ export function createContextCompiler(options: ContextCompilerOptions): ContextC
   const { workspaceRoot, store, index, cache } = options
   const compilerPolicyVersion = options.compilerPolicyVersion ?? CONTEXT_COMPILER_POLICY_VERSION
   const capabilityVersion = options.capabilityVersion ?? CONTEXT_CAPABILITY_VERSION
-  const sessions = new WeakMap<AbortSignal, SessionState>()
-  const sources = projectionSources(store.snapshot)
+  const sessions = new Map<string, SessionState>()
+  const queues = new Map<string, Promise<void>>()
   let cacheHits = 0
   let cacheMisses = 0
   let disposed = false
@@ -252,9 +284,25 @@ export function createContextCompiler(options: ContextCompilerOptions): ContextC
     return makeBoundary(store.snapshot, index, compilerPolicyVersion, capabilityVersion)
   }
 
+  function queueKey(sessionKey: string | undefined): string {
+    return sessionKey === undefined ? SHARED_SESSION_KEY : `session:${sessionKey}`
+  }
+
+  function serialized<T>(sessionKey: string | undefined, operation: () => Promise<T>): Promise<T> {
+    const key = queueKey(sessionKey)
+    const previous = queues.get(key) ?? Promise.resolve()
+    const current = previous.then(operation, operation)
+    const tail = current.then(() => undefined, () => undefined)
+    queues.set(key, tail)
+    return current.finally(() => {
+      if (queues.get(key) === tail) queues.delete(key)
+    })
+  }
+
   async function cached(
     key: CacheLookupKeyV1,
     boundary: CacheBoundaryV1,
+    kind: ProjectionKind,
     signal: AbortSignal,
     compute: () => ContextBlockV1 | Promise<ContextBlockV1>,
   ): Promise<ContextBlockV1> {
@@ -268,6 +316,7 @@ export function createContextCompiler(options: ContextCompilerOptions): ContextC
       checkOpen()
       aborted(signal)
       if (block !== undefined) {
+        validateProjectionBlock(parseContextBlockV1(block), kind, boundary, store.snapshot)
         cacheHits += 1
         return parseContextBlockV1(block)
       }
@@ -285,7 +334,7 @@ export function createContextCompiler(options: ContextCompilerOptions): ContextC
     return block
   }
 
-  async function repoMap(value: { snapshotId: string; limit: number; cursor?: string }, signal: AbortSignal): Promise<ContextBlockV1> {
+  async function repoMap(value: { snapshotId: string; limit: number; cursor?: string }, signal: AbortSignal, _sessionKey?: string): Promise<ContextBlockV1> {
     checkOpen()
     aborted(signal)
     const request = repoMapRequest(value, store.snapshot)
@@ -294,13 +343,14 @@ export function createContextCompiler(options: ContextCompilerOptions): ContextC
     const block = await cached(
       projectionLookupKey('repo-map', request.options, boundary, dependencies),
       boundary,
+      'repo-map',
       signal,
-      () => pageBlock(workspaceRoot, buildRepoMap(store.snapshot, index, request.options), 'repo-map', boundary, sources),
+      () => pageBlock(workspaceRoot, buildRepoMap(store.snapshot, index, request.options), 'repo-map', boundary, projectionSources(store.snapshot)),
     )
-    return validateProjectionBlock(block, 'repo-map')
+    return validateProjectionBlock(block, 'repo-map', boundary, store.snapshot)
   }
 
-  async function symbolQuery(value: { snapshotId: string; query: string; limit: number; cursor?: string }, signal: AbortSignal): Promise<ContextBlockV1> {
+  async function symbolQuery(value: { snapshotId: string; query: string; limit: number; cursor?: string }, signal: AbortSignal, _sessionKey?: string): Promise<ContextBlockV1> {
     checkOpen()
     aborted(signal)
     const request = symbolQueryRequest(value, store.snapshot)
@@ -309,13 +359,14 @@ export function createContextCompiler(options: ContextCompilerOptions): ContextC
     const block = await cached(
       projectionLookupKey('symbol', request.options, boundary, dependencies),
       boundary,
+      'symbol',
       signal,
-      () => pageBlock(workspaceRoot, querySymbols(store.snapshot, index, request.options), 'symbol', boundary, sources),
+      () => pageBlock(workspaceRoot, querySymbols(store.snapshot, index, request.options), 'symbol', boundary, projectionSources(store.snapshot)),
     )
-    return validateProjectionBlock(block, 'symbol')
+    return validateProjectionBlock(block, 'symbol', boundary, store.snapshot)
   }
 
-  async function expandSource(value: { blockId: string; path: string; sourceHash: string; startOffset: number; endOffset: number }, signal: AbortSignal): Promise<ContextBlockV1> {
+  async function expandSource(value: { blockId: string; path: string; sourceHash: string; startOffset: number; endOffset: number }, signal: AbortSignal, sessionKey?: string): Promise<ContextBlockV1> {
     checkOpen()
     aborted(signal)
     const request = expansionRequest(value)
@@ -325,37 +376,42 @@ export function createContextCompiler(options: ContextCompilerOptions): ContextC
     aborted(signal)
     if (base === undefined) throw new TypeError('source expansion requires a prior cached projection block')
     if (base.kind !== 'repo-map' && base.kind !== 'symbol') throw new TypeError('source expansion requires a repo-map or symbol block')
-    const source = base.sources.find(item => item.path === request.path)
+    const validatedBase = validateProjectionBlock(base, base.kind, boundary, store.snapshot)
+    const source = validatedBase.sources.find(item => item.path === request.path)
     if (source === undefined || source.contentHash !== request.sourceHash) throw new TypeError('source path or hash is not present in the cached projection block')
-    if (!projectionContainsSource(base, request.path, request.sourceHash)) throw new TypeError('source path is not present in the cached projection')
+    if (!projectionContainsSource(validatedBase, request.path, request.sourceHash)) throw new TypeError('source path is not present in the cached projection')
 
-    const state = sessions.get(signal) ?? { usedBytes: 0, windows: [] }
-    sessions.set(signal, state)
-    const requestedWindow = { path: request.path, startOffset: request.startOffset, endOffset: request.endOffset }
-    if (state.windows.some(window => overlaps(window, requestedWindow))) throw new TypeError('source window overlaps a previous expansion')
-
-    const measurement = await store.readSourceMeasurement(request.path, request.sourceHash, request.startOffset, request.endOffset)
-    checkOpen()
-    aborted(signal)
-    if (hasUnpairedSurrogate(measurement.text)) throw new TypeError('source window must end on UTF-16 code-point boundaries')
-    const block = sourceBlock(workspaceRoot, measurement, boundary)
-    if (state.usedBytes + block.byteLength > MAX_CONTEXT_SESSION_BYTES) throw new RangeError('source expansion exceeds the session byte budget')
-    checkOpen()
-    aborted(signal)
-    const cachedBlock = await cache.getBlock(block.blockId, boundary)
-    checkOpen()
-    aborted(signal)
-    if (cachedBlock !== undefined) {
-      cacheHits += 1
-    } else {
-      cacheMisses += 1
-      await cache.putBlock(block, boundary)
+    return serialized(sessionKey, async () => {
       checkOpen()
       aborted(signal)
-    }
-    state.usedBytes += block.byteLength
-    state.windows.push(requestedWindow)
-    return cachedBlock ?? block
+      const state = sessions.get(queueKey(sessionKey)) ?? { usedBytes: 0, windows: [] }
+      sessions.set(queueKey(sessionKey), state)
+      const requestedWindow = { path: request.path, startOffset: request.startOffset, endOffset: request.endOffset }
+      if (state.windows.some(window => overlaps(window, requestedWindow))) throw new TypeError('source window overlaps a previous expansion')
+
+      const measurement = await store.readSourceMeasurement(request.path, request.sourceHash, request.startOffset, request.endOffset)
+      checkOpen()
+      aborted(signal)
+      if (hasUnpairedSurrogate(measurement.text)) throw new TypeError('source window must end on UTF-16 code-point boundaries')
+      const block = sourceBlock(workspaceRoot, measurement, boundary)
+      if (state.usedBytes + block.byteLength > MAX_CONTEXT_SESSION_BYTES) throw new RangeError('source expansion exceeds the session byte budget')
+      checkOpen()
+      aborted(signal)
+      const cachedBlock = await cache.getBlock(block.blockId, boundary)
+      checkOpen()
+      aborted(signal)
+      if (cachedBlock !== undefined) {
+        cacheHits += 1
+      } else {
+        cacheMisses += 1
+        await cache.putBlock(block, boundary)
+        checkOpen()
+        aborted(signal)
+      }
+      state.usedBytes += block.byteLength
+      state.windows.push(requestedWindow)
+      return cachedBlock ?? block
+    })
   }
 
   const compiler: ContextCompilerHandle = {

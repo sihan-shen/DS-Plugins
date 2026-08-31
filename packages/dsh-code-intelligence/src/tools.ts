@@ -5,7 +5,7 @@ import type { InternalSymbolIndexStore } from './symbol-index.js'
 import type { RepositorySnapshotStore } from './snapshot.js'
 import type { ContextCompiler } from './types.js'
 
-type ToolExecution = { readonly signal: AbortSignal }
+type ToolExecution = { readonly signal: AbortSignal; readonly agent?: object; readonly rootCallId?: string }
 type ToolRuntime = { readonly snapshot: RepositorySnapshotStore['snapshot']; readonly index: InternalSymbolIndexStore }
 
 function object(value: unknown): Record<string, unknown> {
@@ -102,6 +102,21 @@ function contextOutput(): { readonly schema: { readonly type: 'object' }; readon
 }
 
 export function createContextTools(compiler: ContextCompiler): readonly ToolDefinition[] {
+  const agentKeys = new WeakMap<object, string>()
+  let nextAgentKey = 0
+
+  function sessionKey(exec: ToolExecution): string | undefined {
+    const agent = exec.agent
+    if (agent !== undefined && agent !== null) {
+      const existing = agentKeys.get(agent)
+      if (existing !== undefined) return existing
+      const key = `agent:${nextAgentKey++}`
+      agentKeys.set(agent, key)
+      return key
+    }
+    return exec.rootCallId === undefined ? undefined : `root:${exec.rootCallId}`
+  }
+
   const repoMap = {
     name: 'context_repo_map',
     description: 'Compile a bounded repository map Context Block for the current immutable snapshot.',
@@ -109,7 +124,7 @@ export function createContextTools(compiler: ContextCompiler): readonly ToolDefi
     output: contextOutput(),
     async execute(rawArgs: unknown, exec: ToolExecution): Promise<ContextBlockV1> {
       if (exec.signal.aborted) throw exec.signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
-      return parseContextBlockV1(await compiler.repoMap(rawArgs as { snapshotId: string; limit: number; cursor?: string }, exec.signal))
+      return parseContextBlockV1(await compiler.repoMap(rawArgs as { snapshotId: string; limit: number; cursor?: string }, exec.signal, sessionKey(exec)))
     },
   } as ToolDefinition
   const symbolQuery = {
@@ -119,7 +134,7 @@ export function createContextTools(compiler: ContextCompiler): readonly ToolDefi
     output: contextOutput(),
     async execute(rawArgs: unknown, exec: ToolExecution): Promise<ContextBlockV1> {
       if (exec.signal.aborted) throw exec.signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
-      return parseContextBlockV1(await compiler.symbolQuery(rawArgs as { snapshotId: string; query: string; limit: number; cursor?: string }, exec.signal))
+      return parseContextBlockV1(await compiler.symbolQuery(rawArgs as { snapshotId: string; query: string; limit: number; cursor?: string }, exec.signal, sessionKey(exec)))
     },
   } as ToolDefinition
   const expandSource = {
@@ -129,7 +144,7 @@ export function createContextTools(compiler: ContextCompiler): readonly ToolDefi
     output: contextOutput(),
     async execute(rawArgs: unknown, exec: ToolExecution): Promise<ContextBlockV1> {
       if (exec.signal.aborted) throw exec.signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
-      return parseContextBlockV1(await compiler.expandSource(rawArgs as { blockId: string; path: string; sourceHash: string; startOffset: number; endOffset: number }, exec.signal))
+      return parseContextBlockV1(await compiler.expandSource(rawArgs as { blockId: string; path: string; sourceHash: string; startOffset: number; endOffset: number }, exec.signal, sessionKey(exec)))
     },
   } as ToolDefinition
   return Object.freeze([repoMap, symbolQuery, expandSource])
