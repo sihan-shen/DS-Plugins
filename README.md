@@ -970,6 +970,12 @@ v0.2a 只验证固定 fixture corpus 的 baseline、共享契约、路径安全�
 
 v0.2b 已在固定 12-task corpus 上完成 keyless promotion gate：cold/warm 的 median source-token reduction 均为 `0.7260683760683762`，mean symbol-query recall@5、target coverage、oracle success 均为 `1`，uncached tokens per success 为 `17.5`；两种条件均通过 `≥ 0.25/0.95/0.95/0.95` 阈值。每个 task 生成 3 次 cold 与 3 次 warm optimized 记录，明确不宣称 cache benefit。该结果只证明固定 fixture、fallback/index、read-only projections、Loader/replay 与评估链路；不证明 provider、网络隔离或真实 coding-task acceptance。`dsh-lsp-actions` 当前决策为 `patch-required`，未安装、未进入默认 profile；详见 [`dsh-lsp-actions compatibility review`](docs/superpowers/reviews/2026-08-30-dsh-lsp-actions-compatibility.md)。
 
+#### v0.2c：Context Blocks 与有界缓存
+
+v0.2c 在独立分支 `codex/v0.2c` 上实现：`@ds-plugins/dsh-context` 作为不可变 ContextBlockV1 契约权威，`@ds-plugins/dsh-context-cache` 作为边界感知的持久化缓存，`@ds-plugins/dsh-code-intelligence` 把既有 Repo Map / Symbol Query 投影通过 `context-compiler` 编译成有界 context block 并提供 provenance 校验的渐进式 source-window 展开，`@ds-plugins/dsh-orchestrator` 仅在 v0.2c overlay 中消费可选 `contextCompiler` 服务。缓存只存在于受信任 deployment root 下的 `.dsh-context-cache/v1/`，使用 mode 0700、同目录临时文件 + 原子 rename、独占锁，并执行依赖哈希失效、LRU 淘汰与 quarantine。`profiles/v0.1` 保持不变；该 overlay 不启用 provider 或 write-capable tool。
+
+keyless gate 证据（cached Node v24.19.0）：`tsc -b` 与 `git diff --check` exit 0；完整 v0.2c Vitest suite 33 文件 / 268 测试通过；v0.2b scoped 回归 21 文件 / 127 测试通过；`test:profile` 1/1、orchestrator package-entry 1/1；`test:provider` 仅输出固定 `DISABLED` 信息并 exit 0。仅有的 2 个失败断言是 `tests/provider/openai-codex.smoke.spec.ts` 的 spawn-stdout 捕获，确认为当前 exec 沙箱对子进程 stdout pipe 捕获失效所致（直接运行该脚本会打印精确的 `DISABLED` 信息且 exit 0），并非代码缺陷。cold/warm replay 如实报告 hit/miss 计数，并保留 v0.2b 阈值。该结果只证明不可变 block、边界缓存、progressive disclosure、只读 context tools 与 Loader/replay 链路；不证明 provider、网络隔离或真实 coding-task acceptance。
+
 ### v0.3：Adaptive Scheduling
 
 交付：

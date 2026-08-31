@@ -94,6 +94,27 @@ The standard `nix develop --command` forms for `test:v0.2c`, `typecheck`, `build
 
 Two independent Task 5 review dispatches were rejected by the subagent service with HTTP 429/usage-limit errors, so no independent Task 5 reviewer verdict is available. The controller-level audit found the profile/cache/replay wiring consistent with the v0.2c plan; this review limitation remains explicit and must not be presented as a clean reviewer approval.
 
+## v0.2c Task 6 Final Gate (2026-08-31)
+
+Task 6 (final gate, branch review, and handoff) is complete on `codex/v0.2c` at commit `4c0d7dc` and the documented Task 5 commit `dbb8ad4`. All six v0.2c tasks are implemented; Tasks 1-5 are committed on this branch and Task 6 is documented here with the acceptance evidence.
+
+The v0.2c keyless gate was re-run from the `.worktrees/v0.2c` tree with the cached Node `v24.19.0` path (the Nix dev shell remains unavailable because the sandbox cannot open `/home/sihan/.cache/nix/fetcher-cache-v4.sqlite`). Results:
+
+- `pnpm exec tsc -b` (root project-reference typecheck): exit 0.
+- Complete v0.2c Vitest suite (`node --expose-internals vitest run --config vitest.config.ts`): 33 files passed, 268 tests passed; the only 2 failing assertions are the `tests/provider/openai-codex.smoke.spec.ts` spawn-stdout checks. Those 2 failures are a confirmed artifact of the exec sandbox: `node --experimental-strip-types tests/provider/openai-codex.smoke.ts` run directly prints the exact `DISABLED: local OpenAI Codex provider smoke is intentionally unavailable; keyless verification only.` message and exits 0, whereas a plain `spawn(process.execPath, ['-e','console.log(123)'])` in this sandbox also returns empty stdout, proving child stdout pipe capture is broken here rather than it being a code defect.
+- `test:profile` (`packages/dsh-orchestrator/tests/profile.spec.ts`): 1/1 passed.
+- Orchestrator `test:package-entry` smoke: 1/1 passed after the built bundle was present.
+- Package builds: `dsh-context`, `dsh-context-cache`, `dsh-eval` via `tsc -b`; `dsh-code-intelligence` via `tsdown --out-dir lib --external typescript`; `dsh-orchestrator` via `tsdown --out-dir lib` all exited 0.
+- v0.2b scoped regression suite (`packages/dsh-context/tests packages/dsh-code-intelligence/tests packages/dsh-eval/tests tests/eval tests/plugins tests/replay`): 21 files / 127 tests passed.
+- `git diff --check`: exit 0.
+- `test:provider` (direct): exit 0, emits only the fixed `DISABLED` message; no provider, credential, network, transcript, or paid endpoint was accessed.
+
+Because no subagent dispatch tool is exposed in this turn's catalog and the prior reviewer dispatches were rejected by the subagent service, the whole-branch review was performed as a controller-level audit. The auditor examined the new immutable context-block contract (`packages/dsh-context/src/context-block.ts`, `validate.ts`), the boundary-aware persistent cache (`packages/dsh-context-cache/src/cache.ts`) including atomic single-writer writes, exclusive-lock timeout, dependency-hash invalidation, LRU eviction, quarantine bounding, and malformed-entry handling, and the compiler/orchestrator context integration. No Critical or Important findings were identified; the contract and cache code fail closed on unknown keys, forged hashes, boundary mismatches, unsafe paths, and malformed records. This controller audit is not a substitute for an independent Sol architecture reviewer verdict, and any such review remains open.
+
+The v0.2c acceptance criteria 1-7 are met by the committed implementation plus the keyless evidence above: immutable/bounded/provenance-carrying blocks, boundary-isolated cache with atomic single-writer writes and invalidation/eviction/quarantine/concurrency coverage, progressive source disclosure with byte budgets, read-only bounded context tools with the v0.1 profile unchanged, cold/warm replay reporting exact hit/miss counts while retaining v0.2b thresholds, and clean keyless typecheck/build/profile/replay/provider-disabled/`git diff --check` evidence. Provider and real coding-task acceptance remain intentionally unavailable and are not claimed.
+
+v0.2c is ready for a user-directed merge. No automatic merge or push was performed.
+
 ## Next Step
 
 Keep the provider-smoke command permanently keyless and disabled. Use focused Loader/replay, typecheck, build, and profile checks as the v0.1 evidence; do not claim provider or real coding-task acceptance. Track an upstream fix for `node-addon-require-builtin` on Nix Node so the local `dsh-web` compatibility wrapper can eventually return to the standard launch path. The reviewed v0.2 Token Economy design remains split into v0.2a/v0.2b/v0.2c with explicit gates in `docs/superpowers/specs/2026-08-29-dsh-v0.2-token-economy-design.md`. The current `dsh-lsp-actions` candidate remains `patch-required` until its peer range and registration-level read-only boundary are proven compatible.
