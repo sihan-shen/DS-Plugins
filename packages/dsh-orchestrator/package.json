@@ -28,6 +28,9 @@
     "prepack": "pnpm run build",
     "test:package-entry": "pnpm run build && pnpm exec vitest run tests/package-entry.spec.ts"
   },
+  "dependencies": {
+    "@ds-plugins/dsh-context": "workspace:*"
+  },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
     "@deepseek-ai/dsh-agent": "0.1.1-rc.2",

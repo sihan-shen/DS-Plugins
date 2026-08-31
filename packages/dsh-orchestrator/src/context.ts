@@ -2,6 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
+import { parseContextBlockV1 } from '@ds-plugins/dsh-context'
 import { MAX_CONTEXT_BLOCK_BYTES } from './config.js'
 import type { ContextBlockV1, ContextCompiler, OrchestratorConfig } from './types.js'
 
@@ -32,7 +33,6 @@ const CONTEXT_PROMPT = [
 
 const textEncoder = new TextEncoder()
 const sha256Pattern = /^sha256:[0-9a-f]{64}$/
-let nextGeneration = 0
 
 interface SystemPromptRegistry {
   section(section: { readonly name: string; readonly order: number; readonly text: string }): () => void
@@ -50,6 +50,20 @@ interface SessionRegistry {
 type MutableToolDefinition = ToolDefinition & {
   execute: ToolDefinition['execute']
   timeoutMs?: number
+}
+
+interface PendingContextCall {
+  readonly controller: AbortController
+  readonly session: Session | undefined
+  readonly root: Session | undefined
+  settled: Promise<void>
+}
+
+interface ContextLifecycle {
+  readonly pending: Set<PendingContextCall>
+  readonly rootFor: (session: Session) => Session | undefined
+  readonly isDisposed: (session: Session) => boolean
+  readonly isActive: () => boolean
 }
 
 function throwReason(signal: AbortSignal): never {
@@ -139,53 +153,6 @@ function expansionRequest(value: unknown): {
   return { blockId, path: safePath(input.path), sourceHash, startOffset, endOffset }
 }
 
-function detachedContextBlock(value: unknown): ContextBlockV1 {
-  const block = object(value, 'Context Block')
-  exactKeys(block, [
-    'schemaVersion', 'blockId', 'kind', 'workspaceFingerprint', 'snapshotId', 'adapterId',
-    'adapterVersion', 'compilerPolicyVersion', 'sources', 'contentHash', 'text', 'byteLength', 'truncated',
-  ], 'Context Block')
-  if (block.schemaVersion !== 1) throw new TypeError('Context Block schemaVersion must be 1')
-  const kind = block.kind
-  if (kind !== 'repo-map' && kind !== 'symbol' && kind !== 'source-window' && kind !== 'tool-result') {
-    throw new TypeError('Context Block kind is invalid')
-  }
-  const blockId = nonEmptyString(block.blockId, 'Context Block blockId')
-  const contentHash = nonEmptyString(block.contentHash, 'Context Block contentHash')
-  if (!sha256Pattern.test(blockId) || !sha256Pattern.test(contentHash)) throw new TypeError('Context Block hashes are invalid')
-  if (!Array.isArray(block.sources)) throw new TypeError('Context Block sources must be an array')
-  const sourcePaths = new Set<string>()
-  const sources = block.sources.map((source, index) => {
-    const item = object(source, `Context Block sources[${index}]`)
-    exactKeys(item, ['path', 'contentHash'], `Context Block sources[${index}]`)
-    const path = safePath(item.path)
-    const sourceHash = nonEmptyString(item.contentHash, `Context Block sources[${index}].contentHash`)
-    if (!sha256Pattern.test(sourceHash)) throw new TypeError(`Context Block sources[${index}].contentHash must be a sha256 hash`)
-    if (sourcePaths.has(path)) throw new TypeError('Context Block sources contain a duplicate path')
-    sourcePaths.add(path)
-    return Object.freeze({ path, contentHash: sourceHash })
-  })
-  if (typeof block.text !== 'string') throw new TypeError('Context Block text must be a string')
-  const byteLength = textEncoder.encode(block.text).byteLength
-  if (byteLength > MAX_CONTEXT_BLOCK_BYTES || block.byteLength !== byteLength) throw new TypeError('Context Block byteLength is invalid')
-  if (typeof block.truncated !== 'boolean') throw new TypeError('Context Block truncated must be a boolean')
-  return Object.freeze({
-    schemaVersion: 1,
-    blockId,
-    kind,
-    workspaceFingerprint: nonEmptyString(block.workspaceFingerprint, 'Context Block workspaceFingerprint'),
-    snapshotId: nonEmptyString(block.snapshotId, 'Context Block snapshotId'),
-    adapterId: nonEmptyString(block.adapterId, 'Context Block adapterId'),
-    adapterVersion: nonEmptyString(block.adapterVersion, 'Context Block adapterVersion'),
-    compilerPolicyVersion: nonEmptyString(block.compilerPolicyVersion, 'Context Block compilerPolicyVersion'),
-    sources: Object.freeze(sources),
-    contentHash,
-    text: block.text,
-    byteLength,
-    truncated: block.truncated,
-  })
-}
-
 function contextMessage(block: ContextBlockV1) {
   return createUserMessage({
     content: [{ type: 'text', text: JSON.stringify(block) }],
@@ -202,14 +169,14 @@ function sessionOf(exec: ToolRunContext): Session | undefined {
   return exec.agent?.session
 }
 
-function sessionKeyFactory(generation: number, sessions: SessionRegistry | undefined): (exec: ToolRunContext) => string {
+function sessionKeyFactory(generation: string, rootFor: (session: Session) => Session | undefined): (exec: ToolRunContext) => string {
   const keys = new WeakMap<Session, string>()
   let nextSession = 0
   return exec => {
     const session = sessionOf(exec)
     if (session !== undefined) {
       const rootSessionId = session.header.parentSession ?? session.id
-      const owner = session.header.parentSession === undefined ? session : sessions?.get(rootSessionId) ?? session
+      const owner = rootFor(session) ?? session
       const existing = keys.get(owner)
       if (existing !== undefined) return existing
       const key = `orchestrator-context:${generation}:${nextSession++}:${rootSessionId}`
@@ -283,22 +250,48 @@ function createContextTools(
 function wrapContextTool(
   tool: MutableToolDefinition,
   mountedExecute: ToolDefinition['execute'],
-  active: () => boolean,
-  disposedSessions: WeakSet<Session>,
+  lifecycle: ContextLifecycle,
   timeoutMs: number,
 ): () => void {
   const originalExecute = tool.execute
   const originalTimeoutMs = tool.timeoutMs
   const wrappedExecute: ToolDefinition['execute'] = async function (args, exec) {
-    const owner = sessionOf(exec)
-    const result = await mountedExecute.call(tool, args, exec)
     if (exec.signal.aborted) throwReason(exec.signal)
-    if (!active() || (owner !== undefined && disposedSessions.has(owner))) {
-      throw new Error('context integration generation was disposed before completion')
+    const session = sessionOf(exec)
+    const root = session === undefined ? undefined : lifecycle.rootFor(session)
+    if (!lifecycle.isActive()) throw new Error('context integration generation is disposed')
+    if (session !== undefined && lifecycle.isDisposed(session)) throw new Error('context Session is disposed')
+    if (root !== undefined && lifecycle.isDisposed(root)) throw new Error('context root Session is disposed')
+
+    const controller = new AbortController()
+    const forwardCallerAbort = () => controller.abort(exec.signal.reason)
+    exec.signal.addEventListener('abort', forwardCallerAbort, { once: true })
+    const call: PendingContextCall = {
+      controller,
+      session,
+      root,
+      settled: Promise.resolve(),
     }
-    const block = detachedContextBlock(result)
-    exec.deferContext(contextMessage(block))
-    return block
+    lifecycle.pending.add(call)
+    const operation = (async () => {
+      try {
+        const callExec = { ...exec, signal: controller.signal } as ToolRunContext
+        const result = await mountedExecute.call(tool, args, callExec)
+        if (exec.signal.aborted) throwReason(exec.signal)
+        if (controller.signal.aborted) throwReason(controller.signal)
+        if (!lifecycle.isActive()) throw new Error('context integration generation was disposed before completion')
+        if (session !== undefined && lifecycle.isDisposed(session)) throw new Error('context Session was disposed before completion')
+        if (root !== undefined && lifecycle.isDisposed(root)) throw new Error('context root Session was disposed before completion')
+        const block = parseContextBlockV1(result)
+        exec.deferContext(contextMessage(block))
+        return block
+      } finally {
+        exec.signal.removeEventListener('abort', forwardCallerAbort)
+        lifecycle.pending.delete(call)
+      }
+    })()
+    call.settled = operation.then(() => undefined, () => undefined)
+    return operation
   }
   tool.execute = wrappedExecute
   tool.timeoutMs = timeoutMs
@@ -325,21 +318,45 @@ export function mountContextIntegration(ctx: Context, config: OrchestratorConfig
     const tools = contextCtx.get('tools') as ContextToolRegistry | undefined
     const sessions = contextCtx.get('sessions') as SessionRegistry | undefined
     if (systemPrompt === undefined || tools === undefined) throw new Error('context integration requires systemPrompt and tools services')
-    const generation = nextGeneration++
+    const generation = crypto.randomUUID()
 
     contextCtx.effect(() => {
       let active = true
       const disposedSessions = new WeakSet<Session>()
+      const roots = new WeakMap<Session, Session>()
+      const pending = new Set<PendingContextCall>()
+      const rootFor = (session: Session): Session | undefined => {
+        if (session.header.parentSession === undefined) return session
+        const existing = roots.get(session)
+        if (existing !== undefined) return existing
+        const root = sessions?.get(session.header.parentSession)
+        if (root !== undefined) roots.set(session, root)
+        return root
+      }
+      const lifecycle: ContextLifecycle = {
+        pending,
+        rootFor,
+        isDisposed: session => disposedSessions.has(session),
+        isActive: () => active,
+      }
       const disposePrompt = systemPrompt.section({
         name: CONTEXT_PROMPT_SECTION,
         order: CONTEXT_PROMPT_ORDER,
         text: CONTEXT_PROMPT,
       })
-      const disposeSessions = contextCtx.on('session/disposed', session => { disposedSessions.add(session) })
+      const disposeCreated = contextCtx.on('session/created', session => { rootFor(session) })
+      const disposeSessions = contextCtx.on('session/disposed', session => {
+        disposedSessions.add(session)
+        for (const call of pending) {
+          if (call.session === session || call.root === session) {
+            call.controller.abort(new Error('context Session owner was disposed'))
+          }
+        }
+      })
       const localTools = createContextTools(
         compiler,
         config.budgets.toolTimeoutMs,
-        sessionKeyFactory(generation, sessions),
+        sessionKeyFactory(generation, rootFor),
       )
       const disposers: Array<() => void> = []
       for (const localTool of localTools) {
@@ -349,16 +366,21 @@ export function mountContextIntegration(ctx: Context, config: OrchestratorConfig
         disposers.push(wrapContextTool(
           tool,
           localTool.execute,
-          () => active,
-          disposedSessions,
+          lifecycle,
           config.budgets.toolTimeoutMs,
         ))
       }
-      return () => {
+      return async () => {
         active = false
         for (const dispose of disposers.reverse()) dispose()
+        disposeCreated()
         disposeSessions()
         disposePrompt()
+        const settling = [...pending].map(call => {
+          call.controller.abort(new Error('context integration generation was disposed'))
+          return call.settled
+        })
+        await Promise.all(settling)
       }
     }, 'ds-orchestrator: optional context integration')
   })

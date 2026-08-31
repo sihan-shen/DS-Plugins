@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
-import { createContextBlockV1, parseContextBlockV1 } from '../../dsh-context/src/index.ts'
+import { createContextBlockV1, parseContextBlockV1 } from '@ds-plugins/dsh-context'
 import { createContextTools as createTask3ContextTools } from '../../dsh-code-intelligence/src/tools.ts'
 import { describe, expect, it, vi } from 'vitest'
 import {
@@ -48,6 +48,8 @@ const contextBlock = createContextBlockV1({
   text: JSON.stringify({ schemaVersion: 1, snapshotId: 'snapshot-1', items: [] }),
   truncated: false,
 })
+
+const uuidGenerationPattern = /^orchestrator-context:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}:\d+:/
 
 interface PromptSection {
   readonly name: string
@@ -99,14 +101,29 @@ function compiler(result = contextBlock) {
   } satisfies ContextCompiler
 }
 
-function rootAgent(id = 'context-root') {
+function sessionAgent(id = 'context-root', parentSession?: string) {
   const session = Session.create(SessionId(id), undefined, {
     version: 0,
     id: SessionId(id),
     createdAt: 0,
     cwd: '/workspace/ds-plugins',
+    ...(parentSession === undefined ? {} : { parentSession: SessionId(parentSession) }),
   })
   return { session }
+}
+
+function rootAgent(id = 'context-root') {
+  return sessionAgent(id)
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
 }
 
 async function flushMount(): Promise<void> {
@@ -190,7 +207,7 @@ describe('optional orchestrator context lifecycle', () => {
 
     expect(service.repoMap).toHaveBeenCalledTimes(1)
     const [, , sessionKey] = service.repoMap.mock.calls[0] ?? []
-    expect(sessionKey).toMatch(/^orchestrator-context:\d+:\d+:context-root$/)
+    expect(sessionKey).toMatch(uuidGenerationPattern)
     expect(deferContext).toHaveBeenCalledTimes(1)
     const message = deferContext.mock.calls[0]?.[0] as {
       readonly source?: unknown
@@ -207,6 +224,38 @@ describe('optional orchestrator context lifecycle', () => {
     if (text === undefined) throw new Error('deferred Context Block text is missing')
     expect(parseContextBlockV1(JSON.parse(text))).toEqual(contextBlock)
     expect(text).not.toContain('SECRET_TRANSCRIPT_MARKER')
+
+    await fiber.dispose()
+    disposeService()
+  })
+
+  it.each([
+    ['blockId', { ...contextBlock, blockId: `sha256:${'2'.repeat(64)}` }],
+    ['contentHash', { ...contextBlock, contentHash: `sha256:${'3'.repeat(64)}` }],
+  ])('rejects a forged derived %s before deferring context', async (_field, forgedBlock) => {
+    const ctx = new Context()
+    const prompts = promptRegistry()
+    const tools = toolRegistry()
+    const service = compiler(forgedBlock)
+    ctx.provide('systemPrompt', prompts as never)
+    ctx.provide('tools', tools as never)
+    const disposeService = ctx.provide('contextCompiler', service as never)
+    const fiber = await ctx.plugin(child => mountContextIntegration(child, config))
+    await flushMount()
+
+    const tool = tools.get('context_repo_map')
+    if (tool === undefined) throw new Error('context_repo_map was not registered')
+    const deferContext = vi.fn()
+    await expect(tool.execute(
+      { snapshotId: 'snapshot-1', limit: 10 },
+      {
+        signal: new AbortController().signal,
+        agent: rootAgent('forged-context-root'),
+        rootCallId: 'forged-call',
+        deferContext,
+      } as never,
+    )).rejects.toThrow(/does not match/)
+    expect(deferContext).not.toHaveBeenCalled()
 
     await fiber.dispose()
     disposeService()
@@ -244,7 +293,7 @@ describe('optional orchestrator context lifecycle', () => {
     } as never)
     expect(originalExecute).not.toHaveBeenCalled()
     expect(service.repoMap).toHaveBeenCalledTimes(1)
-    expect(service.repoMap.mock.calls[0]?.[2]).toMatch(/^orchestrator-context:\d+:\d+:context-root$/)
+    expect(service.repoMap.mock.calls[0]?.[2]).toMatch(uuidGenerationPattern)
     expect(deferContext).toHaveBeenCalledTimes(1)
 
     await fiber.dispose()
@@ -303,6 +352,102 @@ describe('optional orchestrator context lifecycle', () => {
     await orchestratorFiber.dispose()
   })
 
+  it('aborts pending compiler work and awaits its settlement during disposal', async () => {
+    const ctx = new Context()
+    const prompts = promptRegistry()
+    const tools = toolRegistry()
+    const started = deferred<void>()
+    const release = deferred<void>()
+    let compilerSignal: AbortSignal | undefined
+    let cacheWrites = 0
+    const service = {
+      ...compiler(),
+      repoMap: vi.fn(async (_request, signal: AbortSignal) => {
+        compilerSignal = signal
+        started.resolve()
+        await release.promise
+        if (signal.aborted) throw signal.reason ?? new DOMException('cancelled', 'AbortError')
+        cacheWrites += 1
+        return contextBlock
+      }),
+    } satisfies ContextCompiler
+    ctx.provide('systemPrompt', prompts as never)
+    ctx.provide('tools', tools as never)
+    const disposeService = ctx.provide('contextCompiler', service as never)
+    const fiber = await ctx.plugin(child => mountContextIntegration(child, config))
+    await flushMount()
+
+    const tool = tools.get('context_repo_map')
+    if (tool === undefined) throw new Error('context_repo_map was not registered')
+    const deferContext = vi.fn()
+    const pending = tool.execute(
+      { snapshotId: 'snapshot-1', limit: 10 },
+      {
+        signal: new AbortController().signal,
+        agent: rootAgent('pending-disposal-root'),
+        rootCallId: 'pending-disposal-call',
+        deferContext,
+      } as never,
+    )
+    await started.promise
+
+    let disposalSettled = false
+    const disposing = fiber.dispose().then(() => { disposalSettled = true })
+    await Promise.resolve()
+    await Promise.resolve()
+    const disposalAwaitedCompiler = !disposalSettled
+    const compilerWasAborted = compilerSignal?.aborted === true
+    release.resolve()
+    const [pendingOutcome] = await Promise.allSettled([pending, disposing])
+
+    expect(compilerWasAborted).toBe(true)
+    expect(disposalAwaitedCompiler).toBe(true)
+    expect(pendingOutcome.status).toBe('rejected')
+    expect(cacheWrites).toBe(0)
+    expect(deferContext).not.toHaveBeenCalled()
+    disposeService()
+  })
+
+  it('uses a unique UUID generation after a simulated HMR module reload', async () => {
+    async function captureKey(mount: typeof mountContextIntegration): Promise<string | undefined> {
+      const ctx = new Context()
+      const prompts = promptRegistry()
+      const tools = toolRegistry()
+      const service = compiler()
+      ctx.provide('systemPrompt', prompts as never)
+      ctx.provide('tools', tools as never)
+      const disposeService = ctx.provide('contextCompiler', service as never)
+      const fiber = await ctx.plugin(child => mount(child, config))
+      await flushMount()
+      const tool = tools.get('context_repo_map')
+      if (tool === undefined) throw new Error('context_repo_map was not registered')
+      await tool.execute(
+        { snapshotId: 'snapshot-1', limit: 10 },
+        {
+          signal: new AbortController().signal,
+          agent: rootAgent('hmr-context-root'),
+          rootCallId: 'hmr-call',
+          deferContext: vi.fn(),
+        } as never,
+      )
+      const key = service.repoMap.mock.calls[0]?.[2]
+      await fiber.dispose()
+      disposeService()
+      return key
+    }
+
+    vi.resetModules()
+    const firstModule = await import('../src/context.ts')
+    const firstKey = await captureKey(firstModule.mountContextIntegration)
+    vi.resetModules()
+    const secondModule = await import('../src/context.ts')
+    const secondKey = await captureKey(secondModule.mountContextIntegration)
+
+    expect(firstKey).toMatch(uuidGenerationPattern)
+    expect(secondKey).toMatch(uuidGenerationPattern)
+    expect(secondKey).not.toBe(firstKey)
+  })
+
   it('drops pending results from a disposed generation before a same-id replacement remount', async () => {
     const ctx = new Context()
     const prompts = promptRegistry()
@@ -332,14 +477,15 @@ describe('optional orchestrator context lifecycle', () => {
       } as never,
     )
 
-    await oldFiber.dispose()
+    const disposingOld = oldFiber.dispose()
+    settleOld(contextBlock)
+    await disposingOld
     disposeOldService()
     const nextCompiler = compiler()
     const disposeNextService = ctx.provide('contextCompiler', nextCompiler as never)
     const nextFiber = await ctx.plugin(child => mountContextIntegration(child, config))
     await flushMount()
 
-    settleOld(contextBlock)
     await expect(pending).rejects.toThrow(/disposed|generation/i)
     expect(oldDeferred).not.toHaveBeenCalled()
 
@@ -410,6 +556,85 @@ describe('optional orchestrator context lifecycle', () => {
     const replacementKey = service.repoMap.mock.calls[1]?.[2]
     expect(firstKey).not.toBe(replacementKey)
     expect(oldDeferred).not.toHaveBeenCalled()
+    expect(replacementDeferred).toHaveBeenCalledTimes(1)
+
+    await fiber.dispose()
+    disposeService()
+  })
+
+  it('invalidates child work owned by a disposed root while allowing its same-id replacement', async () => {
+    const ctx = new Context()
+    const prompts = promptRegistry()
+    const tools = toolRegistry()
+    const releaseOld = deferred<void>()
+    let oldSignal: AbortSignal | undefined
+    const service = compiler()
+    service.repoMap
+      .mockImplementationOnce(async (_request, signal) => {
+        oldSignal = signal
+        await releaseOld.promise
+        if (signal.aborted) throw signal.reason ?? new DOMException('cancelled', 'AbortError')
+        return contextBlock
+      })
+      .mockResolvedValue(contextBlock)
+    const liveRoots = new Map<string, Session>()
+    ctx.provide('systemPrompt', prompts as never)
+    ctx.provide('tools', tools as never)
+    ctx.provide('sessions', { get: (id: Session['id']) => liveRoots.get(id) } as never)
+    const disposeService = ctx.provide('contextCompiler', service as never)
+    const fiber = await ctx.plugin(child => mountContextIntegration(child, config))
+    await flushMount()
+
+    const tool = tools.get('context_repo_map')
+    if (tool === undefined) throw new Error('context_repo_map was not registered')
+    const oldRoot = rootAgent('owned-root').session
+    const oldChild = sessionAgent('owned-child', 'owned-root')
+    liveRoots.set(oldRoot.id, oldRoot)
+    const oldDeferred = vi.fn()
+    const pendingChild = tool.execute(
+      { snapshotId: 'snapshot-1', limit: 10 },
+      {
+        signal: new AbortController().signal,
+        agent: oldChild,
+        rootCallId: 'old-child-call',
+        deferContext: oldDeferred,
+      } as never,
+    )
+    await Promise.resolve()
+
+    ctx.emit('session/disposed', oldRoot)
+    const replacementRoot = rootAgent('owned-root')
+    liveRoots.set(replacementRoot.session.id, replacementRoot.session)
+    const staleChildDeferred = vi.fn()
+    const staleChildOutcome = await tool.execute(
+      { snapshotId: 'snapshot-1', limit: 10 },
+      {
+        signal: new AbortController().signal,
+        agent: oldChild,
+        rootCallId: 'stale-child-call',
+        deferContext: staleChildDeferred,
+      } as never,
+    ).then(() => 'resolved', () => 'rejected')
+    const replacementDeferred = vi.fn()
+    const replacementOutcome = await tool.execute(
+      { snapshotId: 'snapshot-1', limit: 10 },
+      {
+        signal: new AbortController().signal,
+        agent: replacementRoot,
+        rootCallId: 'replacement-root-call',
+        deferContext: replacementDeferred,
+      } as never,
+    ).then(() => 'resolved', () => 'rejected')
+    releaseOld.resolve()
+    const pendingOutcome = await pendingChild.then(() => 'resolved', () => 'rejected')
+
+    expect(oldSignal?.aborted).toBe(true)
+    expect(staleChildOutcome).toBe('rejected')
+    expect(pendingOutcome).toBe('rejected')
+    expect(replacementOutcome).toBe('resolved')
+    expect(service.repoMap).toHaveBeenCalledTimes(2)
+    expect(oldDeferred).not.toHaveBeenCalled()
+    expect(staleChildDeferred).not.toHaveBeenCalled()
     expect(replacementDeferred).toHaveBeenCalledTimes(1)
 
     await fiber.dispose()
