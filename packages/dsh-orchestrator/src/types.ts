@@ -32,6 +32,42 @@ export interface OrchestratorConfig {
   }
 }
 
+/** One immutable, provenance-carrying context disclosure returned by the optional compiler service. */
+export interface ContextBlockV1 {
+  readonly schemaVersion: 1
+  readonly blockId: string
+  readonly kind: 'repo-map' | 'symbol' | 'source-window' | 'tool-result'
+  readonly workspaceFingerprint: string
+  readonly snapshotId: string
+  readonly adapterId: string
+  readonly adapterVersion: string
+  readonly compilerPolicyVersion: string
+  readonly sources: readonly { readonly path: string; readonly contentHash: string }[]
+  readonly contentHash: string
+  readonly text: string
+  readonly byteLength: number
+  readonly truncated: boolean
+}
+
+/** Optional trusted service exposed by the v0.2c code-intelligence lifecycle. */
+export interface ContextCompiler {
+  repoMap(
+    request: { snapshotId: string; limit: number; cursor?: string },
+    signal: AbortSignal,
+    sessionKey?: string,
+  ): Promise<ContextBlockV1>
+  symbolQuery(
+    request: { snapshotId: string; query: string; limit: number; cursor?: string },
+    signal: AbortSignal,
+    sessionKey?: string,
+  ): Promise<ContextBlockV1>
+  expandSource(
+    request: { blockId: string; path: string; sourceHash: string; startOffset: number; endOffset: number },
+    signal: AbortSignal,
+    sessionKey?: string,
+  ): Promise<ContextBlockV1>
+}
+
 /** Canonical provider route reconstructed from a root request-header snapshot. */
 export interface RequestRouteV1 {
   readonly provider: string

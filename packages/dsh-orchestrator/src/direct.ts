@@ -1,5 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { mountContextIntegration } from './context.js'
 import { appendRunStarted } from './events.js'
 import { parseRequestRoute, type OrchestratorConfig } from './types.js'
 
@@ -39,6 +40,7 @@ function requiredSystemPrompt(ctx: Context): SystemPromptRegistry {
  */
 export function mountDirectMode(ctx: Context, config: OrchestratorConfig): void {
   if (config.mode !== 'direct') throw new TypeError('mountDirectMode requires mode "direct"')
+  mountContextIntegration(ctx, config)
   const systemPrompt = requiredSystemPrompt(ctx)
 
   ctx.effect(() => {

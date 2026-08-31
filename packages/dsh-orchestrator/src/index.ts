@@ -25,6 +25,12 @@ export type {
   PluginToolAction,
 } from './budgets.js'
 export { Config, parseConfig } from './config.js'
+export {
+  CONTEXT_PROMPT_ORDER,
+  CONTEXT_PROMPT_SECTION,
+  CONTEXT_TOOL_NAMES,
+  mountContextIntegration,
+} from './context.js'
 export { DIRECT_PROMPT_ORDER, DIRECT_PROMPT_SECTION, mountDirectMode } from './direct.js'
 export {
   appendBudgetRejected,
@@ -67,6 +73,8 @@ export type {
   VerificationServiceOptions,
 } from './verification.js'
 export type {
+  ContextBlockV1,
+  ContextCompiler,
   HandoffV1,
   OrchestratorConfig,
   VerificationCommand,

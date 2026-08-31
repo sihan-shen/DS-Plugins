@@ -6,6 +6,7 @@ import type { SubagentRun, SubagentRuntime, SubagentStartRequest } from '@deepse
 import type { ObjectJsonSchema, ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { BudgetControllerRegistry } from './budgets.js'
 import { MAX_HANDOFF_ITEMS, MAX_HANDOFF_STRING_BYTES } from './config.js'
+import { mountContextIntegration } from './context.js'
 import { appendRunStarted, appendWorkerFinished, appendWorkerRequested } from './events.js'
 import { failedHandoff, normalizeWorkerOutput } from './handoff.js'
 import { parseRequestRoute, type HandoffV1, type OrchestratorConfig, type WorkerSpecV1 } from './types.js'
@@ -306,6 +307,7 @@ export function mountSingleWorkerMode(
   budgetRegistry: Pick<BudgetControllerRegistry, 'forRootSession'>,
 ): Promise<void> {
   if (config.mode !== 'single-worker') throw new TypeError('mountSingleWorkerMode requires mode "single-worker"')
+  mountContextIntegration(ctx, config)
   return new Promise((resolve, reject) => {
     let settled = false
     let timeout: ReturnType<typeof setTimeout> | undefined

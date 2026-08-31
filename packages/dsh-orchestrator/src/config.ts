@@ -18,6 +18,9 @@ export const MAX_HANDOFF_STRING_BYTES = 16_384
 /** Maximum items retained in a handoff array field. */
 export const MAX_HANDOFF_ITEMS = 128
 
+/** Maximum UTF-8 payload accepted from one trusted context-compiler result. */
+export const MAX_CONTEXT_BLOCK_BYTES = 65_536
+
 type RecordValue = Record<string, unknown>
 
 function fail(path: string, message: string): never {

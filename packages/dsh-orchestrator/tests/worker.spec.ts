@@ -492,6 +492,9 @@ describe('single-worker service lifecycle', () => {
     }) as never)
     await fiber
     expect(tools.get('delegate_worker')).toBeDefined()
+    expect(tools.get('context_repo_map')).toBeUndefined()
+    expect(tools.get('context_symbol_query')).toBeUndefined()
+    expect(tools.get('context_expand_source')).toBeUndefined()
 
     await fiber.dispose()
     expect(tools.get('delegate_worker')).toBeUndefined()
