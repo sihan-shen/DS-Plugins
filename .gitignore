@@ -4,6 +4,10 @@
 # Repository-local DeepSeek Harness state
 /.dsh/
 
+# Persistent bounded context caches
+**/.dsh-context-cache
+**/.dsh-context-cache/**
+
 # Independently cloned upstream source
 /upstream/deepseek-harness/
 

@@ -1,0 +1,55 @@
+[
+  {
+    "id": "ds-orchestrator",
+    "config": {
+      "workspaceRoot": ".",
+      "mode": "direct",
+      "worker": {
+        "provider": "provider-disabled",
+        "model": "provider-disabled",
+        "maxTokens": 32000
+      },
+      "budgets": {
+        "maxWorkers": 0,
+        "maxPluginToolActions": 24,
+        "toolTimeoutMs": 60000
+      },
+      "verification": {
+        "commands": [
+          {
+            "name": "typecheck",
+            "executable": "pnpm",
+            "fixedArgs": ["typecheck"],
+            "allowedArgs": "none"
+          },
+          {
+            "name": "test:profile",
+            "executable": "pnpm",
+            "fixedArgs": ["test:profile"],
+            "allowedArgs": "orchestrator-test-paths"
+          }
+        ],
+        "timeoutMs": 120000,
+        "maxOutputBytes": 65536
+      }
+    }
+  },
+  {
+    "insert": [
+      {
+        "id": "dsh-code-intelligence",
+        "name": "@ds-plugins/dsh-code-intelligence",
+        "config": {
+          "deploymentRoot": ".",
+          "revision": "v0.2c-context",
+          "maxFileBytes": 1048576,
+          "maxFiles": 10000,
+          "maxTotalBytes": 67108864,
+          "maxDirectories": 20000,
+          "maxIgnoreBytes": 262144,
+          "nestedCheckoutRoots": []
+        }
+      }
+    ]
+  }
+]
