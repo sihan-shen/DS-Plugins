@@ -152,10 +152,11 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
 
       const frozenAffinity = state.affinityFor(request, generation)
       if (frozenAffinity !== undefined) {
-        const frozenEntry = config.catalog.find(entry => entry.alias === frozenAffinity.alias)
         const frozenRoute = state.affinityRouteFor(request, generation)
-        if (frozenEntry === undefined || frozenRoute === undefined) throw new SchedulingError('NO_CATALOG_ROUTE')
-        candidate = Object.freeze({ ...frozenEntry, route: frozenRoute, toolFilter: frozenAffinity.toolFilter })
+        if (frozenRoute === undefined) throw new SchedulingError('NO_CATALOG_ROUTE')
+        const frozenCandidate = resolveCatalogCandidate(config, frozenAffinity.alias, request, { route: frozenRoute, toolFilter: frozenAffinity.toolFilter })
+        if (frozenCandidate === undefined) throw new SchedulingError('NO_CATALOG_ROUTE')
+        candidate = frozenCandidate
         reason = 'STICKY_ROUTE'
         switchReason = undefined
       }

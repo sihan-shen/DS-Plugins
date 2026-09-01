@@ -1,5 +1,10 @@
-import type { CapabilityRequestV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import type { CapabilityRequestV1, RouteDecisionV1 } from '@ds-plugins/dsh-scheduling-contracts'
 import type { AdaptiveSchedulerConfig, CatalogAvailabilityV1, RouteCatalogEntryV1, TaskTypeV1 } from './types.js'
+
+interface CandidateSnapshot {
+  readonly route: RouteDecisionV1
+  readonly toolFilter: readonly string[]
+}
 
 export function catalogAvailability(_entry: RouteCatalogEntryV1): CatalogAvailabilityV1 {
   return { quota: 'unknown', price: 'unknown', health: 'unknown' }
@@ -13,20 +18,25 @@ export function strongestAllowedAlias(config: AdaptiveSchedulerConfig, request: 
   return strongest?.alias
 }
 
-export function resolveCatalogCandidate(config: AdaptiveSchedulerConfig, alias: string | undefined, request: CapabilityRequestV1): RouteCatalogEntryV1 | undefined {
+export function resolveCatalogCandidate(config: AdaptiveSchedulerConfig, alias: string | undefined, request: CapabilityRequestV1, snapshot?: CandidateSnapshot): RouteCatalogEntryV1 | undefined {
   if (alias === undefined) return undefined
   const candidate = config.catalog.find(entry => entry.alias === alias)
-  if (candidate === undefined || !routeAllowed(candidate, request)) return undefined
-  return candidate
+  if (candidate === undefined || !routeAllowed(candidate, request, snapshot?.route, snapshot?.toolFilter)) return undefined
+  if (snapshot === undefined) return candidate
+  return Object.freeze({
+    ...candidate,
+    route: Object.freeze({ ...snapshot.route }),
+    toolFilter: Object.freeze([...snapshot.toolFilter]),
+  })
 }
 
-function routeAllowed(entry: RouteCatalogEntryV1, request: CapabilityRequestV1): boolean {
+function routeAllowed(entry: RouteCatalogEntryV1, request: CapabilityRequestV1, route = entry.route, toolFilter = entry.toolFilter): boolean {
   const taskType = classifyTaskType(request)
   if (!entry.taskTypes.includes(taskType) && !entry.taskTypes.includes('unknown')) return false
   if (entry.paid && !request.constraints.allowPaidFallback) return false
-  if (request.constraints.allowedProviders !== undefined && !request.constraints.allowedProviders.includes(entry.route.provider)) return false
-  if (entry.route.maxTokens > request.constraints.maxOutputTokens) return false
-  return request.constraints.requiredTools.every(tool => entry.toolFilter.includes(tool))
+  if (request.constraints.allowedProviders !== undefined && !request.constraints.allowedProviders.includes(route.provider)) return false
+  if (route.maxTokens > request.constraints.maxOutputTokens) return false
+  return request.constraints.requiredTools.every(tool => toolFilter.includes(tool))
 }
 
 function classifyTaskType(request: CapabilityRequestV1): TaskTypeV1 {

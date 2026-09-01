@@ -86,3 +86,20 @@ all exited 0
 ```
 
 The pnpm wrapper remains unverified because of the known sandbox SQLite/registry limitation. No provider, credential, network, live runtime, or paid route was exercised.
+
+## Review re-review fix round 2 (2026-09-01)
+
+The new Important finding is fixed. The frozen affinity return path no longer reconstructs a candidate with a bare `config.catalog.find`. `resolveCatalogCandidate` now accepts the frozen route and tool-filter snapshot and runs the same hard-constraint checker used by initial selection, including provider allowlists, maximum output tokens, and required tools. An invalid frozen snapshot fails closed with `NO_CATALOG_ROUTE`; a missing snapshot remains a defensive failure rather than falling back to the mutable catalog route.
+
+Added a regression covering one worker invocation that first freezes the 64k strong route for a high-impact request, then lowers risk and tightens `maxOutputTokens` to 32k. The later schedule is rejected instead of returning the incompatible frozen route.
+
+Verification:
+
+```text
+RED: state.spec.ts failed 1/12 because the tightened request resolved the frozen 64k route.
+GREEN: packages/dsh-adaptive-scheduler/tests — 3 files / 28 tests passed.
+GREEN: node node_modules/typescript/bin/tsc -b — exit 0.
+GREEN: git diff --check — exit 0.
+```
+
+The supplied cached-Node direct commands were used because the pnpm SQLite/registry sandbox limitation remains. No provider, credential, network, live runtime, or paid route was exercised.

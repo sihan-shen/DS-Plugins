@@ -91,4 +91,23 @@ describe('adaptive scheduler state', () => {
     expect(repeated.route).toEqual(first.route)
     expect(repeated.explanationCode).toBe('STICKY_ROUTE')
   })
+
+  it('revalidates a frozen route when a later request tightens token constraints', async () => {
+    const scheduler = createAdaptiveScheduler(schedulerConfig, { generation: 'g1' })
+    const highImpactRequest = {
+      ...request,
+      profile: { ...request.profile, risk: 90 },
+      affinity: { workerId: 'worker-1' },
+    } as const
+    await expect(scheduler.schedule(highImpactRequest, budget, signal)).resolves.toMatchObject({
+      route: { model: 'strong-disabled', maxTokens: 64000 },
+    })
+
+    const tightenedRequest = {
+      ...highImpactRequest,
+      profile: { ...highImpactRequest.profile, risk: 20 },
+      constraints: { ...highImpactRequest.constraints, maxOutputTokens: 32000 },
+    } as const
+    await expect(scheduler.schedule(tightenedRequest, budget, signal)).rejects.toThrow('NO_CATALOG_ROUTE')
+  })
 })
