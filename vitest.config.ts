@@ -10,6 +10,7 @@ export default defineConfig({
   },
   test: {
     include: [
+      'packages/dsh-scheduling-contracts/tests/**/*.spec.ts',
       'packages/dsh-context/tests/**/*.spec.ts',
       'packages/dsh-context-cache/tests/**/*.spec.ts',
       'packages/dsh-code-intelligence/tests/**/*.spec.ts',
