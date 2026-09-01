@@ -8,8 +8,6 @@ export class SchedulingError extends Error {
   constructor(code: string) { super(code); this.name = 'SchedulingError'; this.code = code }
 }
 
-const ALLOWED_TOOLS = new Set(['targeted_verify'])
-
 interface Selection {
   readonly candidate: RouteCatalogEntryV1
   readonly reason: string
@@ -17,7 +15,6 @@ interface Selection {
 }
 
 function baselineSelection(config: AdaptiveSchedulerConfig, request: CapabilityRequestV1): Selection {
-  if (request.constraints.requiredTools.some(tool => !ALLOWED_TOOLS.has(tool))) throw new SchedulingError('SAFETY_GATE')
   if (request.target === 'worker' && request.constraints.maxWorkers === 0) throw new SchedulingError('SAFETY_GATE')
   if (request.target === 'worker' && request.constraints.requiredTools.includes('delegate_worker')) throw new SchedulingError('SAFETY_GATE')
   const taskType = classifyTaskType(request)

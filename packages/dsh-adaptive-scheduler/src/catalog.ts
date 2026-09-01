@@ -7,7 +7,7 @@ export function catalogAvailability(_entry: RouteCatalogEntryV1): CatalogAvailab
 
 export function strongestAllowedAlias(config: AdaptiveSchedulerConfig, request: CapabilityRequestV1): string | undefined {
   const taskType = classifyTaskType(request)
-  const candidates = config.catalog.filter(entry => entry.tier === 'strong' && entry.taskTypes.includes(taskType) && routeAllowed(entry, request))
+  const candidates = config.catalog.filter(entry => entry.tier === 'strong' && (entry.taskTypes.includes(taskType) || entry.taskTypes.includes('unknown')) && routeAllowed(entry, request))
   let strongest: RouteCatalogEntryV1 | undefined
   for (const candidate of candidates) if (strongest === undefined || candidate.reliability > strongest.reliability) strongest = candidate
   return strongest?.alias
@@ -30,7 +30,7 @@ function routeAllowed(entry: RouteCatalogEntryV1, request: CapabilityRequestV1):
 }
 
 function classifyTaskType(request: CapabilityRequestV1): TaskTypeV1 {
-  const objective = request.objective.toLocaleLowerCase()
+  const objective = request.objective.toLowerCase()
   if (/\b(summar(?:ize|y)|condense|tl;dr)\b/u.test(objective)) return 'summarize'
   if (/\b(research|investigate|explore|compare|find out)\b/u.test(objective)) return 'research'
   if (/\b(review|audit|critique|inspect)\b/u.test(objective)) return 'review'
