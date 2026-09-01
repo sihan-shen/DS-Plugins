@@ -73,4 +73,20 @@ describe('bounded performance history', () => {
     expect(ordered.map(candidate => candidate.alias)).toEqual(['baseline', 'fallback'])
     expect(Object.isFrozen(history.snapshot('code-fix'))).toBe(true)
   })
+
+  it('discards the oldest pending selection at the bounded global limit', () => {
+    const history = new BoundedPerformanceHistory({ windowSize: 2, minSamples: 1, now: () => 1000 })
+    const first = { ...pendingCodeFix, requestId: 'pending-1' }
+    const second = { ...pendingCodeFix, requestId: 'pending-2' }
+    const third = { ...pendingCodeFix, requestId: 'pending-3' }
+
+    history.remember(first)
+    history.remember(second)
+    history.remember(third)
+    history.observeFeedback({ schemaVersion: 1, requestId: 'pending-1', outcome: 'completed' })
+    expect(history.snapshot('code-fix')).toBeUndefined()
+
+    history.observeFeedback({ schemaVersion: 1, requestId: 'pending-3', outcome: 'completed' })
+    expect(history.snapshot('code-fix')).toMatchObject({ n: 1, success: 1 })
+  })
 })

@@ -57,4 +57,25 @@ describe('adaptive scheduler escalation', () => {
     expect(scheduler.switches()).toEqual([expect.objectContaining({ requestId: request.taskId, generation: 'g1', reason: 'TRANSIENT_FALLBACK', previousRoute: expect.objectContaining({ model: 'baseline-disabled' }), nextRoute: expect.objectContaining({ model: 'fallback-disabled' }) })])
     expect(scheduler.switches().length).toBeLessThanOrEqual(64)
   })
+
+  it('keeps Handoff escalation above a transient failure fallback', async () => {
+    const scheduler = createAdaptiveScheduler(schedulerConfig, { generation: 'g1' })
+    scheduler.recordFailure({ requestId: 'handoff-next', code: 'TIMEOUT' })
+    await expect(scheduler.schedule({
+      ...request,
+      taskId: 'handoff-next',
+      priorHandoff: {
+        schemaVersion: 1,
+        status: 'failed',
+        summary: 'Parser remains blocked.',
+        changedFiles: [],
+        decisions: [],
+        verification: [],
+        blockers: ['Schema mismatch.'],
+      },
+    }, budget, signal)).resolves.toMatchObject({
+      route: { model: 'strong-disabled' },
+      explanationCode: 'HANDOFF_ESCALATION',
+    })
+  })
 })

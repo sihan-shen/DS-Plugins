@@ -52,6 +52,7 @@ function combinedScore(scores: ReadonlyMap<string, RouteScore>, candidate: Route
 
 export class BoundedPerformanceHistory {
   private readonly windowSize: number
+  private readonly pendingLimit: number
   private readonly minSamples: number
   private readonly now: () => number
   private readonly pending = new Map<string, PendingSelectionV1>()
@@ -60,6 +61,7 @@ export class BoundedPerformanceHistory {
 
   constructor(options: PerformanceHistoryOptions) {
     this.windowSize = options.windowSize
+    this.pendingLimit = Math.max(1, options.windowSize)
     this.minSamples = options.minSamples
     this.now = options.now ?? (() => Date.now())
   }
@@ -102,6 +104,10 @@ export class BoundedPerformanceHistory {
 
   remember(pending: PendingSelectionV1): void {
     if (this.disposed) return
+    if (!this.pending.has(pending.requestId) && this.pending.size >= this.pendingLimit) {
+      const oldest = this.pending.keys().next().value
+      if (oldest !== undefined) this.pending.delete(oldest)
+    }
     this.pending.set(pending.requestId, Object.freeze({ ...pending, route: Object.freeze({ ...pending.route }) }))
   }
 

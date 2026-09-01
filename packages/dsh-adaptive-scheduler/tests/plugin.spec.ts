@@ -20,6 +20,23 @@ describe('adaptive scheduler Cordis plugin', () => {
     expect(ctx.get('adaptiveScheduler')).toBeUndefined()
   })
 
+  it('records dispatched request failures and stops recording after teardown', async () => {
+    const ctx = new Context()
+    const fiber = await ctx.plugin(apply, schedulerConfig)
+    const service = ctx.get('adaptiveScheduler')!
+    const dispatchFailure = (requestId: string) => ctx.events.waterfall('agent/request-error', {
+      agent: { session: { id: requestId, header: {} } },
+      failure: { code: 'QUOTA' },
+    }, async () => undefined)
+
+    await dispatchFailure('event-before-dispose')
+    await expect(service.schedule({ ...request, taskId: 'event-before-dispose' }, budget, new AbortController().signal)).rejects.toThrow('QUOTA_EXHAUSTED')
+
+    await fiber.dispose()
+    await dispatchFailure('event-after-dispose')
+    await expect(service.schedule({ ...request, taskId: 'event-after-dispose' }, budget, new AbortController().signal)).resolves.toMatchObject({ explanationCode: 'TASK_BASELINE' })
+  })
+
   it('escalates a later request from bounded failed Handoff feedback', async () => {
     const scheduler = createAdaptiveScheduler(schedulerConfig, { generation: 'g1' })
     await scheduler.schedule(request, budget, new AbortController().signal)

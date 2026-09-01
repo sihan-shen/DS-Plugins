@@ -26,6 +26,7 @@ describe('adaptive scheduler policy configuration', () => {
     expect(() => parseAdaptiveSchedulerConfig({ ...schedulerConfig, maxRounds: 5 })).toThrow()
     expect(() => parseAdaptiveSchedulerConfig({ ...schedulerConfig, catalog: [...schedulerConfig.catalog, { ...schedulerConfig.catalog[0], alias: 'baseline' }] })).toThrow()
     expect(() => parseAdaptiveSchedulerConfig({ ...schedulerConfig, endpoint: 'https://example.invalid' })).toThrow()
+    expect(() => parseAdaptiveSchedulerConfig({ ...schedulerConfig, historyWindowSize: 2, historyMinSamples: 3 })).toThrow(/historyMinSamples/)
   })
 
   it('uses deterministic safety, budget, explicit-route, and baseline precedence', async () => {

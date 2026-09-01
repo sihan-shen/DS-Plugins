@@ -135,6 +135,9 @@ export function parseAdaptiveSchedulerConfig(value: unknown): AdaptiveSchedulerC
     const alias = parsedExplicitRoutes?.[key]
     if (alias !== undefined && !aliases.has(alias)) fail(`explicitRoutes.${key}`, `references unknown catalog alias ${JSON.stringify(alias)}`)
   }
+  const historyWindowSize = boundedInteger(required(config, 'historyWindowSize', 'config'), 'historyWindowSize', 1, MAX_HISTORY_WINDOW_SIZE)
+  const historyMinSamples = boundedInteger(required(config, 'historyMinSamples', 'config'), 'historyMinSamples', 1, MAX_HISTORY_WINDOW_SIZE)
+  if (historyMinSamples > historyWindowSize) fail('historyMinSamples', 'must not exceed historyWindowSize')
   return deepFreeze({
     policyVersion: identifier(required(config, 'policyVersion', 'config'), 'policyVersion'),
     catalog,
@@ -147,8 +150,8 @@ export function parseAdaptiveSchedulerConfig(value: unknown): AdaptiveSchedulerC
     escalationTtlMs: boundedInteger(required(config, 'escalationTtlMs', 'config'), 'escalationTtlMs', 1, MAX_ESCALATION_TTL_MS),
     maxEscalationsPerTask: boundedInteger(required(config, 'maxEscalationsPerTask', 'config'), 'maxEscalationsPerTask', 0, MAX_ESCALATIONS_PER_TASK),
     maxRounds: boundedInteger(required(config, 'maxRounds', 'config'), 'maxRounds', 1, MAX_ROUNDS),
-    historyWindowSize: boundedInteger(required(config, 'historyWindowSize', 'config'), 'historyWindowSize', 1, MAX_HISTORY_WINDOW_SIZE),
-    historyMinSamples: boundedInteger(required(config, 'historyMinSamples', 'config'), 'historyMinSamples', 1, MAX_HISTORY_WINDOW_SIZE),
+    historyWindowSize,
+    historyMinSamples,
   })
 }
 

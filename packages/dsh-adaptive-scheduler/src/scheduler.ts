@@ -199,7 +199,7 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
         }
       }
 
-      if (TRANSIENT_FAILURES.has(failures.at(-1)?.code ?? '') && sticky === undefined) {
+      if (!handoffEscalation && TRANSIENT_FAILURES.has(failures.at(-1)?.code ?? '') && sticky === undefined) {
         candidate = selected.candidate
         reason = selected.reason
       }
