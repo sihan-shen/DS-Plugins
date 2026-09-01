@@ -1,5 +1,6 @@
 export { Config, parseAdaptiveSchedulerConfig } from './config.js'
 export { catalogAvailability, resolveCatalogCandidate, strongestAllowedAlias } from './catalog.js'
 export { createAdaptiveScheduler, SchedulingError } from './scheduler.js'
+export { SchedulerStateStore } from './state.js'
 export { classifyTaskType } from './catalog.js'
-export type { AdaptiveSchedulerConfig, AdaptiveSchedulerRuntime, CatalogAvailabilityV1, RouteCatalogEntryV1, RouteTierV1, SchedulerOptions, TaskTypeV1 } from './types.js'
+export type { AdaptiveSchedulerConfig, AdaptiveSchedulerRuntime, CatalogAvailabilityV1, ProviderFailureCodeV1, ProviderFailureFactV1, RouteCatalogEntryV1, RouteSwitchReasonV1, RouteSwitchRecordV1, RouteTierV1, SchedulerOptions, StickyRouteStateV1, TaskTypeV1, WorkerAffinityStateV1 } from './types.js'

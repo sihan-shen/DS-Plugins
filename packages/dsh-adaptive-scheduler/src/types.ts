@@ -34,6 +34,48 @@ export interface SchedulerOptions {
   readonly generation?: string
 }
 
+export type ProviderFailureCodeV1 = 'QUOTA' | 'RATE_LIMIT' | 'AUTH' | 'SERVER' | 'TIMEOUT' | 'TRANSPORT'
+
+export interface ProviderFailureFactV1 {
+  readonly requestId: string
+  readonly code: ProviderFailureCodeV1
+  readonly providerRetryAfterMs?: number
+}
+
+export interface StickyRouteStateV1 {
+  readonly requestId: string
+  readonly phase: 'root' | 'worker'
+  readonly generation: string
+  readonly alias: string
+  readonly selectedAt: number
+  readonly lastUsedAt: number
+  readonly expiresAt: number
+  readonly idleExpiresAt: number
+}
+
+export interface WorkerAffinityStateV1 {
+  readonly workerId: string
+  readonly requestId: string
+  readonly generation: string
+  readonly alias: string
+  readonly toolFilter: readonly string[]
+  readonly maxDepth: 1
+  readonly outputSchema: 'handoff-v1'
+  readonly maxTokens: number
+  readonly background: false
+}
+
+export type RouteSwitchReasonV1 = 'EXPLICIT_ROUTE' | 'TRANSIENT_FALLBACK' | 'ADAPTIVE_ESCALATION' | 'HANDOFF_ESCALATION' | 'PHASE_BOUNDARY' | 'TTL_EXPIRED' | 'IDLE_EXPIRED'
+
+export interface RouteSwitchRecordV1 {
+  readonly requestId: string
+  readonly generation: string
+  readonly reason: RouteSwitchReasonV1
+  readonly previousRoute?: RouteDecisionV1
+  readonly nextRoute: RouteDecisionV1
+  readonly at: number
+}
+
 export interface CatalogAvailabilityV1 {
   readonly quota: 'unknown'
   readonly price: 'unknown'
@@ -41,5 +83,7 @@ export interface CatalogAvailabilityV1 {
 }
 
 export interface AdaptiveSchedulerRuntime extends AdaptiveSchedulerService {
+  recordFailure(fact: ProviderFailureFactV1): void
+  switches(): readonly RouteSwitchRecordV1[]
   readonly generation: string
 }
