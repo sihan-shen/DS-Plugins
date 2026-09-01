@@ -97,3 +97,49 @@ export interface ScheduleDecisionV1 {
   readonly affinityKey?: string
   readonly explanationCode?: string
 }
+
+export interface BudgetViewV1 {
+  readonly maxWorkers: number
+  readonly admittedWorkers: number
+  readonly maxPluginToolActions: number
+  readonly admittedPluginToolActions: number
+  readonly remainingWorkers: number
+  readonly remainingPluginToolActions: number
+}
+
+export interface ScheduleFeedbackV1 {
+  readonly schemaVersion: 1
+  readonly requestId: string
+  readonly outcome: 'completed' | 'blocked' | 'failed' | 'budget-rejected' | 'verification-failed'
+  readonly handoff?: HandoffV1
+  readonly verification?: readonly VerificationEvidenceV1[]
+  readonly budgetRejection?: {
+    readonly code: 'WORKER_LIMIT' | 'PLUGIN_TOOL_LIMIT' | 'DISPOSED'
+    readonly limit: number
+    readonly observed: number
+  }
+  readonly actual?: {
+    readonly provider?: string
+    readonly model?: string
+    readonly durationMs?: number
+    readonly toolCalls?: number
+  }
+}
+
+export interface ScheduleSelectedV1 {
+  readonly schemaVersion: 1
+  readonly target: 'root' | 'worker'
+  readonly source: 'scheduler' | 'profile-fallback'
+  readonly provider: string
+  readonly model: string
+  readonly maxTokens: number
+  readonly reasoningEffort?: string
+  readonly promptProfile?: string
+  readonly policyVersion?: string
+}
+
+export interface AdaptiveSchedulerService {
+  schedule(request: CapabilityRequestV1, budget: BudgetViewV1, signal: AbortSignal): Promise<ScheduleDecisionV1>
+  observe?(feedback: ScheduleFeedbackV1): void
+  dispose?(): Promise<void>
+}

@@ -1,9 +1,12 @@
 import type {
   CapabilityProfileV1,
   CapabilityRequestV1,
+  BudgetViewV1,
   HandoffV1,
   RouteDecisionV1,
   ScheduleDecisionV1,
+  ScheduleFeedbackV1,
+  ScheduleSelectedV1,
   SchedulingConstraintsV1,
   VerificationEvidenceV1,
 } from './types.js'
@@ -122,8 +125,8 @@ function boundedStringArray(value: unknown, path: string, identifier = false): r
     : boundedText(item, `${path}[${index}]`))
 }
 
-function parseVerificationEvidence(value: unknown, index: number): VerificationEvidenceV1 {
-  const path = `priorHandoff.verification[${index}]`
+function parseVerificationEvidence(value: unknown, index: number, parentPath = 'priorHandoff.verification'): VerificationEvidenceV1 {
+  const path = `${parentPath}[${index}]`
   const evidence = exactRecord(value, path, [
     'schemaVersion', 'commandName', 'args', 'exitCode', 'status', 'stdout', 'stderr', 'truncated', 'durationMs',
   ])
@@ -149,29 +152,29 @@ function parseVerificationEvidence(value: unknown, index: number): VerificationE
   }
 }
 
-function parseHandoff(value: unknown): HandoffV1 {
-  const handoff = exactRecord(value, 'priorHandoff', [
+function parseHandoff(value: unknown, path = 'priorHandoff'): HandoffV1 {
+  const handoff = exactRecord(value, path, [
     'schemaVersion', 'status', 'summary', 'changedFiles', 'decisions', 'verification', 'blockers',
   ])
-  if (handoff.schemaVersion !== 1) fail('priorHandoff.schemaVersion', 'must be 1')
-  const status = required(handoff, 'status', 'priorHandoff')
-  if (status !== 'completed' && status !== 'blocked' && status !== 'failed') fail('priorHandoff.status', 'is unsupported')
-  const verificationValue = required(handoff, 'verification', 'priorHandoff')
-  if (!Array.isArray(verificationValue)) fail('priorHandoff.verification', 'must be an array')
-  if (verificationValue.length > MAX_SCHEDULING_ITEMS) fail('priorHandoff.verification', `must not contain more than ${MAX_SCHEDULING_ITEMS} items`)
-  const verification = verificationValue.map(parseVerificationEvidence)
-  const summary = boundedText(required(handoff, 'summary', 'priorHandoff'), 'priorHandoff.summary')
+  if (handoff.schemaVersion !== 1) fail(`${path}.schemaVersion`, 'must be 1')
+  const status = required(handoff, 'status', path)
+  if (status !== 'completed' && status !== 'blocked' && status !== 'failed') fail(`${path}.status`, 'is unsupported')
+  const verificationValue = required(handoff, 'verification', path)
+  if (!Array.isArray(verificationValue)) fail(`${path}.verification`, 'must be an array')
+  if (verificationValue.length > MAX_SCHEDULING_ITEMS) fail(`${path}.verification`, `must not contain more than ${MAX_SCHEDULING_ITEMS} items`)
+  const verification = verificationValue.map((item, index) => parseVerificationEvidence(item, index, `${path}.verification`))
+  const summary = boundedText(required(handoff, 'summary', path), `${path}.summary`)
   if (status === 'completed' && verification.some(item => item.status !== 'passed') && !summary.includes('[verification: failed]')) {
-    fail('priorHandoff.summary', 'must include [verification: failed] for unsuccessful verification')
+    fail(`${path}.summary`, 'must include [verification: failed] for unsuccessful verification')
   }
   return {
     schemaVersion: 1,
     status,
     summary,
-    changedFiles: boundedStringArray(required(handoff, 'changedFiles', 'priorHandoff'), 'priorHandoff.changedFiles'),
-    decisions: boundedStringArray(required(handoff, 'decisions', 'priorHandoff'), 'priorHandoff.decisions'),
+    changedFiles: boundedStringArray(required(handoff, 'changedFiles', path), `${path}.changedFiles`),
+    decisions: boundedStringArray(required(handoff, 'decisions', path), `${path}.decisions`),
     verification,
-    blockers: boundedStringArray(required(handoff, 'blockers', 'priorHandoff'), 'priorHandoff.blockers'),
+    blockers: boundedStringArray(required(handoff, 'blockers', path), `${path}.blockers`),
   }
 }
 
@@ -274,4 +277,88 @@ export function parseScheduleDecisionV1(value: unknown): ScheduleDecisionV1 {
     ...optionalIdentifier(input, 'affinityKey', 'decision.affinityKey'),
     ...optionalIdentifier(input, 'explanationCode', 'decision.explanationCode'),
   })
+}
+
+export function parseBudgetViewV1(value: unknown): BudgetViewV1 {
+  assertJsonValue(value, 'budget')
+  const input = exactRecord(value, 'budget', ['maxWorkers', 'admittedWorkers', 'maxPluginToolActions', 'admittedPluginToolActions', 'remainingWorkers', 'remainingPluginToolActions'])
+  const maxWorkers = boundedInteger(required(input, 'maxWorkers', 'budget'), 'budget.maxWorkers', 0, 1)
+  const admittedWorkers = boundedInteger(required(input, 'admittedWorkers', 'budget'), 'budget.admittedWorkers', 0, maxWorkers)
+  const maxPluginToolActions = boundedInteger(required(input, 'maxPluginToolActions', 'budget'), 'budget.maxPluginToolActions', 0, 32)
+  const admittedPluginToolActions = boundedInteger(required(input, 'admittedPluginToolActions', 'budget'), 'budget.admittedPluginToolActions', 0, maxPluginToolActions)
+  if (input.remainingWorkers !== maxWorkers - admittedWorkers) throw new TypeError('budget.remainingWorkers is inconsistent')
+  if (input.remainingPluginToolActions !== maxPluginToolActions - admittedPluginToolActions) throw new TypeError('budget.remainingPluginToolActions is inconsistent')
+  return deepFreeze({ maxWorkers, admittedWorkers, maxPluginToolActions, admittedPluginToolActions, remainingWorkers: maxWorkers - admittedWorkers, remainingPluginToolActions: maxPluginToolActions - admittedPluginToolActions })
+}
+
+export function parseScheduleFeedbackV1(value: unknown): ScheduleFeedbackV1 {
+  assertJsonValue(value, 'feedback')
+  const input = exactRecord(value, 'feedback', ['schemaVersion', 'requestId', 'outcome', 'handoff', 'verification', 'budgetRejection', 'actual'])
+  if (input.schemaVersion !== 1) fail('feedback.schemaVersion', 'must be 1')
+  const outcome = required(input, 'outcome', 'feedback')
+  if (outcome !== 'completed' && outcome !== 'blocked' && outcome !== 'failed' && outcome !== 'budget-rejected' && outcome !== 'verification-failed') {
+    fail('feedback.outcome', 'is unsupported')
+  }
+
+  let budgetRejection: ScheduleFeedbackV1['budgetRejection']
+  if (Object.prototype.hasOwnProperty.call(input, 'budgetRejection')) {
+    const rejection = exactRecord(input.budgetRejection, 'feedback.budgetRejection', ['code', 'limit', 'observed'])
+    const code = required(rejection, 'code', 'feedback.budgetRejection')
+    if (code !== 'WORKER_LIMIT' && code !== 'PLUGIN_TOOL_LIMIT' && code !== 'DISPOSED') fail('feedback.budgetRejection.code', 'is unsupported')
+    budgetRejection = {
+      code,
+      limit: boundedInteger(required(rejection, 'limit', 'feedback.budgetRejection'), 'feedback.budgetRejection.limit', 0, 32),
+      observed: boundedInteger(required(rejection, 'observed', 'feedback.budgetRejection'), 'feedback.budgetRejection.observed', 0, 32),
+    }
+  }
+  if (outcome === 'budget-rejected' && budgetRejection === undefined) fail('feedback.budgetRejection', 'is required for budget-rejected outcome')
+  if (outcome !== 'budget-rejected' && budgetRejection !== undefined) fail('feedback.budgetRejection', 'is only allowed for budget-rejected outcome')
+
+  let verification: readonly VerificationEvidenceV1[] | undefined
+  if (Object.prototype.hasOwnProperty.call(input, 'verification')) {
+    if (!Array.isArray(input.verification)) fail('feedback.verification', 'must be an array')
+    if (input.verification.length > MAX_SCHEDULING_ITEMS) fail('feedback.verification', `must not contain more than ${MAX_SCHEDULING_ITEMS} items`)
+    verification = input.verification.map((item, index) => parseVerificationEvidence(item, index, 'feedback.verification'))
+  }
+
+  let actual: ScheduleFeedbackV1['actual'] | undefined
+  if (Object.prototype.hasOwnProperty.call(input, 'actual')) {
+    const actualInput = exactRecord(input.actual, 'feedback.actual', ['provider', 'model', 'durationMs', 'toolCalls'])
+    actual = {
+      ...optionalIdentifier(actualInput, 'provider', 'feedback.actual.provider'),
+      ...optionalIdentifier(actualInput, 'model', 'feedback.actual.model'),
+      ...(Object.prototype.hasOwnProperty.call(actualInput, 'durationMs')
+        ? { durationMs: boundedInteger(actualInput.durationMs, 'feedback.actual.durationMs', 0, MAX_SCHEDULING_LATENCY_MS) }
+        : {}),
+      ...(Object.prototype.hasOwnProperty.call(actualInput, 'toolCalls')
+        ? { toolCalls: boundedInteger(actualInput.toolCalls, 'feedback.actual.toolCalls', 0, 32) }
+        : {}),
+    }
+  }
+
+  return deepFreeze({
+    schemaVersion: 1,
+    requestId: boundedIdentifier(required(input, 'requestId', 'feedback'), 'feedback.requestId'),
+    outcome,
+    ...(Object.prototype.hasOwnProperty.call(input, 'handoff') ? { handoff: parseHandoff(input.handoff, 'feedback.handoff') } : {}),
+    ...(verification === undefined ? {} : { verification }),
+    ...(budgetRejection === undefined ? {} : { budgetRejection }),
+    ...(actual === undefined ? {} : { actual }),
+  })
+}
+
+export function parseScheduleSelectedV1(value: unknown): ScheduleSelectedV1 {
+  assertJsonValue(value, 'scheduleSelected')
+  const input = exactRecord(value, 'scheduleSelected', ['schemaVersion', 'target', 'source', 'provider', 'model', 'maxTokens', 'reasoningEffort', 'promptProfile', 'policyVersion'])
+  const route = parseRouteDecisionV1({
+    provider: input.provider,
+    model: input.model,
+    maxTokens: input.maxTokens,
+    ...(Object.prototype.hasOwnProperty.call(input, 'reasoningEffort') ? { reasoningEffort: input.reasoningEffort } : {}),
+    ...(Object.prototype.hasOwnProperty.call(input, 'promptProfile') ? { promptProfile: input.promptProfile } : {}),
+  })
+  if (input.schemaVersion !== 1) throw new TypeError('scheduleSelected.schemaVersion must be 1')
+  if (input.target !== 'root' && input.target !== 'worker') throw new TypeError('scheduleSelected.target is unsupported')
+  if (input.source !== 'scheduler' && input.source !== 'profile-fallback') throw new TypeError('scheduleSelected.source is unsupported')
+  return deepFreeze({ schemaVersion: 1, target: input.target, source: input.source, provider: route.provider, model: route.model, maxTokens: route.maxTokens, ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort }), ...(route.promptProfile === undefined ? {} : { promptProfile: route.promptProfile }), ...optionalIdentifier(input, 'policyVersion', 'scheduleSelected.policyVersion') })
 }

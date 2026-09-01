@@ -115,6 +115,28 @@ const route: JsonSchema = deepFreeze({
   required: ['provider', 'model', 'maxTokens'],
 })
 
+const budgetRejection: JsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    code: { type: 'string', enum: ['WORKER_LIMIT', 'PLUGIN_TOOL_LIMIT', 'DISPOSED'] },
+    limit: { type: 'integer', minimum: 0, maximum: 32 },
+    observed: { type: 'integer', minimum: 0, maximum: 32 },
+  },
+  required: ['code', 'limit', 'observed'],
+}
+
+const actual: JsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    provider: boundedIdentifier,
+    model: boundedIdentifier,
+    durationMs: { type: 'integer', minimum: 0, maximum: 600_000 },
+    toolCalls: { type: 'integer', minimum: 0, maximum: 32 },
+  },
+}
+
 export const CAPABILITY_REQUEST_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
   type: 'object',
   additionalProperties: false,
@@ -179,4 +201,59 @@ export const SCHEDULE_DECISION_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
       },
     },
   ],
+})
+
+export const BUDGET_VIEW_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    maxWorkers: { type: 'integer', minimum: 0, maximum: 1 },
+    admittedWorkers: { type: 'integer', minimum: 0, maximum: 1 },
+    maxPluginToolActions: { type: 'integer', minimum: 0, maximum: 32 },
+    admittedPluginToolActions: { type: 'integer', minimum: 0, maximum: 32 },
+    remainingWorkers: { type: 'integer', minimum: 0, maximum: 1 },
+    remainingPluginToolActions: { type: 'integer', minimum: 0, maximum: 32 },
+  },
+  required: ['maxWorkers', 'admittedWorkers', 'maxPluginToolActions', 'admittedPluginToolActions', 'remainingWorkers', 'remainingPluginToolActions'],
+})
+
+export const SCHEDULE_FEEDBACK_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    schemaVersion: { type: 'integer', const: 1 },
+    requestId: boundedIdentifier,
+    outcome: { type: 'string', enum: ['completed', 'blocked', 'failed', 'budget-rejected', 'verification-failed'] },
+    handoff,
+    verification: { type: 'array', maxItems: 128, items: verificationEvidence },
+    budgetRejection,
+    actual,
+  },
+  required: ['schemaVersion', 'requestId', 'outcome'],
+  allOf: [
+    {
+      if: {
+        properties: { outcome: { const: 'budget-rejected' } },
+        required: ['outcome'],
+      },
+      then: { required: ['budgetRejection'] },
+    },
+  ],
+})
+
+export const SCHEDULE_SELECTED_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    schemaVersion: { type: 'integer', const: 1 },
+    target: { type: 'string', enum: ['root', 'worker'] },
+    source: { type: 'string', enum: ['scheduler', 'profile-fallback'] },
+    provider: boundedIdentifier,
+    model: boundedIdentifier,
+    maxTokens: { type: 'integer', minimum: 1, maximum: 128_000 },
+    reasoningEffort: boundedIdentifier,
+    promptProfile: boundedIdentifier,
+    policyVersion: boundedIdentifier,
+  },
+  required: ['schemaVersion', 'target', 'source', 'provider', 'model', 'maxTokens'],
 })
