@@ -16,6 +16,7 @@ export type JsonSchema = {
   readonly allOf?: readonly JsonSchema[]
   readonly contains?: JsonSchema
   readonly if?: JsonSchema
+  readonly not?: JsonSchema
   readonly then?: JsonSchema
 }
 

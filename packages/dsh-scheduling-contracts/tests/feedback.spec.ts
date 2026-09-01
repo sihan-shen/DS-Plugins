@@ -7,6 +7,7 @@ import {
   parseScheduleFeedbackV1,
   parseScheduleSelectedV1,
 } from '../src/index.ts'
+import type { JsonSchema } from '../src/index.ts'
 
 describe('BudgetViewV1', () => {
   it('accepts internally consistent counters and freezes the projection', () => {
@@ -69,10 +70,119 @@ describe('ScheduleFeedbackV1 and ScheduleSelectedV1', () => {
     expectDeepFrozen(SCHEDULE_FEEDBACK_V1_JSON_SCHEMA)
     expectDeepFrozen(SCHEDULE_SELECTED_V1_JSON_SCHEMA)
   })
+
+  it.each([
+    [
+      'accepts consistent counters',
+      { maxWorkers: 1, admittedWorkers: 0, maxPluginToolActions: 24, admittedPluginToolActions: 3, remainingWorkers: 1, remainingPluginToolActions: 21 },
+      true,
+    ],
+    [
+      'rejects admitted workers above the worker limit',
+      { maxWorkers: 0, admittedWorkers: 1, maxPluginToolActions: 24, admittedPluginToolActions: 3, remainingWorkers: 0, remainingPluginToolActions: 21 },
+      false,
+    ],
+    [
+      'rejects a forged remaining worker count',
+      { maxWorkers: 1, admittedWorkers: 0, maxPluginToolActions: 24, admittedPluginToolActions: 3, remainingWorkers: 0, remainingPluginToolActions: 21 },
+      false,
+    ],
+    [
+      'rejects admitted plugin actions above the action limit',
+      { maxWorkers: 1, admittedWorkers: 0, maxPluginToolActions: 2, admittedPluginToolActions: 3, remainingWorkers: 1, remainingPluginToolActions: 0 },
+      false,
+    ],
+    [
+      'rejects a forged remaining plugin action count',
+      { maxWorkers: 1, admittedWorkers: 0, maxPluginToolActions: 24, admittedPluginToolActions: 3, remainingWorkers: 1, remainingPluginToolActions: 20 },
+      false,
+    ],
+  ] as const)('keeps the BudgetViewV1 Schema aligned with its parser for %s', (_name, value, expected) => {
+    expect(schemaAccepts(value, BUDGET_VIEW_V1_JSON_SCHEMA)).toBe(expected)
+    expect(parserAccepts(value, parseBudgetViewV1)).toBe(expected)
+  })
+
+  it.each([
+    [
+      'accepts budget rejection for budget-rejected outcome',
+      { schemaVersion: 1, requestId: 'session-1', outcome: 'budget-rejected', budgetRejection: { code: 'WORKER_LIMIT', limit: 1, observed: 2 } },
+      true,
+    ],
+    [
+      'rejects a budget rejection on completed outcome',
+      { schemaVersion: 1, requestId: 'session-1', outcome: 'completed', budgetRejection: { code: 'WORKER_LIMIT', limit: 1, observed: 2 } },
+      false,
+    ],
+    [
+      'rejects a budget rejection on blocked outcome',
+      { schemaVersion: 1, requestId: 'session-1', outcome: 'blocked', budgetRejection: { code: 'WORKER_LIMIT', limit: 1, observed: 2 } },
+      false,
+    ],
+    [
+      'rejects a budget-rejected outcome without a budget rejection',
+      { schemaVersion: 1, requestId: 'session-1', outcome: 'budget-rejected' },
+      false,
+    ],
+  ] as const)('keeps the ScheduleFeedbackV1 Schema aligned with its parser for %s', (_name, value, expected) => {
+    expect(schemaAccepts(value, SCHEDULE_FEEDBACK_V1_JSON_SCHEMA)).toBe(expected)
+    expect(parserAccepts(value, parseScheduleFeedbackV1)).toBe(expected)
+  })
 })
 
 function expectDeepFrozen(value: unknown): void {
   if (typeof value !== 'object' || value === null) return
   expect(Object.isFrozen(value)).toBe(true)
   for (const child of Object.values(value)) expectDeepFrozen(child)
+}
+
+type ConditionalJsonSchema = JsonSchema & {
+  readonly not?: JsonSchema
+}
+
+function schemaAccepts(value: unknown, schema: ConditionalJsonSchema): boolean {
+  if (schema.const !== undefined && value !== schema.const) return false
+  if (schema.enum && !schema.enum.some(candidate => Object.is(candidate, value))) return false
+  if (schema.oneOf && !schema.oneOf.some(candidate => schemaAccepts(value, candidate))) return false
+  if (schema.allOf && schema.allOf.some(candidate => !schemaAccepts(value, candidate))) return false
+  if (schema.not && schemaAccepts(value, schema.not)) return false
+  if (schema.if && schemaAccepts(value, schema.if) && schema.then && !schemaAccepts(value, schema.then)) return false
+  if (schema.type === 'null' && value !== null) return false
+  if (schema.type === 'boolean' && typeof value !== 'boolean') return false
+  if (schema.type === 'string') {
+    if (typeof value !== 'string') return false
+    if (schema.minLength !== undefined && [...value].length < schema.minLength) return false
+    if (schema.maxLength !== undefined && [...value].length > schema.maxLength) return false
+    if (schema.pattern && !new RegExp(schema.pattern).test(value)) return false
+  }
+  if (schema.type === 'number' || schema.type === 'integer') {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return false
+    if (schema.type === 'integer' && !Number.isInteger(value)) return false
+    if (schema.minimum !== undefined && value < schema.minimum) return false
+    if (schema.maximum !== undefined && value > schema.maximum) return false
+  }
+  if (schema.type === 'array') {
+    if (!Array.isArray(value)) return false
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) return false
+    if (schema.items && value.some(item => !schemaAccepts(item, schema.items!))) return false
+    if (schema.contains && !value.some(item => schemaAccepts(item, schema.contains!))) return false
+  }
+  if (schema.type === 'object' || schema.properties !== undefined || schema.required !== undefined || schema.additionalProperties !== undefined) {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+    const record = value as Record<string, unknown>
+    for (const key of schema.required ?? []) if (!Object.prototype.hasOwnProperty.call(record, key)) return false
+    if (schema.additionalProperties === false && schema.properties && Object.keys(record).some(key => !(key in schema.properties!))) return false
+    for (const [key, childSchema] of Object.entries(schema.properties ?? {})) {
+      if (Object.prototype.hasOwnProperty.call(record, key) && !schemaAccepts(record[key], childSchema)) return false
+    }
+  }
+  return true
+}
+
+function parserAccepts<T>(value: unknown, parser: (value: unknown) => T): boolean {
+  try {
+    parser(value)
+    return true
+  } catch {
+    return false
+  }
 }

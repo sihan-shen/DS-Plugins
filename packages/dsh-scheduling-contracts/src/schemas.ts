@@ -137,6 +137,24 @@ const actual: JsonSchema = {
   },
 }
 
+function derivedCounterInvariants(maximum: number, maxProperty: string, admittedProperty: string, remainingProperty: string): readonly JsonSchema[] {
+  return Array.from({ length: maximum + 1 }, (_, maxValue) => ({
+    if: {
+      properties: { [maxProperty]: { const: maxValue } },
+      required: [maxProperty],
+    },
+    then: {
+      oneOf: Array.from({ length: maxValue + 1 }, (_, admittedValue) => ({
+        properties: {
+          [admittedProperty]: { const: admittedValue },
+          [remainingProperty]: { const: maxValue - admittedValue },
+        },
+        required: [admittedProperty, remainingProperty],
+      })),
+    },
+  }))
+}
+
 export const CAPABILITY_REQUEST_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
   type: 'object',
   additionalProperties: false,
@@ -215,6 +233,10 @@ export const BUDGET_VIEW_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
     remainingPluginToolActions: { type: 'integer', minimum: 0, maximum: 32 },
   },
   required: ['maxWorkers', 'admittedWorkers', 'maxPluginToolActions', 'admittedPluginToolActions', 'remainingWorkers', 'remainingPluginToolActions'],
+  allOf: [
+    ...derivedCounterInvariants(1, 'maxWorkers', 'admittedWorkers', 'remainingWorkers'),
+    ...derivedCounterInvariants(32, 'maxPluginToolActions', 'admittedPluginToolActions', 'remainingPluginToolActions'),
+  ],
 })
 
 export const SCHEDULE_FEEDBACK_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
@@ -237,6 +259,13 @@ export const SCHEDULE_FEEDBACK_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
         required: ['outcome'],
       },
       then: { required: ['budgetRejection'] },
+    },
+    {
+      if: {
+        properties: { outcome: { enum: ['completed', 'blocked', 'failed', 'verification-failed'] } },
+        required: ['outcome'],
+      },
+      then: { not: { required: ['budgetRejection'] } },
     },
   ],
 })
