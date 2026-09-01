@@ -56,6 +56,7 @@
               exit 1
             fi
 
+            export DSH_WORKSPACE_ROOT="''${DSH_WORKSPACE_ROOT:-$(pwd -P)}"
             cd "$harness_dir"
             exec ${pkgs.nodejs_24}/bin/node \
               --expose-internals \
