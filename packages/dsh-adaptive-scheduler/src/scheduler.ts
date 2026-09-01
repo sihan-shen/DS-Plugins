@@ -1,8 +1,9 @@
-import { parseBudgetViewV1, parseCapabilityRequestV1, parseScheduleDecisionV1 } from '@ds-plugins/dsh-scheduling-contracts'
-import type { BudgetViewV1, CapabilityRequestV1, ScheduleDecisionV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import { parseBudgetViewV1, parseCapabilityRequestV1, parseScheduleDecisionV1, parseScheduleFeedbackV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import type { BudgetViewV1, CapabilityRequestV1, ScheduleDecisionV1, ScheduleFeedbackV1 } from '@ds-plugins/dsh-scheduling-contracts'
 import { classifyTaskType, resolveCatalogCandidate, strongestAllowedAlias } from './catalog.js'
+import { BoundedPerformanceHistory } from './history.js'
 import { SchedulerStateStore } from './state.js'
-import type { AdaptiveSchedulerConfig, AdaptiveSchedulerRuntime, ProviderFailureFactV1, RouteCatalogEntryV1, RouteSwitchReasonV1, SchedulerOptions, TaskTypeV1 } from './types.js'
+import type { AdaptiveSchedulerConfig, AdaptiveSchedulerRuntime, PendingSelectionV1, ProviderFailureFactV1, RouteCatalogEntryV1, RouteSwitchReasonV1, SchedulerOptions, TaskTypeV1 } from './types.js'
 
 export class SchedulingError extends Error {
   readonly code: string
@@ -16,6 +17,15 @@ interface Selection {
 }
 
 const TRANSIENT_FAILURES = new Set(['RATE_LIMIT', 'SERVER', 'TIMEOUT', 'TRANSPORT'])
+
+function stableHash(value: string): string {
+  let hash = 2_166_136_261
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index)
+    hash = Math.imul(hash, 16_777_619)
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0')
+}
 
 function decisionFor(request: CapabilityRequestV1, config: AdaptiveSchedulerConfig, generation: string, candidate: RouteCatalogEntryV1, explanationCode: string): ScheduleDecisionV1 {
   return parseScheduleDecisionV1({
@@ -47,6 +57,30 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
   const generation = options.generation ?? 'default'
   const now = options.now ?? (() => Date.now())
   const state = new SchedulerStateStore(config)
+  const history = new BoundedPerformanceHistory({ windowSize: config.historyWindowSize, minSamples: config.historyMinSamples, now })
+  const configHash = stableHash(JSON.stringify(config))
+
+  function rememberSelection(request: CapabilityRequestV1, candidate: RouteCatalogEntryV1, explanationCode: string): void {
+    const pending: PendingSelectionV1 = {
+      requestId: request.taskId,
+      taskType: classifyTaskType(request),
+      routeAlias: candidate.alias,
+      route: candidate.route,
+      explanationCode,
+      configHash,
+      promptProfileHash: stableHash(candidate.route.promptProfile ?? 'default'),
+    }
+    history.remember(pending)
+  }
+
+  function historyCandidate(request: CapabilityRequestV1, taskType: TaskTypeV1): RouteCatalogEntryV1 | undefined {
+    if (!history.hasEnoughEvidence(taskType)) return undefined
+    const candidates = config.catalog.flatMap(entry => {
+      const candidate = resolveCatalogCandidate(config, entry.alias, request)
+      return candidate === undefined ? [] : [candidate]
+    })
+    return history.orderCandidates(taskType, candidates)[0]
+  }
 
   function recordSwitch(request: CapabilityRequestV1, previous: RouteCatalogEntryV1 | undefined, next: RouteCatalogEntryV1, reason: RouteSwitchReasonV1, at: number): void {
     if (previous?.alias === next.alias) return
@@ -70,6 +104,10 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
     switches() {
       return state.switches()
     },
+    observe(feedbackValue: ScheduleFeedbackV1): void {
+      const feedback = parseScheduleFeedbackV1(feedbackValue)
+      history.observeFeedback(feedback)
+    },
     async schedule(requestValue: CapabilityRequestV1, budgetValue: BudgetViewV1, signal: AbortSignal): Promise<ScheduleDecisionV1> {
       const request = parseCapabilityRequestV1(requestValue)
       const budget = parseBudgetViewV1(budgetValue)
@@ -85,6 +123,7 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
 
       const explicitRoute = config.explicitRoutes?.[request.target] !== undefined
       const highImpactRoute = !explicitRoute && request.profile.risk >= 80
+      const handoffEscalation = !explicitRoute && !highImpactRoute && (request.priorHandoff?.status === 'failed' || request.priorHandoff?.status === 'blocked')
       const previousSticky = state.peekSticky(request, generation)
       const previousEscalation = state.peekEscalation(request.taskId)
       const escalation = state.escalation(request.taskId, timestamp)
@@ -102,6 +141,15 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
       if (explicitRoute || highImpactRoute) {
         previousCandidate = sticky === undefined ? previousCandidate : resolveCatalogCandidate(config, sticky.alias, request)
         switchReason = explicitRoute ? 'EXPLICIT_ROUTE' : 'PHASE_BOUNDARY'
+      } else if (handoffEscalation) {
+        const strongAlias = strongestAllowedAlias(config, request)
+        const strong = resolveCatalogCandidate(config, strongAlias, request)
+        if (strong !== undefined) {
+          candidate = strong
+          reason = 'HANDOFF_ESCALATION'
+          previousCandidate = sticky === undefined ? previousCandidate : resolveCatalogCandidate(config, sticky.alias, request)
+          switchReason = 'HANDOFF_ESCALATION'
+        }
       } else if (escalation !== undefined) {
         const escalated = strongestAllowedAlias(config, request)
         const escalatedCandidate = resolveCatalogCandidate(config, escalated, request)
@@ -143,6 +191,12 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
             }
           }
         }
+      } else {
+        const historicalCandidate = historyCandidate(request, selected.taskType)
+        if (historicalCandidate !== undefined && historicalCandidate.alias !== selected.candidate.alias) {
+          candidate = historicalCandidate
+          reason = 'HISTORY_ORDERED_CANDIDATE'
+        }
       }
 
       if (TRANSIENT_FAILURES.has(failures.at(-1)?.code ?? '') && sticky === undefined) {
@@ -161,17 +215,21 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
         switchReason = undefined
       }
 
-      if (candidate !== selected.candidate && switchReason === undefined) switchReason = 'TTL_EXPIRED'
+      if (candidate !== selected.candidate && switchReason === undefined && reason !== 'HISTORY_ORDERED_CANDIDATE') switchReason = 'TTL_EXPIRED'
       if (switchReason !== undefined) recordSwitch(request, previousCandidate, candidate, switchReason, timestamp)
       if (reason === 'ADAPTIVE_ESCALATION') state.markEscalation(request.taskId, timestamp)
       const activeFailureCount = failures.length
       if (sticky === undefined || sticky.alias !== candidate.alias) state.rememberSticky(request, candidate.alias, timestamp, generation, activeFailureCount)
       state.freezeAffinity(request, candidate, generation)
+      rememberSelection(request, candidate, reason)
       const decision = decisionFor(request, config, generation, candidate, reason)
       return decision
     },
     complete(requestId: string): void {
       state.complete(requestId)
+    },
+    async dispose(): Promise<void> {
+      history.dispose()
     },
   }
 }

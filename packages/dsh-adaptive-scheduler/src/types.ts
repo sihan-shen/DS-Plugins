@@ -2,6 +2,40 @@ import type { AdaptiveSchedulerService, RouteDecisionV1 } from '@ds-plugins/dsh-
 
 export type TaskTypeV1 = 'code-fix' | 'code-new' | 'research' | 'summarize' | 'review' | 'tool-heavy' | 'unknown'
 export type RouteTierV1 = 'baseline' | 'fallback' | 'strong'
+export type EvidenceLevelV1 = 'observed' | 'heuristic' | 'verified'
+
+export interface PendingSelectionV1 {
+  readonly requestId: string
+  readonly taskType: TaskTypeV1
+  readonly routeAlias: string
+  readonly route: RouteDecisionV1
+  readonly explanationCode: string
+  readonly configHash: string
+  readonly promptProfileHash: string
+}
+
+export interface TaskHistoryV1 {
+  readonly taskType: TaskTypeV1
+  readonly n: number
+  readonly success: number
+  readonly failure: number
+  readonly retry: number
+  readonly escalation: number
+  readonly latencyBuckets: Readonly<Record<'unknown' | 'fast' | 'medium' | 'slow', number>>
+  readonly inputTokenBuckets: Readonly<Record<'unknown' | 'small' | 'medium' | 'large', number>>
+  readonly outputTokenBuckets: Readonly<Record<'unknown' | 'small' | 'medium' | 'large', number>>
+  readonly cacheTokenBuckets: Readonly<Record<'unknown' | 'small' | 'medium' | 'large', number>>
+  readonly latestTimestamp: number
+  readonly configHash: string
+  readonly promptProfileHash: string
+  readonly evidenceLevel: EvidenceLevelV1
+}
+
+export interface PerformanceHistoryOptions {
+  readonly windowSize: number
+  readonly minSamples: number
+  readonly now?: () => number
+}
 
 export interface RouteCatalogEntryV1 {
   readonly alias: string

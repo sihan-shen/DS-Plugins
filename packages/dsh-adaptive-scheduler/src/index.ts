@@ -3,4 +3,6 @@ export { catalogAvailability, resolveCatalogCandidate, strongestAllowedAlias } f
 export { createAdaptiveScheduler, SchedulingError } from './scheduler.js'
 export { SchedulerStateStore } from './state.js'
 export { classifyTaskType } from './catalog.js'
-export type { AdaptiveSchedulerConfig, AdaptiveSchedulerRuntime, CatalogAvailabilityV1, ProviderFailureCodeV1, ProviderFailureFactV1, RouteCatalogEntryV1, RouteSwitchReasonV1, RouteSwitchRecordV1, RouteTierV1, SchedulerOptions, StickyRouteStateV1, TaskTypeV1, WorkerAffinityStateV1 } from './types.js'
+export { BoundedPerformanceHistory } from './history.js'
+export { apply, inject, name, provide } from './plugin.js'
+export type { AdaptiveSchedulerConfig, AdaptiveSchedulerRuntime, CatalogAvailabilityV1, EvidenceLevelV1, PendingSelectionV1, PerformanceHistoryOptions, ProviderFailureCodeV1, ProviderFailureFactV1, RouteCatalogEntryV1, RouteSwitchReasonV1, RouteSwitchRecordV1, RouteTierV1, SchedulerOptions, StickyRouteStateV1, TaskHistoryV1, TaskTypeV1, WorkerAffinityStateV1 } from './types.js'
