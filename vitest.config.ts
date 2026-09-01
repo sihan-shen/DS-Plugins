@@ -5,12 +5,14 @@ export default defineConfig({
   resolve: {
     alias: {
       '@ds-plugins/dsh-context': fileURLToPath(new URL('./packages/dsh-context/src/index.ts', import.meta.url)),
+      '@ds-plugins/dsh-scheduling-contracts': fileURLToPath(new URL('./packages/dsh-scheduling-contracts/src/index.ts', import.meta.url)),
       '@ds-plugins/dsh-code-intelligence': fileURLToPath(new URL('./packages/dsh-code-intelligence/src/index.ts', import.meta.url)),
     },
   },
   test: {
     include: [
       'packages/dsh-scheduling-contracts/tests/**/*.spec.ts',
+      'packages/dsh-adaptive-scheduler/tests/**/*.spec.ts',
       'packages/dsh-context/tests/**/*.spec.ts',
       'packages/dsh-context-cache/tests/**/*.spec.ts',
       'packages/dsh-code-intelligence/tests/**/*.spec.ts',

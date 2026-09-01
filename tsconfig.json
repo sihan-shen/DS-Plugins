@@ -6,6 +6,7 @@
     { "path": "./packages/dsh-context-cache" },
     { "path": "./packages/dsh-eval" },
     { "path": "./packages/dsh-code-intelligence" },
+    { "path": "./packages/dsh-adaptive-scheduler" },
     { "path": "./packages/dsh-orchestrator" }
   ]
 }
