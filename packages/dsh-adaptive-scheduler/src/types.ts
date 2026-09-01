@@ -85,5 +85,6 @@ export interface CatalogAvailabilityV1 {
 export interface AdaptiveSchedulerRuntime extends AdaptiveSchedulerService {
   recordFailure(fact: ProviderFailureFactV1): void
   switches(): readonly RouteSwitchRecordV1[]
+  complete(requestId: string): void
   readonly generation: string
 }

@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
-import { createAdaptiveScheduler } from '../src/index.ts'
+import { describe, expect, it } from 'vitest'
+import { createAdaptiveScheduler, SchedulerStateStore } from '../src/index.ts'
 import { budget, request, schedulerConfig } from './policy.spec.ts'
 
 const signal = new AbortController().signal
@@ -17,6 +17,19 @@ describe('adaptive scheduler state', () => {
     await expect(scheduler.schedule({ ...request, objective: 'Review the change' }, budget, signal)).resolves.toMatchObject({ explanationCode: 'TASK_BASELINE', route: { model: 'strong-disabled' } })
   })
 
+  it('expires a sticky route at the exact fixed TTL boundary', async () => {
+    let now = 1000
+    const config = { ...schedulerConfig, stickyTtlMs: 100, idleTtlMs: 1000 }
+    const scheduler = createAdaptiveScheduler(config, { now: () => now, generation: 'g1' })
+    await scheduler.schedule(request, budget, signal)
+
+    now += config.stickyTtlMs
+    await expect(scheduler.schedule(request, budget, signal)).resolves.toMatchObject({
+      explanationCode: 'TASK_BASELINE',
+      route: { model: 'baseline-disabled' },
+    })
+  })
+
   it('isolates HMR generations and freezes logical worker affinity', async () => {
     const first = createAdaptiveScheduler(schedulerConfig, { generation: 'g1' })
     const next = createAdaptiveScheduler(schedulerConfig, { generation: 'g2' })
@@ -24,5 +37,58 @@ describe('adaptive scheduler state', () => {
     const b = await next.schedule({ ...request, affinity: { workerId: 'worker-1' } }, budget, signal)
     expect(a.affinityKey).not.toBe(b.affinityKey)
     expect(() => (a.route as { model: string }).model = 'mutated').toThrow()
+  })
+
+  it('freezes one profile per generation, task, and worker invocation', () => {
+    const state = new SchedulerStateStore(schedulerConfig)
+    const workerRequest = { ...request, affinity: { workerId: 'worker-1' } }
+    const baseline = schedulerConfig.catalog[0]
+    const fallback = schedulerConfig.catalog[1]
+
+    const first = state.freezeAffinity(workerRequest, baseline, 'g1')
+    const repeated = state.freezeAffinity(workerRequest, fallback, 'g1')
+    expect(repeated).toBe(first)
+    expect(repeated).toMatchObject({ requestId: request.taskId, generation: 'g1', alias: 'baseline' })
+    expect(() => { (first as { alias: string }).alias = 'fallback' }).toThrow()
+    expect(() => { (first?.toolFilter as string[]).push('extra-tool') }).toThrow()
+    expect(state.affinityFor(workerRequest, 'g1')).toBe(first)
+
+    const nextGeneration = state.freezeAffinity(workerRequest, fallback, 'g2')
+    expect(nextGeneration).not.toBe(first)
+    expect(nextGeneration).toMatchObject({ generation: 'g2', alias: 'fallback' })
+    expect(state.affinityFor(workerRequest, 'g1')).toBe(first)
+    expect(state.affinityFor(workerRequest, 'g2')).toBe(nextGeneration)
+
+    const otherTask = state.freezeAffinity({ ...workerRequest, taskId: 'session-2' }, fallback, 'g1')
+    expect(otherTask).not.toBe(first)
+    expect(otherTask).toMatchObject({ requestId: 'session-2', alias: 'fallback' })
+
+    state.complete(request.taskId)
+    expect(state.affinityFor(workerRequest, 'g1')).toBeUndefined()
+    expect(state.affinityFor({ ...workerRequest, taskId: 'session-2' }, 'g1')).toBe(otherTask)
+  })
+
+  it('cleans the frozen profile through scheduler completion', async () => {
+    const scheduler = createAdaptiveScheduler(schedulerConfig, { generation: 'g1' })
+    const workerRequest = { ...request, affinity: { workerId: 'worker-1' } }
+    await scheduler.schedule(workerRequest, budget, signal)
+    scheduler.complete(request.taskId)
+    scheduler.recordFailure({ requestId: request.taskId, code: 'TIMEOUT' })
+    await expect(scheduler.schedule(workerRequest, budget, signal)).resolves.toMatchObject({
+      explanationCode: 'TRANSIENT_FALLBACK',
+      route: { model: 'fallback-disabled' },
+    })
+  })
+
+  it('uses the frozen worker route on repeated scheduling', async () => {
+    let now = 1000
+    const scheduler = createAdaptiveScheduler(schedulerConfig, { now: () => now, generation: 'g1' })
+    const workerRequest = { ...request, affinity: { workerId: 'worker-1' } }
+    const first = await scheduler.schedule(workerRequest, budget, signal)
+
+    scheduler.recordFailure({ requestId: request.taskId, code: 'TIMEOUT' })
+    const repeated = await scheduler.schedule(workerRequest, budget, signal)
+    expect(repeated.route).toEqual(first.route)
+    expect(repeated.explanationCode).toBe('STICKY_ROUTE')
   })
 })

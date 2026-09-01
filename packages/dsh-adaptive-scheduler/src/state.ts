@@ -14,6 +14,12 @@ function requestKey(request: Pick<CapabilityRequestV1, 'taskId' | 'target'>): st
   return `${request.taskId}:${request.target}`
 }
 
+function affinityKey(request: CapabilityRequestV1, generation: string): string | undefined {
+  const workerId = request.affinity?.workerId
+  if (request.target !== 'worker' || workerId === undefined) return undefined
+  return JSON.stringify([generation, request.taskId, workerId])
+}
+
 function freezeRoute(route: RouteDecisionV1): RouteDecisionV1 {
   return Object.freeze({ ...route })
 }
@@ -21,6 +27,7 @@ function freezeRoute(route: RouteDecisionV1): RouteDecisionV1 {
 export class SchedulerStateStore {
   private readonly sticky = new Map<string, StickyRouteStateV1>()
   private readonly affinity = new Map<string, WorkerAffinityStateV1>()
+  private readonly affinityRoutes = new Map<string, RouteDecisionV1>()
   private readonly failures = new Map<string, readonly FailureRecordV1[]>()
   private readonly selectedFailureCounts = new Map<string, number>()
   private readonly escalations = new Map<string, EscalationStateV1>()
@@ -36,7 +43,7 @@ export class SchedulerStateStore {
   takeSticky(request: CapabilityRequestV1, now: number, generation: string): StickyRouteStateV1 | undefined {
     const key = requestKey(request)
     const state = this.sticky.get(key)
-    if (state === undefined || state.generation !== generation || now > state.expiresAt || now > state.idleExpiresAt) {
+    if (state === undefined || state.generation !== generation || now >= state.expiresAt || now >= state.idleExpiresAt) {
       this.sticky.delete(key)
       this.selectedFailureCounts.delete(key)
       return undefined
@@ -81,7 +88,7 @@ export class SchedulerStateStore {
     this.failures.set(fact.requestId, Object.freeze(bounded))
   }
 
-  failuresSinceSelection(request: CapabilityRequestV1, state: StickyRouteStateV1, now: number): number {
+  failuresSinceSelection(request: CapabilityRequestV1, now: number): number {
     const selectedCount = this.selectedFailureCounts.get(requestKey(request)) ?? 0
     return Math.max(0, this.failuresFor(request.taskId, now).length - selectedCount)
   }
@@ -89,7 +96,7 @@ export class SchedulerStateStore {
   escalation(requestId: string, now: number): EscalationStateV1 | undefined {
     const state = this.escalations.get(requestId)
     if (state === undefined) return undefined
-    if (now > state.expiresAt) {
+    if (now >= state.expiresAt) {
       this.escalations.delete(requestId)
       return undefined
     }
@@ -116,6 +123,10 @@ export class SchedulerStateStore {
   freezeAffinity(request: CapabilityRequestV1, candidate: RouteCatalogEntryV1, generation: string): WorkerAffinityStateV1 | undefined {
     const workerId = request.affinity?.workerId
     if (request.target !== 'worker' || workerId === undefined) return undefined
+    const key = affinityKey(request, generation)
+    if (key === undefined) return undefined
+    const existing = this.affinity.get(key)
+    if (existing !== undefined) return existing
     const state = Object.freeze({
       workerId,
       requestId: request.taskId,
@@ -127,17 +138,30 @@ export class SchedulerStateStore {
       maxTokens: candidate.route.maxTokens,
       background: false as const,
     })
-    this.affinity.set(workerId, state)
+    this.affinity.set(key, state)
+    this.affinityRoutes.set(key, freezeRoute(candidate.route))
     return state
   }
 
-  affinityFor(workerId: string, generation: string): WorkerAffinityStateV1 | undefined {
-    const state = this.affinity.get(workerId)
+  affinityFor(request: CapabilityRequestV1, generation: string): WorkerAffinityStateV1 | undefined {
+    const key = affinityKey(request, generation)
+    if (key === undefined) return undefined
+    const state = this.affinity.get(key)
     return state?.generation === generation ? state : undefined
   }
 
+  affinityRouteFor(request: CapabilityRequestV1, generation: string): RouteDecisionV1 | undefined {
+    const key = affinityKey(request, generation)
+    if (key === undefined) return undefined
+    return this.affinityRoutes.get(key)
+  }
+
   complete(requestId: string): void {
-    for (const [workerId, state] of this.affinity) if (state.requestId === requestId) this.affinity.delete(workerId)
+    for (const [key, state] of this.affinity) {
+      if (state.requestId !== requestId) continue
+      this.affinity.delete(key)
+      this.affinityRoutes.delete(key)
+    }
   }
 
   recordSwitch(record: RouteSwitchRecordV1): void {

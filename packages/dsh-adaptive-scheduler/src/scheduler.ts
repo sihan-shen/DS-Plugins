@@ -97,7 +97,7 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
       let switchReason: RouteSwitchReasonV1 | undefined
       let previousCandidate: RouteCatalogEntryV1 | undefined = previousSticky === undefined ? undefined : resolveCatalogCandidate(config, previousSticky.alias, request)
       if (escalationExpired) switchReason = 'TTL_EXPIRED'
-      else if (previousSticky !== undefined && sticky === undefined) switchReason = timestamp > previousSticky.expiresAt ? 'TTL_EXPIRED' : 'IDLE_EXPIRED'
+      else if (previousSticky !== undefined && sticky === undefined) switchReason = timestamp >= previousSticky.expiresAt ? 'TTL_EXPIRED' : 'IDLE_EXPIRED'
 
       if (explicitRoute || highImpactRoute) {
         previousCandidate = sticky === undefined ? previousCandidate : resolveCatalogCandidate(config, sticky.alias, request)
@@ -116,7 +116,7 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
         if (previousCandidate !== undefined) {
           candidate = previousCandidate
           reason = 'STICKY_ROUTE'
-          const failuresSinceSelection = state.failuresSinceSelection(request, sticky, timestamp)
+          const failuresSinceSelection = state.failuresSinceSelection(request, timestamp)
           if (failuresSinceSelection > 0 && previousCandidate.tier === 'baseline') {
             const fallback = fallbackSelection(request)
             if (fallback !== undefined) {
@@ -150,6 +150,16 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
         reason = selected.reason
       }
 
+      const frozenAffinity = state.affinityFor(request, generation)
+      if (frozenAffinity !== undefined) {
+        const frozenEntry = config.catalog.find(entry => entry.alias === frozenAffinity.alias)
+        const frozenRoute = state.affinityRouteFor(request, generation)
+        if (frozenEntry === undefined || frozenRoute === undefined) throw new SchedulingError('NO_CATALOG_ROUTE')
+        candidate = Object.freeze({ ...frozenEntry, route: frozenRoute, toolFilter: frozenAffinity.toolFilter })
+        reason = 'STICKY_ROUTE'
+        switchReason = undefined
+      }
+
       if (candidate !== selected.candidate && switchReason === undefined) switchReason = 'TTL_EXPIRED'
       if (switchReason !== undefined) recordSwitch(request, previousCandidate, candidate, switchReason, timestamp)
       if (reason === 'ADAPTIVE_ESCALATION') state.markEscalation(request.taskId, timestamp)
@@ -158,6 +168,9 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
       state.freezeAffinity(request, candidate, generation)
       const decision = decisionFor(request, config, generation, candidate, reason)
       return decision
+    },
+    complete(requestId: string): void {
+      state.complete(requestId)
     },
   }
 }

@@ -17,6 +17,22 @@ describe('adaptive scheduler escalation', () => {
     await expect(scheduler.schedule(request, budget, signal)).resolves.toMatchObject({ route: { model: 'baseline-disabled' } })
   })
 
+  it('expires escalation at the exact TTL boundary', async () => {
+    let now = 1000
+    const scheduler = createAdaptiveScheduler(schedulerConfig, { now: () => now, generation: 'g1' })
+    await scheduler.schedule(request, budget, signal)
+    scheduler.recordFailure({ requestId: request.taskId, code: 'TIMEOUT' })
+    await scheduler.schedule(request, budget, signal)
+    scheduler.recordFailure({ requestId: request.taskId, code: 'SERVER' })
+    await expect(scheduler.schedule(request, budget, signal)).resolves.toMatchObject({ route: { model: 'strong-disabled' } })
+
+    now += schedulerConfig.escalationTtlMs
+    await expect(scheduler.schedule(request, budget, signal)).resolves.toMatchObject({
+      explanationCode: 'TASK_BASELINE',
+      route: { model: 'baseline-disabled' },
+    })
+  })
+
   it.each(['QUOTA', 'AUTH'] as const)('hard-rejects %s without paid or same-tier fallback', async code => {
     const scheduler = createAdaptiveScheduler(schedulerConfig, { generation: 'g1' })
     scheduler.recordFailure({ requestId: request.taskId, code })
