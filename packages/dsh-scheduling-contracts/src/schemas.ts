@@ -1,9 +1,21 @@
 import type { JsonSchema } from './types.js'
 
-const boundedString: JsonSchema = { type: 'string', maxLength: 16_384 }
-const boundedIdentifier: JsonSchema = { type: 'string', minLength: 1, maxLength: 256 }
+// JSON Schema maxLength counts Unicode code points, while the parser also enforces
+// the documented UTF-8 byte ceiling. These schemas cover every standard-expressible
+// rule; parser validation remains authoritative for the byte-level ceiling.
+const NO_NUL_PATTERN = '^[^\\u0000]*$'
+const NON_EMPTY_TEXT_PATTERN = '^(?=[\\s\\S]*\\S)[^\\u0000]+$'
+const boundedString: JsonSchema = { type: 'string', maxLength: 16_384, pattern: NO_NUL_PATTERN }
+const boundedNonEmptyText: JsonSchema = { type: 'string', maxLength: 16_384, pattern: NON_EMPTY_TEXT_PATTERN }
+const boundedIdentifier: JsonSchema = { type: 'string', minLength: 1, maxLength: 256, pattern: NON_EMPTY_TEXT_PATTERN }
 const stringArray: JsonSchema = { type: 'array', maxItems: 128, items: boundedString }
 const identifierArray: JsonSchema = { type: 'array', maxItems: 128, items: boundedIdentifier }
+
+function deepFreeze<T>(value: T): T {
+  if (typeof value !== 'object' || value === null || Object.isFrozen(value)) return value
+  for (const child of Object.values(value as Record<string, unknown>)) deepFreeze(child)
+  return Object.freeze(value)
+}
 
 const verificationEvidence: JsonSchema = {
   type: 'object',
@@ -12,7 +24,7 @@ const verificationEvidence: JsonSchema = {
     schemaVersion: { type: 'integer', const: 1 },
     commandName: boundedIdentifier,
     args: stringArray,
-    exitCode: { oneOf: [{ type: 'integer', minimum: 0 }, { type: 'null' }] },
+    exitCode: { oneOf: [{ type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER }, { type: 'null' }] },
     status: { type: 'string', enum: ['passed', 'failed', 'timed-out', 'spawn-error'] },
     stdout: boundedString,
     stderr: boundedString,
@@ -65,7 +77,7 @@ const constraints: JsonSchema = {
   required: ['maxWorkers', 'maxOutputTokens', 'maxLatencyMs', 'allowPaidFallback', 'requiredTools'],
 }
 
-const route: JsonSchema = {
+const route: JsonSchema = deepFreeze({
   type: 'object',
   additionalProperties: false,
   properties: {
@@ -77,16 +89,16 @@ const route: JsonSchema = {
     modelFamily: boundedIdentifier,
   },
   required: ['provider', 'model', 'maxTokens'],
-}
+})
 
-export const CAPABILITY_REQUEST_V1_JSON_SCHEMA: JsonSchema = {
+export const CAPABILITY_REQUEST_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
   type: 'object',
   additionalProperties: false,
   properties: {
     schemaVersion: { type: 'integer', const: 1 },
     target: { type: 'string', enum: ['root', 'worker'] },
     taskId: boundedIdentifier,
-    objective: boundedString,
+    objective: boundedNonEmptyText,
     profile,
     constraints,
     workspaceFingerprint: boundedIdentifier,
@@ -103,11 +115,11 @@ export const CAPABILITY_REQUEST_V1_JSON_SCHEMA: JsonSchema = {
     priorHandoff: handoff,
   },
   required: ['schemaVersion', 'target', 'taskId', 'objective', 'profile', 'constraints'],
-}
+})
 
 export const ROUTE_DECISION_V1_JSON_SCHEMA: JsonSchema = route
 
-export const SCHEDULE_DECISION_V1_JSON_SCHEMA: JsonSchema = {
+export const SCHEDULE_DECISION_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
   type: 'object',
   additionalProperties: false,
   properties: {
@@ -121,4 +133,4 @@ export const SCHEDULE_DECISION_V1_JSON_SCHEMA: JsonSchema = {
     explanationCode: boundedIdentifier,
   },
   required: ['schemaVersion', 'mode', 'route', 'workerCount', 'source', 'policyVersion'],
-}
+})

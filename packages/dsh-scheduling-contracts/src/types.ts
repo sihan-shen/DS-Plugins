@@ -11,6 +11,7 @@ export type JsonSchema = {
   readonly maxItems?: number
   readonly minLength?: number
   readonly maxLength?: number
+  readonly pattern?: string
   readonly oneOf?: readonly JsonSchema[]
 }
 
