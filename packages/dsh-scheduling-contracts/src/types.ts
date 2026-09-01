@@ -13,6 +13,10 @@ export type JsonSchema = {
   readonly maxLength?: number
   readonly pattern?: string
   readonly oneOf?: readonly JsonSchema[]
+  readonly allOf?: readonly JsonSchema[]
+  readonly contains?: JsonSchema
+  readonly if?: JsonSchema
+  readonly then?: JsonSchema
 }
 
 export type SchedulingTargetV1 = 'root' | 'worker'

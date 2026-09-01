@@ -142,6 +142,47 @@ describe('schemas and parsers reject the same representative invalid values', ()
     expect(schemaAccepts(value, schema)).toBe(false)
     expect(() => parser(value)).toThrow()
   })
+
+  it.each([
+    [
+      'direct mode requires zero workers',
+      SCHEDULE_DECISION_V1_JSON_SCHEMA,
+      { schemaVersion: 1, mode: 'direct', route: { provider: 'provider-disabled', model: 'baseline-disabled', maxTokens: 32000 }, workerCount: 1, source: 'scheduler', policyVersion: 'v0.3.0' },
+      parseScheduleDecisionV1,
+      false,
+    ],
+    [
+      'single-worker mode requires one worker',
+      SCHEDULE_DECISION_V1_JSON_SCHEMA,
+      { schemaVersion: 1, mode: 'single-worker', route: { provider: 'provider-disabled', model: 'baseline-disabled', maxTokens: 32000 }, workerCount: 0, source: 'scheduler', policyVersion: 'v0.3.0' },
+      parseScheduleDecisionV1,
+      false,
+    ],
+    [
+      'direct mode with zero workers is accepted',
+      SCHEDULE_DECISION_V1_JSON_SCHEMA,
+      { schemaVersion: 1, mode: 'direct', route: { provider: 'provider-disabled', model: 'baseline-disabled', maxTokens: 32000 }, workerCount: 0, source: 'scheduler', policyVersion: 'v0.3.0' },
+      parseScheduleDecisionV1,
+      true,
+    ],
+    [
+      'completed handoff with failed verification requires the marker',
+      CAPABILITY_REQUEST_V1_JSON_SCHEMA,
+      { ...request, priorHandoff: { ...handoff, verification: [{ ...handoff.verification[0], status: 'failed', exitCode: 1 }] } },
+      parseCapabilityRequestV1,
+      false,
+    ],
+    [
+      'completed handoff with failed verification and marker is accepted',
+      CAPABILITY_REQUEST_V1_JSON_SCHEMA,
+      { ...request, priorHandoff: { ...handoff, summary: 'Finished. [verification: failed]', verification: [{ ...handoff.verification[0], status: 'failed', exitCode: 1 }] } },
+      parseCapabilityRequestV1,
+      true,
+    ],
+  ] as const)('keeps Schema and parser acceptance aligned for %#', (_name, schema, value, parser, expected) => {
+    expect(schemaAccepts(value, schema)).toBe(expected)
+    expect(parserAccepts(value, parser)).toBe(expected)
+  })
 })
 
 function expectDeepFrozen(value: unknown): void {
@@ -150,10 +191,19 @@ function expectDeepFrozen(value: unknown): void {
   for (const child of Object.values(value)) expectDeepFrozen(child)
 }
 
-function schemaAccepts(value: unknown, schema: JsonSchema): boolean {
+type ConditionalJsonSchema = JsonSchema & {
+  readonly allOf?: readonly JsonSchema[]
+  readonly contains?: JsonSchema
+  readonly if?: JsonSchema
+  readonly then?: JsonSchema
+}
+
+function schemaAccepts(value: unknown, schema: ConditionalJsonSchema): boolean {
   if (schema.const !== undefined && value !== schema.const) return false
   if (schema.enum && !schema.enum.some(candidate => Object.is(candidate, value))) return false
   if (schema.oneOf && !schema.oneOf.some(candidate => schemaAccepts(value, candidate))) return false
+  if (schema.allOf && schema.allOf.some(candidate => !schemaAccepts(value, candidate))) return false
+  if (schema.if && schemaAccepts(value, schema.if) && schema.then && !schemaAccepts(value, schema.then)) return false
   if (schema.type === 'null' && value !== null) return false
   if (schema.type === 'boolean' && typeof value !== 'boolean') return false
   if (schema.type === 'string') {
@@ -174,8 +224,9 @@ function schemaAccepts(value: unknown, schema: JsonSchema): boolean {
     if (schema.minLength !== undefined && value.length < schema.minLength) return false
     if (schema.maxItems !== undefined && value.length > schema.maxItems) return false
     if (schema.items && value.some(item => !schemaAccepts(item, schema.items!))) return false
+    if (schema.contains && !value.some(item => schemaAccepts(item, schema.contains!))) return false
   }
-  if (schema.type === 'object') {
+  if (schema.type === 'object' || schema.properties !== undefined || schema.required !== undefined || schema.additionalProperties !== undefined) {
     if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
     const record = value as Record<string, unknown>
     for (const key of schema.required ?? []) if (!Object.prototype.hasOwnProperty.call(record, key)) return false
@@ -185,4 +236,13 @@ function schemaAccepts(value: unknown, schema: JsonSchema): boolean {
     }
   }
   return true
+}
+
+function parserAccepts(value: unknown, parser: (value: unknown) => unknown): boolean {
+  try {
+    parser(value)
+    return true
+  } catch {
+    return false
+  }
 }

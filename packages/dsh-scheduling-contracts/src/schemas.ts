@@ -47,6 +47,30 @@ const handoff: JsonSchema = {
     blockers: stringArray,
   },
   required: ['schemaVersion', 'status', 'summary', 'changedFiles', 'decisions', 'verification', 'blockers'],
+  if: {
+    type: 'object',
+    properties: {
+      status: { const: 'completed' },
+      verification: {
+        type: 'array',
+        contains: {
+          type: 'object',
+          required: ['status'],
+          properties: {
+            status: { enum: ['failed', 'timed-out', 'spawn-error'] },
+          },
+        },
+      },
+    },
+    required: ['status', 'verification'],
+  },
+  then: {
+    type: 'object',
+    properties: {
+      summary: { type: 'string', pattern: '\\[verification: failed\\]' },
+    },
+    required: ['summary'],
+  },
 }
 
 const profile: JsonSchema = {
@@ -133,4 +157,26 @@ export const SCHEDULE_DECISION_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
     explanationCode: boundedIdentifier,
   },
   required: ['schemaVersion', 'mode', 'route', 'workerCount', 'source', 'policyVersion'],
+  allOf: [
+    {
+      if: {
+        properties: { mode: { const: 'direct' } },
+        required: ['mode'],
+      },
+      then: {
+        properties: { workerCount: { const: 0 } },
+        required: ['workerCount'],
+      },
+    },
+    {
+      if: {
+        properties: { mode: { const: 'single-worker' } },
+        required: ['mode'],
+      },
+      then: {
+        properties: { workerCount: { const: 1 } },
+        required: ['workerCount'],
+      },
+    },
+  ],
 })
