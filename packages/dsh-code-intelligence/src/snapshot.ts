@@ -26,6 +26,7 @@ type Signature = { readonly dev: number; readonly ino: number; readonly size: nu
 type IgnoreRule = { readonly base: string; readonly match: (input: string) => boolean }
 type ScanState = { directories: number; files: number; totalBytes: number; ignoreBytes: number; patterns: number }
 type Receipt = { readonly text: string; readonly byteLength: number; readonly contentHash: string }
+const CONTEXT_CACHE_DIRECTORY = '.dsh-context-cache'
 
 function signature(stat: Stats): Signature {
   return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs, mode: stat.mode }
@@ -48,7 +49,7 @@ function languageFor(path: string): string {
 }
 
 function isHardExcludedDirectory(name: string): boolean {
-  return name === '.git' || name === '.dsh' || name === 'node_modules' || name === 'upstream' || name === '.worktrees' || name.startsWith('.env')
+  return name === '.git' || name === '.dsh' || name === CONTEXT_CACHE_DIRECTORY || name === 'node_modules' || name === 'upstream' || name === '.worktrees' || name.startsWith('.env')
 }
 
 function isExplicitNestedRoot(path: string, roots: readonly string[]): boolean {

@@ -229,6 +229,42 @@ describe('optional orchestrator context lifecycle', () => {
     disposeService()
   })
 
+  it('selects a session-scoped compiler from the calling tool Session', async () => {
+    const ctx = new Context()
+    const prompts = promptRegistry()
+    const tools = toolRegistry()
+    const fallback = compiler()
+    const selected = compiler()
+    const service = {
+      ...fallback,
+      forSession: vi.fn(async () => selected),
+    } satisfies ContextCompiler
+    ctx.provide('systemPrompt', prompts as never)
+    ctx.provide('tools', tools as never)
+    const disposeService = ctx.provide('contextCompiler', service as never)
+    const fiber = await ctx.plugin(child => mountContextIntegration(child, config))
+    await flushMount()
+    const tool = tools.get('context_repo_map')
+    if (tool === undefined) throw new Error('context_repo_map was not registered')
+    const agent = rootAgent('session-scoped-context')
+
+    await tool.execute(
+      { snapshotId: 'snapshot-1', limit: 10 },
+      {
+        signal: new AbortController().signal,
+        agent,
+        rootCallId: 'session-scoped-context-call',
+        deferContext: vi.fn(),
+      } as never,
+    )
+
+    expect(service.forSession).toHaveBeenCalledWith(agent.session)
+    expect(selected.repoMap).toHaveBeenCalledTimes(1)
+    expect(fallback.repoMap).not.toHaveBeenCalled()
+    await fiber.dispose()
+    disposeService()
+  })
+
   it.each([
     ['blockId', { ...contextBlock, blockId: `sha256:${'2'.repeat(64)}` }],
     ['contentHash', { ...contextBlock, contentHash: `sha256:${'3'.repeat(64)}` }],

@@ -1,12 +1,14 @@
-import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+import type { ToolDefinition, ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { parseContextBlockV1, parseRepoMapPageV1, parseSymbolQueryResultV1, type ContextBlockV1, type RepoMapPageV1, type SymbolQueryResultV1 } from '@ds-plugins/dsh-context'
 import { buildRepoMap, querySymbols, type RepoMapOptionsV1, type SymbolQueryV1 } from './projections.js'
 import type { InternalSymbolIndexStore } from './symbol-index.js'
 import type { RepositorySnapshotStore } from './snapshot.js'
 import type { ContextCompiler } from './types.js'
 
-type ToolExecution = { readonly signal: AbortSignal; readonly agent?: object; readonly rootCallId?: string }
-type ToolRuntime = { readonly snapshot: RepositorySnapshotStore['snapshot']; readonly index: InternalSymbolIndexStore }
+type ToolExecution = Pick<ToolRunContext, 'signal' | 'agent' | 'rootCallId'>
+export type ToolRuntime = { readonly snapshot: RepositorySnapshotStore['snapshot']; readonly index: InternalSymbolIndexStore }
+export type ToolRuntimeResolver = (exec: ToolExecution) => ToolRuntime | Promise<ToolRuntime>
+type ToolRuntimeSource = ToolRuntime | ToolRuntimeResolver
 
 function object(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new TypeError('code intelligence arguments must be an object')
@@ -18,10 +20,9 @@ function exactKeys(value: Record<string, unknown>, keys: readonly string[]): voi
   for (const key of Object.keys(value)) if (!allowed.has(key)) throw new TypeError(`unknown code intelligence argument: ${key}`)
 }
 
-function input(value: unknown, runtime: ToolRuntime, query: boolean): RepoMapOptionsV1 | SymbolQueryV1 {
+function input(value: unknown, query: boolean): RepoMapOptionsV1 | SymbolQueryV1 {
   const raw = object(value)
-  exactKeys(raw, query ? ['snapshotId', 'query', 'limit', 'cursor'] : ['snapshotId', 'limit', 'cursor'])
-  if (raw.snapshotId !== runtime.snapshot.snapshotId) throw new TypeError('snapshotId is stale or does not match the current snapshot')
+  exactKeys(raw, query ? ['query', 'limit', 'cursor'] : ['limit', 'cursor'])
   if (typeof raw.limit !== 'number' || !Number.isSafeInteger(raw.limit) || raw.limit < 1 || raw.limit > 50) throw new RangeError('limit must be between 1 and 50')
   if (raw.cursor !== undefined && (typeof raw.cursor !== 'string' || new TextEncoder().encode(raw.cursor).byteLength > 1_024)) throw new RangeError('cursor exceeds 1024 UTF-8 bytes')
   if (query) {
@@ -31,7 +32,7 @@ function input(value: unknown, runtime: ToolRuntime, query: boolean): RepoMapOpt
   return { limit: raw.limit, ...(raw.cursor === undefined ? {} : { cursor: raw.cursor }) }
 }
 
-function render(value: unknown): Array<{ type: 'text'; text: string }> {
+function render(_args: unknown, value: unknown): Array<{ type: 'text'; text: string }> {
   return [{ type: 'text', text: JSON.stringify(value) }]
 }
 
@@ -39,15 +40,18 @@ const parameters = (query: boolean) => ({
   type: 'object',
   additionalProperties: false,
   properties: {
-    snapshotId: { type: 'string' },
     ...(query ? { query: { type: 'string' } } : {}),
     limit: { type: 'integer', minimum: 1, maximum: 50 },
     cursor: { type: 'string' },
   },
-  required: query ? ['snapshotId', 'query', 'limit'] : ['snapshotId', 'limit'],
+  required: query ? ['query', 'limit'] : ['limit'],
 })
 
-export function createCodeIntelligenceTools(runtime: ToolRuntime): readonly ToolDefinition[] {
+function runtimeFor(source: ToolRuntimeSource, exec: ToolExecution): ToolRuntime | Promise<ToolRuntime> {
+  return typeof source === 'function' ? source(exec) : source
+}
+
+export function createCodeIntelligenceTools(source: ToolRuntimeSource): readonly ToolDefinition[] {
   const repoMap = {
     name: 'code_repo_map',
     description: 'Return a bounded repository map page for the current immutable snapshot.',
@@ -55,7 +59,8 @@ export function createCodeIntelligenceTools(runtime: ToolRuntime): readonly Tool
     output: { schema: { type: 'object' }, render },
     async execute(rawArgs: unknown, exec: ToolExecution): Promise<RepoMapPageV1> {
       if (exec.signal.aborted) throw exec.signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
-      const options = input(rawArgs, runtime, false) as RepoMapOptionsV1
+      const options = input(rawArgs, false) as RepoMapOptionsV1
+      const runtime = await runtimeFor(source, exec)
       return parseRepoMapPageV1(buildRepoMap(runtime.snapshot, runtime.index, options))
     },
   } as ToolDefinition
@@ -66,7 +71,8 @@ export function createCodeIntelligenceTools(runtime: ToolRuntime): readonly Tool
     output: { schema: { type: 'object' }, render },
     async execute(rawArgs: unknown, exec: ToolExecution): Promise<SymbolQueryResultV1> {
       if (exec.signal.aborted) throw exec.signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
-      const options = input(rawArgs, runtime, true) as SymbolQueryV1
+      const options = input(rawArgs, true) as SymbolQueryV1
+      const runtime = await runtimeFor(source, exec)
       return parseSymbolQueryResultV1(querySymbols(runtime.snapshot, runtime.index, options))
     },
   } as ToolDefinition
@@ -117,6 +123,12 @@ export function createContextTools(compiler: ContextCompiler): readonly ToolDefi
     return exec.rootCallId === undefined ? undefined : `root:${exec.rootCallId}`
   }
 
+  async function compilerFor(exec: ToolExecution): Promise<ContextCompiler> {
+    return compiler.forSession === undefined
+      ? compiler
+      : compiler.forSession(exec.agent?.session)
+  }
+
   const repoMap = {
     name: 'context_repo_map',
     description: 'Compile a bounded repository map Context Block for the current immutable snapshot.',
@@ -124,7 +136,8 @@ export function createContextTools(compiler: ContextCompiler): readonly ToolDefi
     output: contextOutput(),
     async execute(rawArgs: unknown, exec: ToolExecution): Promise<ContextBlockV1> {
       if (exec.signal.aborted) throw exec.signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
-      return parseContextBlockV1(await compiler.repoMap(rawArgs as { snapshotId: string; limit: number; cursor?: string }, exec.signal, sessionKey(exec)))
+      const activeCompiler = await compilerFor(exec)
+      return parseContextBlockV1(await activeCompiler.repoMap(rawArgs as { snapshotId: string; limit: number; cursor?: string }, exec.signal, sessionKey(exec)))
     },
   } as ToolDefinition
   const symbolQuery = {
@@ -134,7 +147,8 @@ export function createContextTools(compiler: ContextCompiler): readonly ToolDefi
     output: contextOutput(),
     async execute(rawArgs: unknown, exec: ToolExecution): Promise<ContextBlockV1> {
       if (exec.signal.aborted) throw exec.signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
-      return parseContextBlockV1(await compiler.symbolQuery(rawArgs as { snapshotId: string; query: string; limit: number; cursor?: string }, exec.signal, sessionKey(exec)))
+      const activeCompiler = await compilerFor(exec)
+      return parseContextBlockV1(await activeCompiler.symbolQuery(rawArgs as { snapshotId: string; query: string; limit: number; cursor?: string }, exec.signal, sessionKey(exec)))
     },
   } as ToolDefinition
   const expandSource = {
@@ -144,7 +158,8 @@ export function createContextTools(compiler: ContextCompiler): readonly ToolDefi
     output: contextOutput(),
     async execute(rawArgs: unknown, exec: ToolExecution): Promise<ContextBlockV1> {
       if (exec.signal.aborted) throw exec.signal.reason ?? new DOMException('The operation was aborted', 'AbortError')
-      return parseContextBlockV1(await compiler.expandSource(rawArgs as { blockId: string; path: string; sourceHash: string; startOffset: number; endOffset: number }, exec.signal, sessionKey(exec)))
+      const activeCompiler = await compilerFor(exec)
+      return parseContextBlockV1(await activeCompiler.expandSource(rawArgs as { blockId: string; path: string; sourceHash: string; startOffset: number; endOffset: number }, exec.signal, sessionKey(exec)))
     },
   } as ToolDefinition
   return Object.freeze([repoMap, symbolQuery, expandSource])

@@ -98,7 +98,7 @@ allowBuilds:
 - [错误处理与安全边界](#错误处理与安全边界)
 - [复用边界](#复用边界)
 - [配置草案](#配置草案)
-- [目标目录结构](#目标目录结构)
+- [仓库、Package 与插件边界](#仓库package-与插件边界)
 - [路线图](#路线图)
 - [研究假设与验收指标](#研究假设与验收指标)
 
@@ -910,32 +910,49 @@ evolution:
 
 Provider 缓存、模型行为和项目规模都会变化，因此预算、阈值和 affinity 必须可校准；但 v0.1 不为尚未出现的需求建立完整配置框架。
 
-## 目标目录结构
+## 仓库、Package 与插件边界
 
-初期保持少包和清晰边界，等独立发布或版本需求出现后再拆插件：
+仓库边界、代码包边界和运行时插件边界不要求一一对应。本项目在 v0.6 之前保持一个 pnpm monorepo，在同一仓库内维护可独立测试和版本化的 packages、DSH 插件及组合 Profile。这样可以让共享契约、DSH ABI 升级、Loader/replay 和跨插件安全验证保持原子一致，同时避免跨仓库联调、临时发布和版本漂移。
+
+目标结构如下；名称表示职责方向，不要求立即重命名现有 package：
 
 ```text
 DS-Plugins/
 ├── README.md
 ├── HANDOFF.md
 ├── packages/
-│   ├── provider/
-│   ├── orchestration/
-│   ├── scheduling/
-│   ├── context/
-│   ├── code-intelligence/
-│   ├── handoff-memory/
-│   ├── verification/
-│   └── telemetry-eval/
-├── config/
-│   └── example.yaml
+│   ├── contracts/                 # 纯库：共享协议、解析器和安全投影
+│   ├── context-cache/             # 纯库：持久化缓存实现
+│   ├── eval/                      # 离线评估与 promotion gate
+│   ├── plugin-orchestrator/       # 运行时插件：任务、Worker、Handoff
+│   ├── plugin-code-intelligence/  # 运行时插件：索引与 Context Compiler
+│   ├── plugin-scheduler/          # v0.3 运行时插件：模型与资源调度
+│   ├── plugin-telemetry/          # v0.5 运行时插件：有界证据采集
+│   └── plugin-verification/       # 条件性插件：独立权限或后端出现后再拆
+├── profiles/
+│   ├── minimal/
+│   ├── coding/
+│   ├── adaptive/
+│   └── experimental/
 └── tests/
-    ├── fixtures/
-    ├── integration/
-    └── evals/
+    ├── loader/
+    ├── replay/
+    └── eval/
 ```
 
-模块边界稳定且确有独立安装需求时，再拆为 `model-scheduler`、`context-cache`、`repo-map` 等单独插件。
+插件演进目标是 4 个主插件、最多 5 个，而不是每个 package 都成为插件：
+
+| 插件 | 归属能力 | 计划 |
+| --- | --- | --- |
+| Orchestrator | Direct/Worker、预算、Handoff、Task DAG、并行与文件所有权 | 保留现有插件并在 v0.4 扩展 |
+| Code Intelligence | Snapshot、Repo Map、Symbol Index、Context Compiler、渐进展开 | 保留现有插件；cache 继续作为内部库 |
+| Adaptive Scheduler | Model/Provider 选择、quota、stickiness、affinity、escalation | v0.3 新增 |
+| Telemetry | 有界事件采集、脱敏、持久化和导出 | v0.5 新增；分析与学习保持离线 |
+| Verification | 验证计划与安全执行后端 | 仅在出现多个消费者、独立权限或可替换后端时拆分 |
+
+`contracts`、`context-cache` 和 `eval` 没有独立运行时生命周期，默认保持纯 package。v0.6 的 Offline Eval、A/B、Promotion 和 Rollback 是离线治理流程，不创建拥有自动提权或自动发布能力的常驻 Self-Evolution 插件。Profile 负责固定插件版本、权限、预算和推荐组合，不承担功能实现。
+
+只有当模块具有稳定公开契约，并出现独立安装/替换、不同权限边界、两个以上真实消费者或独立发布回滚需求时，才将 package 提升为插件。只有当插件存在不同维护团队或许可证/公开性边界、服务多个宿主项目、需要独立供应链审计，或 monorepo 的 affected-package CI 已无法控制成本时，才拆 Git repo。即使未来满足条件，也优先按 `agent-core`、`code-intelligence`、`observability` 三个产品域拆分，而不是一插件一仓库。
 
 ## 路线图
 
@@ -953,7 +970,9 @@ DS-Plugins/
 
 退出标准：能完成真实 Coding 任务；Orchestrator 不需要读取 Worker 完整 transcript；失败时有明确 Handoff 和证据。
 
-### v0.2：Token Economy
+### v0.2：Token Economy（已完成）
+
+状态：v0.2a、v0.2b 和 v0.2c 的计划范围均已进入 `main`。当前实现覆盖共享契约与固定评估语料、只读 Code Intelligence、不可变 Context Blocks、Cache-Aware Context Compiler、有界持久化缓存、渐进式源码展开、独立 Profile，以及 Loader/replay 和 promotion gate。v0.2 的完成指仓库定义的 keyless 范围和退出门槛已满足；不代表 provider、网络隔离或真实 coding-task 验收。
 
 交付：
 
@@ -964,19 +983,33 @@ DS-Plugins/
 
 退出标准：相对 `grep + full file read` 基线，成功任务的源码输入和 uncached tokens 可测量下降，成功率不显著降低。
 
-#### v0.2a 当前基线与安全边界
+#### v0.2a：评估基线与安全边界（已完成）
 
 v0.2a 只验证固定 fixture corpus 的 baseline、共享契约、路径安全、评估指标和插件兼容性 checker：12 个 task，覆盖 `ts-small`、`ts-medium`、`ts-layered` 三种 repository shape；tokenizer 固定为 `@dqbd/tiktoken@1.0.22` 的 `cl100k_base`。v0.2a 不实现 snapshot、Symbol Index、Repo Map、cache，也不证明 provider 或真实 coding-task acceptance。
 
+#### v0.2b：只读 Code Intelligence（已完成）
+
 v0.2b 已在固定 12-task corpus 上完成 keyless promotion gate：cold/warm 的 median source-token reduction 均为 `0.7260683760683762`，mean symbol-query recall@5、target coverage、oracle success 均为 `1`，uncached tokens per success 为 `17.5`；两种条件均通过 `≥ 0.25/0.95/0.95/0.95` 阈值。每个 task 生成 3 次 cold 与 3 次 warm optimized 记录，明确不宣称 cache benefit。该结果只证明固定 fixture、fallback/index、read-only projections、Loader/replay 与评估链路；不证明 provider、网络隔离或真实 coding-task acceptance。`dsh-lsp-actions` 当前决策为 `patch-required`，未安装、未进入默认 profile；详见 [`dsh-lsp-actions compatibility review`](docs/superpowers/reviews/2026-08-30-dsh-lsp-actions-compatibility.md)。
 
-#### v0.2c：Context Blocks 与有界缓存
+`@ds-plugins/dsh-code-intelligence` 声明了标准 `dsh.bundle`，本地构建后可由 DSH 插件管理命令识别并加入 Profile 的 bundle 栈：
 
-v0.2c 在独立分支 `codex/v0.2c` 上实现：`@ds-plugins/dsh-context` 作为不可变 ContextBlockV1 契约权威，`@ds-plugins/dsh-context-cache` 作为边界感知的持久化缓存，`@ds-plugins/dsh-code-intelligence` 把既有 Repo Map / Symbol Query 投影通过 `context-compiler` 编译成有界 context block 并提供 provenance 校验的渐进式 source-window 展开，`@ds-plugins/dsh-orchestrator` 仅在 v0.2c overlay 中消费可选 `contextCompiler` 服务。缓存只存在于受信任 deployment root 下的 `.dsh-context-cache/v1/`，使用 mode 0700、同目录临时文件 + 原子 rename、独占锁，并执行依赖哈希失效、LRU 淘汰与 quarantine。`profiles/v0.1` 保持不变；该 overlay 不启用 provider 或 write-capable tool。
+```bash
+pnpm --filter @ds-plugins/dsh-code-intelligence build
+cd upstream/deepseek-harness
+pnpm dsh plugin --profile web add link:/home/sihan/Projects/DS-Plugins/packages/dsh-code-intelligence
+```
 
-keyless gate 证据（cached Node v24.19.0）：`tsc -b` 与 `git diff --check` exit 0；完整 v0.2c Vitest suite 33 文件 / 268 测试通过；v0.2b scoped 回归 21 文件 / 127 测试通过；`test:profile` 1/1、orchestrator package-entry 1/1；`test:provider` 仅输出固定 `DISABLED` 信息并 exit 0。仅有的 2 个失败断言是 `tests/provider/openai-codex.smoke.spec.ts` 的 spawn-stdout 捕获，确认为当前 exec 沙箱对子进程 stdout pipe 捕获失效所致（直接运行该脚本会打印精确的 `DISABLED` 信息且 exit 0），并非代码缺陷。cold/warm replay 如实报告 hit/miss 计数，并保留 v0.2b 阈值。该结果只证明不可变 block、边界缓存、progressive disclosure、只读 context tools 与 Loader/replay 链路；不证明 provider、网络隔离或真实 coding-task acceptance。
+安装只负责激活 bundle；仍需在目标 Profile 的 `cordis.patch.yml` 中为 `dsh-code-intelligence` 配置指向目标仓库的 `deploymentRoot` 和相应边界参数。
+
+#### v0.2c：Context Blocks 与有界缓存（已完成）
+
+v0.2c 已合入 `main`：`@ds-plugins/dsh-context` 作为不可变 ContextBlockV1 契约权威，`@ds-plugins/dsh-context-cache` 作为边界感知的持久化缓存，`@ds-plugins/dsh-code-intelligence` 把既有 Repo Map / Symbol Query 投影通过 `context-compiler` 编译成有界 context block 并提供 provenance 校验的渐进式 source-window 展开，`@ds-plugins/dsh-orchestrator` 仅在 v0.2c overlay 中消费可选 `contextCompiler` 服务。缓存只存在于受信任 deployment root 下的 `.dsh-context-cache/v1/`，使用 mode 0700、同目录临时文件 + 原子 rename、独占锁，并执行依赖哈希失效、LRU 淘汰与 quarantine。`profiles/v0.1` 保持不变；该 overlay 不启用 provider 或 write-capable tool。
+
+最新 keyless gate 证据（2026-08-31，cached Node v24.19.0）：`pnpm test:v0.2c` 完成全部 package build，并通过 33 个测试文件 / 268 个测试；其中完整 12-task promotion gate 通过，cold/warm median source-token reduction 均为 `0.7260683760683762`，mean symbol-query recall@5、target coverage 和 oracle success 均为 `1`。cold/warm replay 如实报告缓存 hit/miss。该结果只证明不可变 block、边界缓存、progressive disclosure、只读 context tools、Loader/replay 和固定语料评估链路；不证明 provider、网络隔离或真实 coding-task acceptance。
 
 ### v0.3：Adaptive Scheduling
+
+插件归属：新增独立 Adaptive Scheduler 插件；Orchestrator 只提交能力请求并消费路由决定，Scheduler 缺失时安全退化到 Profile 的固定路线。
 
 交付：
 
@@ -988,6 +1021,8 @@ keyless gate 证据（cached Node v24.19.0）：`tsc -b` 与 `git diff --check` 
 
 ### v0.4：Economical Multi-Agent
 
+插件归属：继续扩展 Orchestrator，不另建 DAG 或 Worker 插件；Scheduler 负责资源选择和 affinity，Orchestrator 负责依赖、所有权和生命周期。
+
 交付：
 
 - Task DAG 和独立性判断。
@@ -998,6 +1033,8 @@ keyless gate 证据（cached Node v24.19.0）：`tsc -b` 与 `git diff --check` 
 
 ### v0.5：Telemetry 与学习
 
+插件归属：新增 Telemetry 插件负责有界、脱敏的运行证据；Failure Miner、Lesson 校准和候选生成保持离线 package，不允许采集插件直接修改生产策略。
+
 交付：
 
 - 统一运行指标和 Failure Taxonomy。
@@ -1007,6 +1044,8 @@ keyless gate 证据（cached Node v24.19.0）：`tsc -b` 与 `git diff --check` 
 退出标准：每条候选改进能追溯到重复任务证据，而不是单次主观判断。
 
 ### v0.6：受控 Self-Evolution
+
+插件归属：不新增常驻 Self-Evolution 插件；使用离线 eval、版本化 Profile/策略和人工审批完成 Promotion 与 Rollback。Verification 仅在独立权限、多个消费者或可替换执行后端成为实际需求后，才从 Orchestrator 拆为第 5 个插件。
 
 交付：
 

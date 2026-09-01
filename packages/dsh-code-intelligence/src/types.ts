@@ -5,6 +5,7 @@ import type { InternalSymbolIndexStore } from './symbol-index.js'
 import type { RepositorySnapshotStore } from './snapshot.js'
 
 export type SnapshotConfigV1 = {
+  readonly workspaceRoot?: string
   readonly deploymentRoot: string
   readonly revision: string
   readonly maxFileBytes: number
@@ -72,6 +73,8 @@ export type ContextCompiler = {
   repoMap(request: { snapshotId: string; limit: number; cursor?: string }, signal: AbortSignal, sessionKey?: string): Promise<ContextBlockV1>
   symbolQuery(request: { snapshotId: string; query: string; limit: number; cursor?: string }, signal: AbortSignal, sessionKey?: string): Promise<ContextBlockV1>
   expandSource(request: { blockId: string; path: string; sourceHash: string; startOffset: number; endOffset: number }, signal: AbortSignal, sessionKey?: string): Promise<ContextBlockV1>
+  /** Select the compiler owned by the current Harness Session when supported. */
+  forSession?(session: object | undefined): Promise<ContextCompiler>
 }
 
 export type ContextCompilerStats = {

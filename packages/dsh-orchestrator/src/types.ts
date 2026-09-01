@@ -66,6 +66,8 @@ export interface ContextCompiler {
     signal: AbortSignal,
     sessionKey?: string,
   ): Promise<ContextBlockV1>
+  /** Select the compiler owned by the current Harness Session when supported. */
+  forSession?(session: object | undefined): Promise<ContextCompiler>
 }
 
 /** Canonical provider route reconstructed from a root request-header snapshot. */

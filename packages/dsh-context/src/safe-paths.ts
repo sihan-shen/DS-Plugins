@@ -16,6 +16,8 @@ export type IgnoreRules = {
   readonly isIgnored?: (path: string) => boolean
 }
 
+const CONTEXT_CACHE_DIRECTORY = '.dsh-context-cache'
+
 const PRIVATE_KEY_SUFFIXES = new Set(['.pem', '.key', '.p12', '.pfx', '.jks', '.der'])
 const BINARY_SUFFIXES = new Set([
   '.7z', '.a', '.avi', '.bin', '.class', '.dll', '.dmg', '.doc', '.docx', '.exe', '.gif',
@@ -63,7 +65,7 @@ export function assertSafeRepoPath(root: string, candidate: string): string {
 
 function hasExcludedDirectory(path: string, rules: IgnoreRules): boolean {
   const parts = path.split('/')
-  if (parts.some(part => part === '.git' || part === '.dsh' || part === 'node_modules' || part === '.worktrees')) return true
+  if (parts.some(part => part === '.git' || part === '.dsh' || part === 'node_modules' || part === '.worktrees' || part === CONTEXT_CACHE_DIRECTORY)) return true
   if (parts[0] === 'upstream') return true
   return rules.nestedCheckoutRoots?.some(root => {
     try {

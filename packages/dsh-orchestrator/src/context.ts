@@ -199,6 +199,9 @@ function createContextTools(
   timeoutMs: number,
   keyFor: (exec: ToolRunContext) => string,
 ): readonly ToolDefinition[] {
+  const compilerFor = async (exec: ToolRunContext): Promise<ContextCompiler> => compiler.forSession === undefined
+    ? compiler
+    : compiler.forSession(exec.agent?.session)
   return [{
     name: 'context_repo_map',
     description: 'Compile a bounded repository map Context Block from the current immutable snapshot.',
@@ -211,7 +214,7 @@ function createContextTools(
     timeoutMs,
     async execute(value, exec) {
       if (exec.signal.aborted) throwReason(exec.signal)
-      return compiler.repoMap(repoMapRequest(value), exec.signal, keyFor(exec))
+      return (await compilerFor(exec)).repoMap(repoMapRequest(value), exec.signal, keyFor(exec))
     },
   }, {
     name: 'context_symbol_query',
@@ -225,7 +228,7 @@ function createContextTools(
     timeoutMs,
     async execute(value, exec) {
       if (exec.signal.aborted) throwReason(exec.signal)
-      return compiler.symbolQuery(symbolRequest(value), exec.signal, keyFor(exec))
+      return (await compilerFor(exec)).symbolQuery(symbolRequest(value), exec.signal, keyFor(exec))
     },
   }, {
     name: 'context_expand_source',
@@ -242,7 +245,7 @@ function createContextTools(
     timeoutMs,
     async execute(value, exec) {
       if (exec.signal.aborted) throwReason(exec.signal)
-      return compiler.expandSource(expansionRequest(value), exec.signal, keyFor(exec))
+      return (await compilerFor(exec)).expandSource(expansionRequest(value), exec.signal, keyFor(exec))
     },
   }]
 }

@@ -17,7 +17,7 @@ async function fixture(): Promise<ContextCacheReplayFixture> {
 }
 
 describe('v0.2c separate provider-disabled profile', () => {
-  it('composes base, orchestrator, code intelligence, and cache without changing v0.1 or invoking provider smoke', async () => {
+  it('composes the official Web workspace service with orchestrator, code intelligence, and cache', async () => {
     const root = new URL('../../', import.meta.url)
     const manifest = JSON.parse(await readFile(new URL('profiles/v0.2c-context/package.json', root), 'utf8')) as {
       dependencies: Record<string, string>
@@ -32,6 +32,7 @@ describe('v0.2c separate provider-disabled profile', () => {
 
     expect(manifest.dsh.profile.bundles).toEqual([
       '@deepseek-ai/dsh-base',
+      '@deepseek-ai/dsh-web-app',
       '@ds-plugins/dsh-orchestrator',
       '@ds-plugins/dsh-code-intelligence',
     ])

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { sha256Utf8 } from '@ds-plugins/dsh-context'
 import { RepositorySnapshotStore } from '../src/snapshot.ts'
 import { parseSnapshotConfig } from '../src/config.ts'
@@ -109,6 +109,19 @@ describe('deterministic TypeScript/JavaScript fallback symbols', () => {
 })
 
 describe('InternalSymbolIndexStore boundary', () => {
+  it('does not consult the process cwd for snapshot-bound symbol paths', async () => {
+    const { store } = await fixture({ 'src/stable.ts': 'export function stable() {}\n' })
+    const adapter = await extractFallbackSymbols(store)
+    const cwd = vi.spyOn(process, 'cwd').mockImplementation(() => {
+      throw new Error('session cwd is unavailable')
+    })
+    try {
+      expect(() => buildSymbolIndex(store.snapshot.snapshotId, adapter, adapter.entries)).not.toThrow()
+    } finally {
+      cwd.mockRestore()
+    }
+  })
+
   it('freezes entries and relations and rejects stale, unknown, or duplicate input', async () => {
     const source = 'import "./dep.ts"\nexport function stable() {}\n'
     const { store } = await fixture({ 'src/stable.ts': source, 'src/dep.ts': 'export const dependency = true\n' })

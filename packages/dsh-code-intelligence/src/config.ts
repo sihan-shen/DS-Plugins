@@ -1,5 +1,5 @@
 import { lstatSync, realpathSync, statSync } from 'node:fs'
-import { isAbsolute, relative, sep } from 'node:path'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
 import {
   MAX_DIRECTORIES,
   MAX_FILE_BYTES,
@@ -9,7 +9,8 @@ import {
 } from './constants.js'
 import type { LspDeploymentConfigV1, LspDeploymentEnvironmentKey, SnapshotConfigV1 } from './types.js'
 
-const CONFIG_KEYS = ['deploymentRoot', 'revision', 'maxFileBytes', 'maxFiles', 'maxTotalBytes', 'maxDirectories', 'maxIgnoreBytes', 'nestedCheckoutRoots'] as const
+const CONFIG_KEYS = ['workspaceRoot', 'deploymentRoot', 'revision', 'maxFileBytes', 'maxFiles', 'maxTotalBytes', 'maxDirectories', 'maxIgnoreBytes', 'nestedCheckoutRoots'] as const
+const REQUIRED_CONFIG_KEYS = ['deploymentRoot', 'revision', 'maxFileBytes', 'maxFiles', 'maxTotalBytes', 'maxDirectories', 'maxIgnoreBytes', 'nestedCheckoutRoots'] as const
 const LSP_CONFIG_KEYS = ['executable', 'fixedArgs', 'environment', 'timeoutMs', 'maxMessageBytes', 'maxStderrBytes', 'graceMs'] as const
 const LSP_ENVIRONMENT_KEYS = ['LANG', 'LC_ALL', 'TMPDIR', 'TEMP', 'TMP'] as const
 
@@ -68,6 +69,10 @@ function canonicalDirectory(value: unknown, name: string): string {
 function contained(root: string, candidate: string): boolean {
   const relation = relative(root, candidate)
   return relation !== '' && relation !== '..' && !relation.startsWith(`..${sep}`) && !isAbsolute(relation)
+}
+
+function containedOrEqual(root: string, candidate: string): boolean {
+  return root === candidate || contained(root, candidate)
 }
 
 function lspString(value: unknown, name: string): string {
@@ -133,25 +138,37 @@ export function parseLspDeploymentConfig(value: unknown, snapshotRoot: unknown):
   return Object.freeze(config)
 }
 
-export function parseSnapshotConfig(value: unknown): SnapshotConfigV1 {
+function validateRelativeDeploymentRoot(root: string): void {
+  if (root === '.') return
+  if (root.includes('\\')) throw new TypeError('relative deploymentRoot must use repository-relative path syntax')
+  const parts = root.split('/')
+  if (parts.some(part => part === '' || part === '.' || part === '..')) {
+    throw new TypeError('relative deploymentRoot must not contain traversal or empty path segments')
+  }
+}
+
+/** Validate the session-relative snapshot policy before Cordis starts the plugin. */
+export function parseCodeIntelligenceConfig(value: unknown): SnapshotConfigV1 {
   const object = record(value)
   const allowed = new Set<string>(CONFIG_KEYS)
   for (const key of Object.keys(object)) if (!allowed.has(key)) throw new TypeError(`unknown snapshot config key: ${key}`)
-  for (const key of CONFIG_KEYS) if (!Object.prototype.hasOwnProperty.call(object, key)) throw new TypeError(`snapshot config requires ${key}`)
-  const root = stringValue(object.deploymentRoot, 'deploymentRoot')
-  let canonicalRoot: string
-  try {
-    canonicalRoot = realpathSync(root)
-    if (!statSync(canonicalRoot).isDirectory()) throw new Error('not a directory')
-  } catch {
-    throw new TypeError('deploymentRoot must be an existing directory')
+  for (const key of REQUIRED_CONFIG_KEYS) if (!Object.prototype.hasOwnProperty.call(object, key)) throw new TypeError(`snapshot config requires ${key}`)
+  const workspaceRootInput = object.workspaceRoot
+  let workspaceRootInputPath: string | undefined
+  if (workspaceRootInput !== undefined) {
+    const workspacePath = stringValue(workspaceRootInput, 'workspaceRoot')
+    if (!isAbsolute(workspacePath)) throw new TypeError('workspaceRoot must be an absolute path')
+    workspaceRootInputPath = workspacePath
   }
+  const root = stringValue(object.deploymentRoot, 'deploymentRoot')
+  if (!isAbsolute(root)) validateRelativeDeploymentRoot(root)
   const nestedCheckoutRoots = object.nestedCheckoutRoots
   if (!Array.isArray(nestedCheckoutRoots)) throw new TypeError('nestedCheckoutRoots must be an array')
   const normalizedNestedRoots = nestedCheckoutRoots.map((item, index) => safeRelativePath(item, `nestedCheckoutRoots[${index}]`))
   if (new Set(normalizedNestedRoots).size !== normalizedNestedRoots.length) throw new TypeError('nestedCheckoutRoots must not contain duplicates')
   const config = {
-    deploymentRoot: canonicalRoot,
+    ...(workspaceRootInputPath === undefined ? {} : { workspaceRoot: workspaceRootInputPath }),
+    deploymentRoot: root,
     revision: stringValue(object.revision, 'revision'),
     maxFileBytes: boundedInteger(object.maxFileBytes, 'maxFileBytes', MAX_FILE_BYTES),
     maxFiles: boundedInteger(object.maxFiles, 'maxFiles', MAX_FILES),
@@ -161,4 +178,43 @@ export function parseSnapshotConfig(value: unknown): SnapshotConfigV1 {
     nestedCheckoutRoots: normalizedNestedRoots,
   } satisfies SnapshotConfigV1
   return Object.freeze({ ...config, nestedCheckoutRoots: Object.freeze([...config.nestedCheckoutRoots]) })
+}
+
+export function parseSnapshotConfig(value: unknown): SnapshotConfigV1 {
+  const config = parseCodeIntelligenceConfig(value)
+  const workspaceRoot = config.workspaceRoot === undefined
+    ? undefined
+    : canonicalDirectory(config.workspaceRoot, 'workspaceRoot')
+  if (!isAbsolute(config.deploymentRoot) && workspaceRoot === undefined) {
+    throw new TypeError('relative deploymentRoot requires an explicit workspaceRoot')
+  }
+  const rootPath = isAbsolute(config.deploymentRoot)
+    ? config.deploymentRoot
+    : resolve(workspaceRoot!, config.deploymentRoot)
+  const canonicalRoot = canonicalDirectory(rootPath, 'deploymentRoot')
+  if (workspaceRoot !== undefined && !containedOrEqual(workspaceRoot, canonicalRoot)) {
+    throw new TypeError('deploymentRoot must be inside workspaceRoot')
+  }
+  return Object.freeze({
+    ...config,
+    ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
+    deploymentRoot: canonicalRoot,
+  })
+}
+
+/** Cordis standard-schema entry for Loader-stage Code Intelligence validation. */
+export const Config = {
+  '~standard': {
+    version: 1 as const,
+    vendor: '@ds-plugins/dsh-code-intelligence',
+    validate(value: unknown) {
+      try {
+        return { value: parseCodeIntelligenceConfig(value) }
+      } catch (error) {
+        return {
+          issues: [{ message: error instanceof Error ? error.message : 'invalid configuration' }],
+        }
+      }
+    },
+  },
 }

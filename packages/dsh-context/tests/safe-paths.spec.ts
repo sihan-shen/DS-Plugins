@@ -69,6 +69,7 @@ describe('safe repository paths', () => {
       '.env',
       '.env.local',
       '.dsh/state.json',
+      '.dsh-context-cache/v1/entries/block.ts',
       '.git/config',
       'node_modules/pkg/index.js',
       'upstream/deepseek-harness/apps/cli/src/bin.ts',

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { sha256Utf8 } from '@ds-plugins/dsh-context'
 import { RepositorySnapshotStore } from '../src/snapshot.ts'
 import { parseSnapshotConfig } from '../src/config.ts'
+import { createSessionRuntimeResolver } from '../src/session-runtime.ts'
 
 const fixtureRoot = resolve(fileURLToPath(new URL('../../../tests/fixtures/code-intelligence/repository/', import.meta.url)))
 const createdRoots: string[] = []
@@ -55,6 +56,38 @@ describe('snapshot configuration', () => {
 })
 
 describe('RepositorySnapshotStore', () => {
+  it('does not include a runtime-created context cache when the workspace has no gitignore', async () => {
+    const root = await temporaryRoot()
+    await writeFile(join(root, 'source.ts'), 'export const source = true\n')
+    await expect(lstat(join(root, '.gitignore'))).rejects.toThrow()
+
+    const resolver = createSessionRuntimeResolver(config(root))
+    const runtime = await resolver.resolveDefault()
+
+    await expect(lstat(join(root, '.dsh-context-cache'))).resolves.toBeDefined()
+    expect(runtime.snapshot.files.map(file => file.path).some(path => path === '.dsh-context-cache' || path.startsWith('.dsh-context-cache/'))).toBe(false)
+    await resolver.dispose()
+  })
+
+  it('does not allow source expansion to read a runtime cache file', async () => {
+    const root = await temporaryRoot()
+    await writeFile(join(root, 'source.ts'), 'export const source = true\n')
+    const resolver = createSessionRuntimeResolver(config(root))
+    const runtime = await resolver.resolveDefault()
+    const base = await runtime.compiler.repoMap({ snapshotId: runtime.snapshot.snapshotId, limit: 50 }, new AbortController().signal)
+    const cachePath = '.dsh-context-cache/v1/.access-clock'
+    const cacheHash = sha256Utf8(await readFile(join(root, cachePath), 'utf8'))
+
+    await expect(runtime.compiler.expandSource({
+      blockId: base.blockId,
+      path: cachePath,
+      sourceHash: cacheHash,
+      startOffset: 0,
+      endOffset: 0,
+    }, new AbortController().signal)).rejects.toThrow(/source|path|cached|snapshot/i)
+    await resolver.dispose()
+  })
+
   it('builds deterministic, immutable summaries with language and UTF-8 metadata', async () => {
     const first = await RepositorySnapshotStore.create(config(fixtureRoot))
     const second = await RepositorySnapshotStore.create(config(fixtureRoot))

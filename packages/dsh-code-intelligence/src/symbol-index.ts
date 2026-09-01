@@ -1,4 +1,4 @@
-import { canonicalJson, normalizeRepoPath, sha256Utf8, type InternalSymbolEntryV1, type RepositorySnapshotV1 } from '@ds-plugins/dsh-context'
+import { canonicalJson, sha256Utf8, type InternalSymbolEntryV1, type RepositorySnapshotV1 } from '@ds-plugins/dsh-context'
 import type { InternalSymbolRelationV1, SymbolAdapterResultV1 } from './types.js'
 
 const adapterSnapshots = new WeakMap<object, RepositorySnapshotV1>()
@@ -44,7 +44,6 @@ function freezeRelation(relation: InternalSymbolRelationV1): InternalSymbolRelat
 function validateEntry(snapshotId: string, snapshot: RepositorySnapshotV1 | undefined, entry: InternalSymbolEntryV1): InternalSymbolEntryV1 {
   const allowedKeys = new Set(['symbolId', 'path', 'sourceHash', 'start', 'end', 'kind', 'name', 'container', 'score'])
   for (const key of Object.keys(entry)) if (!allowedKeys.has(key)) throw new TypeError(`unknown symbol entry field: ${key}`)
-  normalizeRepoPath(process.cwd(), entry.path)
   if (!/^sha256:[0-9a-f]{64}$/.test(entry.sourceHash)) throw new TypeError('symbol sourceHash must be a sha256 hash')
   if (snapshot) {
     const file = snapshot.files.find(candidate => candidate.path === entry.path)

@@ -137,4 +137,57 @@ describe('LSP deployment configuration', () => {
     expect(parsed.deploymentRoot).toBe(resolve(root))
     expect((await lstat(root)).isDirectory()).toBe(true)
   })
+
+  it('resolves a relative deployment root from the explicit workspace root', async () => {
+    const workspaceRoot = await temporaryRoot()
+    const launcherRoot = await temporaryRoot()
+    const previousCwd = process.cwd()
+    process.chdir(launcherRoot)
+    try {
+      const parsed = parseSnapshotConfig({
+        workspaceRoot,
+        deploymentRoot: '.',
+        revision: 'revision',
+        maxFileBytes: 1_048_576,
+        maxFiles: 10_000,
+        maxTotalBytes: 67_108_864,
+        maxDirectories: 20_000,
+        maxIgnoreBytes: 262_144,
+        nestedCheckoutRoots: [],
+      })
+      expect(parsed.workspaceRoot).toBe(workspaceRoot)
+      expect(parsed.deploymentRoot).toBe(workspaceRoot)
+    } finally {
+      process.chdir(previousCwd)
+    }
+  })
+
+  it('rejects a relative deployment root without an explicit workspace root', async () => {
+    await expect(() => parseSnapshotConfig({
+      deploymentRoot: '.',
+      revision: 'revision',
+      maxFileBytes: 1_048_576,
+      maxFiles: 10_000,
+      maxTotalBytes: 67_108_864,
+      maxDirectories: 20_000,
+      maxIgnoreBytes: 262_144,
+      nestedCheckoutRoots: [],
+    })).toThrow(/relative deploymentRoot.*workspaceRoot/i)
+  })
+
+  it('rejects a deployment root outside the explicit workspace root', async () => {
+    const workspaceRoot = await temporaryRoot()
+    const deploymentRoot = await temporaryRoot()
+    expect(() => parseSnapshotConfig({
+      workspaceRoot,
+      deploymentRoot,
+      revision: 'revision',
+      maxFileBytes: 1_048_576,
+      maxFiles: 10_000,
+      maxTotalBytes: 67_108_864,
+      maxDirectories: 20_000,
+      maxIgnoreBytes: 262_144,
+      nestedCheckoutRoots: [],
+    })).toThrow(/inside workspaceRoot/i)
+  })
 })

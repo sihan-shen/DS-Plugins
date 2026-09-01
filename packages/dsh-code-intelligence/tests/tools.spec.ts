@@ -62,33 +62,49 @@ describe('read-only code intelligence tools', () => {
     const { store, index } = await fixture()
     const tools = createCodeIntelligenceTools({ snapshot: store.snapshot, index })
     expect(tools.map(tool => tool.name)).toEqual(['code_repo_map', 'code_symbol_query'])
+    expect(tools.map(tool => tool.parameters)).toEqual([
+      expect.objectContaining({ required: ['limit'] }),
+      expect.objectContaining({ required: ['query', 'limit'] }),
+    ])
+    expect(JSON.stringify(tools.map(tool => tool.parameters))).not.toContain('snapshotId')
     expect(tools.map(tool => tool.name)).not.toEqual(expect.arrayContaining([
       'lsp_format', 'lsp_code_action', 'lsp_rename', 'run_code', 'source_window', 'write_file', 'code_cache', 'delegate_worker', 'targeted_verify',
     ]))
   })
 
-  it('rejects unknown keys, missing or stale snapshots, invalid bounds, overlong values, and cwd attempts', async () => {
+  it('renders the canonical value passed as Harness render’s second argument', async () => {
+    const { store, index } = await fixture()
+    const [repoMap, symbolQuery] = createCodeIntelligenceTools({ snapshot: store.snapshot, index })
+    const repoMapArgs = { limit: 10 }
+    const repoMapValue = await repoMap.execute(repoMapArgs, execution())
+    const symbolQueryArgs = { query: 'authenticate', limit: 10 }
+    const symbolQueryValue = await symbolQuery.execute(symbolQueryArgs, execution())
+
+    expect(repoMap.output.render(repoMapArgs, repoMapValue)).toEqual([{ type: 'text', text: JSON.stringify(repoMapValue) }])
+    expect(symbolQuery.output.render(symbolQueryArgs, symbolQueryValue)).toEqual([{ type: 'text', text: JSON.stringify(symbolQueryValue) }])
+  })
+
+  it('rejects snapshot overrides, unknown keys, invalid bounds, overlong values, and cwd attempts', async () => {
     const { store, index } = await fixture()
     const [repoMap, symbolQuery] = createCodeIntelligenceTools({ snapshot: store.snapshot, index })
     const signal = execution()
     const snapshotId = store.snapshot.snapshotId
-    await expect(repoMap.execute({ snapshotId, limit: 1, extra: true }, signal)).rejects.toThrow(/unknown|allowed|key/i)
-    await expect(repoMap.execute({ limit: 1 }, signal)).rejects.toThrow(/snapshotId|required/i)
-    await expect(repoMap.execute({ snapshotId: 'sha256:' + '0'.repeat(64), limit: 1 }, signal)).rejects.toThrow(/snapshot|stale/i)
-    await expect(repoMap.execute({ snapshotId, limit: 0 }, signal)).rejects.toThrow(/limit/i)
-    await expect(repoMap.execute({ snapshotId, limit: 1, cursor: 'x'.repeat(1025) }, signal)).rejects.toThrow(/cursor/i)
-    await expect(repoMap.execute({ snapshotId, limit: 1, cwd: '/tmp' }, signal)).rejects.toThrow(/unknown|allowed|cwd|key/i)
-    await expect(symbolQuery.execute({ snapshotId, query: 'x'.repeat(257), limit: 1 }, signal)).rejects.toThrow(/query/i)
-    await expect(symbolQuery.execute({ snapshotId, query: 'auth', limit: 51 }, signal)).rejects.toThrow(/limit/i)
-    await expect(symbolQuery.execute({ snapshotId, query: 'auth', limit: 1, cwd: '/tmp' }, signal)).rejects.toThrow(/unknown|allowed|cwd|key/i)
+    await expect(repoMap.execute({ limit: 1, extra: true }, signal)).rejects.toThrow(/unknown|allowed|key/i)
+    await expect(repoMap.execute({ snapshotId, limit: 1 }, signal)).rejects.toThrow(/unknown|allowed|snapshot/i)
+    await expect(repoMap.execute({ limit: 0 }, signal)).rejects.toThrow(/limit/i)
+    await expect(repoMap.execute({ limit: 1, cursor: 'x'.repeat(1025) }, signal)).rejects.toThrow(/cursor/i)
+    await expect(repoMap.execute({ limit: 1, cwd: '/tmp' }, signal)).rejects.toThrow(/unknown|allowed|cwd|key/i)
+    await expect(symbolQuery.execute({ query: 'x'.repeat(257), limit: 1 }, signal)).rejects.toThrow(/query/i)
+    await expect(symbolQuery.execute({ query: 'auth', limit: 51 }, signal)).rejects.toThrow(/limit/i)
+    await expect(symbolQuery.execute({ query: 'auth', limit: 1, cwd: '/tmp' }, signal)).rejects.toThrow(/unknown|allowed|cwd|key/i)
   })
 
   it('executes against one immutable snapshot/index and returns parsed bounded provenance', async () => {
     const { store, index } = await fixture()
     const [repoMap, symbolQuery] = createCodeIntelligenceTools({ snapshot: store.snapshot, index })
     const snapshotId = store.snapshot.snapshotId
-    const map = await repoMap.execute({ snapshotId, limit: 10 }, execution())
-    const query = await symbolQuery.execute({ snapshotId, query: 'authenticate', limit: 10 }, execution())
+    const map = await repoMap.execute({ limit: 10 }, execution())
+    const query = await symbolQuery.execute({ query: 'authenticate', limit: 10 }, execution())
     expect(parseRepoMapPageV1(map)).toEqual(map)
     expect(parseSymbolQueryResultV1(query)).toEqual(query)
     expect(map).toMatchObject({ snapshotId })
