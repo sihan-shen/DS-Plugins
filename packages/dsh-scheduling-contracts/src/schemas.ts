@@ -1,4 +1,5 @@
 import type { JsonSchema } from './types.js'
+import { MAX_DAG_NODES, MAX_PARALLEL_WORKERS } from './parallel-paths.js'
 
 // JSON Schema maxLength counts Unicode code points, while the parser also enforces
 // the documented UTF-8 byte ceiling. These schemas cover every standard-expressible
@@ -91,7 +92,7 @@ const constraints: JsonSchema = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    maxWorkers: { type: 'integer', enum: [0, 1] },
+    maxWorkers: { type: 'integer', minimum: 0, maximum: MAX_PARALLEL_WORKERS },
     maxOutputTokens: { type: 'integer', minimum: 1, maximum: 128_000 },
     maxLatencyMs: { type: 'integer', minimum: 1, maximum: 600_000 },
     allowPaidFallback: { type: 'boolean' },
@@ -225,16 +226,16 @@ export const BUDGET_VIEW_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
   type: 'object',
   additionalProperties: false,
   properties: {
-    maxWorkers: { type: 'integer', minimum: 0, maximum: 1 },
-    admittedWorkers: { type: 'integer', minimum: 0, maximum: 1 },
+    maxWorkers: { type: 'integer', minimum: 0, maximum: MAX_DAG_NODES },
+    admittedWorkers: { type: 'integer', minimum: 0, maximum: MAX_DAG_NODES },
     maxPluginToolActions: { type: 'integer', minimum: 0, maximum: 32 },
     admittedPluginToolActions: { type: 'integer', minimum: 0, maximum: 32 },
-    remainingWorkers: { type: 'integer', minimum: 0, maximum: 1 },
+    remainingWorkers: { type: 'integer', minimum: 0, maximum: MAX_DAG_NODES },
     remainingPluginToolActions: { type: 'integer', minimum: 0, maximum: 32 },
   },
   required: ['maxWorkers', 'admittedWorkers', 'maxPluginToolActions', 'admittedPluginToolActions', 'remainingWorkers', 'remainingPluginToolActions'],
   allOf: [
-    ...derivedCounterInvariants(1, 'maxWorkers', 'admittedWorkers', 'remainingWorkers'),
+    ...derivedCounterInvariants(MAX_DAG_NODES, 'maxWorkers', 'admittedWorkers', 'remainingWorkers'),
     ...derivedCounterInvariants(32, 'maxPluginToolActions', 'admittedPluginToolActions', 'remainingPluginToolActions'),
   ],
 })

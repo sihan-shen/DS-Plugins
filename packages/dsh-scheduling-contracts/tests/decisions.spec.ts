@@ -77,10 +77,15 @@ describe('CapabilityRequestV1', () => {
     { ...request, authorization: 'secret' },
     { ...request, objective: 'x'.repeat(16_385) },
     { ...request, profile: { ...request.profile, risk: 101 } },
-    { ...request, constraints: { ...request.constraints, maxWorkers: 2 } },
+    { ...request, constraints: { ...request.constraints, maxWorkers: 9 } },
     { ...request, constraints: { ...request.constraints, maxOutputTokens: 128_001 } },
   ])('rejects unknown or out-of-bound input %#', value => {
     expect(() => parseCapabilityRequestV1(value)).toThrow()
+  })
+
+  it('accepts the widened parallel worker bound and rejects one over it', () => {
+    expect(parseCapabilityRequestV1({ ...request, constraints: { ...request.constraints, maxWorkers: 8 } }).constraints.maxWorkers).toBe(8)
+    expect(() => parseCapabilityRequestV1({ ...request, constraints: { ...request.constraints, maxWorkers: 9 } })).toThrow()
   })
 })
 
@@ -106,6 +111,7 @@ describe('RouteDecisionV1 and ScheduleDecisionV1', () => {
   it('rejects unsupported modes, worker counts, and route fields', () => {
     expect(() => parseScheduleDecisionV1({ schemaVersion: 1, mode: 'parallel-workers', route, workerCount: 2, source: 'scheduler', policyVersion: 'v0.3.0' })).toThrow()
     expect(() => parseRouteDecisionV1({ ...route, endpoint: 'https://example.invalid' })).toThrow()
+    expect(SCHEDULE_DECISION_V1_JSON_SCHEMA).toMatchObject({ properties: { workerCount: { enum: [0, 1] } } })
   })
 })
 

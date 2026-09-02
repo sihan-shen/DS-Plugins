@@ -20,6 +20,10 @@ describe('BudgetViewV1', () => {
     expect(() => parseBudgetViewV1({ maxWorkers: 1, admittedWorkers: 0, maxPluginToolActions: 1, admittedPluginToolActions: 0, remainingWorkers: 0, remainingPluginToolActions: 1 })).toThrow()
     expect(() => parseBudgetViewV1({ maxWorkers: 1, admittedWorkers: 0, maxPluginToolActions: 1, admittedPluginToolActions: 0, remainingWorkers: 1, remainingPluginToolActions: 1, admitWorker() {} })).toThrow()
   })
+  it('accepts cumulative worker counters through the DAG bound and rejects one over it', () => {
+    expect(parseBudgetViewV1({ maxWorkers: 16, admittedWorkers: 8, maxPluginToolActions: 24, admittedPluginToolActions: 1, remainingWorkers: 8, remainingPluginToolActions: 23 }).remainingWorkers).toBe(8)
+    expect(() => parseBudgetViewV1({ maxWorkers: 17, admittedWorkers: 0, maxPluginToolActions: 24, admittedPluginToolActions: 0, remainingWorkers: 17, remainingPluginToolActions: 24 })).toThrow()
+  })
 })
 
 describe('ScheduleFeedbackV1 and ScheduleSelectedV1', () => {

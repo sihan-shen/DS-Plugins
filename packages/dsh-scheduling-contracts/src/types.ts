@@ -54,7 +54,7 @@ export interface CapabilityProfileV1 {
 }
 
 export interface SchedulingConstraintsV1 {
-  readonly maxWorkers: 0 | 1
+  readonly maxWorkers: number
   readonly maxOutputTokens: number
   readonly maxLatencyMs: number
   readonly allowPaidFallback: boolean

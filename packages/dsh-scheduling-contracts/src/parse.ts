@@ -10,6 +10,7 @@ import type {
   SchedulingConstraintsV1,
   VerificationEvidenceV1,
 } from './types.js'
+import { MAX_DAG_NODES, MAX_PARALLEL_WORKERS } from './parallel-paths.js'
 
 export const MAX_SCHEDULING_STRING_BYTES = 16_384
 export const MAX_SCHEDULING_IDENTIFIER_BYTES = 256
@@ -195,11 +196,11 @@ function parseConstraints(value: unknown): SchedulingConstraintsV1 {
     'maxWorkers', 'maxOutputTokens', 'maxLatencyMs', 'allowPaidFallback', 'allowedProviders', 'requiredTools',
   ])
   const maxWorkers = required(constraints, 'maxWorkers', 'constraints')
-  if (maxWorkers !== 0 && maxWorkers !== 1) fail('constraints.maxWorkers', 'must be 0 or 1')
+  const parsedMaxWorkers = boundedInteger(maxWorkers, 'constraints.maxWorkers', 0, MAX_PARALLEL_WORKERS)
   const allowPaidFallback = required(constraints, 'allowPaidFallback', 'constraints')
   if (typeof allowPaidFallback !== 'boolean') fail('constraints.allowPaidFallback', 'must be a boolean')
   return {
-    maxWorkers,
+    maxWorkers: parsedMaxWorkers,
     maxOutputTokens: boundedInteger(required(constraints, 'maxOutputTokens', 'constraints'), 'constraints.maxOutputTokens', 1, MAX_SCHEDULING_OUTPUT_TOKENS),
     maxLatencyMs: boundedInteger(required(constraints, 'maxLatencyMs', 'constraints'), 'constraints.maxLatencyMs', 1, MAX_SCHEDULING_LATENCY_MS),
     allowPaidFallback,
@@ -282,7 +283,7 @@ export function parseScheduleDecisionV1(value: unknown): ScheduleDecisionV1 {
 export function parseBudgetViewV1(value: unknown): BudgetViewV1 {
   assertJsonValue(value, 'budget')
   const input = exactRecord(value, 'budget', ['maxWorkers', 'admittedWorkers', 'maxPluginToolActions', 'admittedPluginToolActions', 'remainingWorkers', 'remainingPluginToolActions'])
-  const maxWorkers = boundedInteger(required(input, 'maxWorkers', 'budget'), 'budget.maxWorkers', 0, 1)
+  const maxWorkers = boundedInteger(required(input, 'maxWorkers', 'budget'), 'budget.maxWorkers', 0, MAX_DAG_NODES)
   const admittedWorkers = boundedInteger(required(input, 'admittedWorkers', 'budget'), 'budget.admittedWorkers', 0, maxWorkers)
   const maxPluginToolActions = boundedInteger(required(input, 'maxPluginToolActions', 'budget'), 'budget.maxPluginToolActions', 0, 32)
   const admittedPluginToolActions = boundedInteger(required(input, 'admittedPluginToolActions', 'budget'), 'budget.admittedPluginToolActions', 0, maxPluginToolActions)

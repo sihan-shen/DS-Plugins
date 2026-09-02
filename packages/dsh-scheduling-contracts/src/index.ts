@@ -12,6 +12,27 @@ export {
   parseScheduleSelectedV1,
 } from './parse.js'
 export {
+  MAX_AGGREGATE_PATH_BYTES,
+  MAX_DAG_CHANGED_FILES,
+  MAX_DAG_DEPS,
+  MAX_DAG_ID_ORDINAL,
+  MAX_DAG_LEVELS,
+  MAX_DAG_NODES,
+  MAX_DAG_PATHS,
+  MAX_PARALLEL_WORKER_REF_BYTES,
+  MAX_PARALLEL_WORKER_ROUTE_FIELD_BYTES,
+  MAX_PARALLEL_WORKER_TASK_BYTES,
+  MAX_PARALLEL_WORKER_TOOL_BYTES,
+  MAX_PARALLEL_WORKER_TOOL_COUNT,
+  MAX_PARALLEL_WORKERS,
+  isWellFormedUnicode,
+  parseNodeId,
+  parseRepoFilePath,
+  parseRepoPathDeclaration,
+  repoPathContains,
+  utf8ByteLength,
+} from './parallel-paths.js'
+export {
   BUDGET_VIEW_V1_JSON_SCHEMA,
   CAPABILITY_REQUEST_V1_JSON_SCHEMA,
   ROUTE_DECISION_V1_JSON_SCHEMA,
@@ -34,3 +55,4 @@ export type {
   SchedulingTargetV1,
   VerificationEvidenceV1,
 } from './types.js'
+export type { RepoDirectoryPrefix, RepoFilePath, RepoPathDeclaration } from './parallel-paths.js'
