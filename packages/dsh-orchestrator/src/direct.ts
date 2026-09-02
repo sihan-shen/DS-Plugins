@@ -53,6 +53,7 @@ export function mountDirectMode(ctx: Context, config: OrchestratorConfig): void 
     })
     const disposeEvents = ctx.on('session/event', (session, event) => {
       if (event.type !== 'request/header' || session.header.parentSession !== undefined) return
+      // The durable run record is derived only from this actual request snapshot.
       const route = parseRequestRoute(event.data.header)
       if (route === undefined) return
       if (session.events.some(entry => entry.type === 'dsh-plugin/run-started') || pending.has(session.id)) return

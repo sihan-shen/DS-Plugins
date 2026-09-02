@@ -1,0 +1,65 @@
+- id: ds-orchestrator
+  config:
+    workspaceRoot: .
+    mode: single-worker
+    worker: { provider: provider-disabled, model: baseline-disabled, maxTokens: 64000 }
+    budgets: { maxWorkers: 1, maxPluginToolActions: 24, toolTimeoutMs: 60000 }
+    scheduling:
+      allowInvalidDecisionFallback: false
+      allowedRoutes:
+        - { provider: provider-disabled, model: baseline-disabled, maxTokens: 32000 }
+        - { provider: provider-disabled, model: fallback-disabled, maxTokens: 32000 }
+        - { provider: provider-disabled, model: strong-disabled, maxTokens: 64000 }
+      rootProfile: { coding: 50, reasoning: 50, toolUse: 50, repoContext: 50, risk: 50, difficulty: 50 }
+      workerProfile: { coding: 80, reasoning: 70, toolUse: 60, repoContext: 80, risk: 30, difficulty: 60 }
+      maxLatencyMs: 60000
+      allowPaidFallback: false
+    verification:
+      commands:
+        - { name: typecheck, executable: pnpm, fixedArgs: [typecheck], allowedArgs: none }
+        - { name: test:profile, executable: pnpm, fixedArgs: [test:profile], allowedArgs: orchestrator-test-paths }
+      timeoutMs: 120000
+      maxOutputBytes: 65536
+- id: dsh-adaptive-scheduler
+  config:
+    policyVersion: v0.3.0
+    explicitRoutes: { root: strong }
+    catalog:
+      - alias: baseline
+        route: { provider: provider-disabled, model: baseline-disabled, maxTokens: 32000, promptProfile: coding-v1, modelFamily: deepseek }
+        tier: baseline
+        taskTypes: [code-fix, research, summarize, unknown]
+        toolFilter: [targeted_verify]
+        paid: false
+        reliability: 70
+      - alias: fallback
+        route: { provider: provider-disabled, model: fallback-disabled, maxTokens: 32000, promptProfile: coding-v1, modelFamily: deepseek }
+        tier: fallback
+        taskTypes: [code-fix, research, summarize, unknown]
+        toolFilter: [targeted_verify]
+        paid: false
+        reliability: 80
+      - alias: strong
+        route: { provider: provider-disabled, model: strong-disabled, maxTokens: 64000, reasoningEffort: high, promptProfile: coding-strong-v1, modelFamily: deepseek }
+        tier: strong
+        taskTypes: [code-fix, code-new, research, summarize, review, tool-heavy, unknown]
+        toolFilter: [targeted_verify]
+        paid: false
+        reliability: 100
+    baselines:
+      code-fix: baseline
+      code-new: strong
+      research: baseline
+      summarize: baseline
+      review: strong
+      tool-heavy: strong
+      unknown: baseline
+    stickyTtlMs: 900000
+    idleTtlMs: 300000
+    errorWindowMs: 300000
+    cooldownMs: 60000
+    escalationTtlMs: 600000
+    maxEscalationsPerTask: 1
+    maxRounds: 2
+    historyWindowSize: 32
+    historyMinSamples: 3

@@ -89,3 +89,29 @@ describe('DSH v0.1 profile', () => {
     }
   })
 })
+
+describe('DSH v0.3 adaptive profile', () => {
+  it('composes the exact base, orchestrator, and adaptive scheduler bundles without changing v0.1', () => {
+    const root = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../..')
+    const v01Profile = resolve(root, 'profiles/v0.1')
+    const v03Profile = resolve(root, 'profiles/v0.3-adaptive')
+    const v01ManifestBefore = readFileSync(resolve(v01Profile, 'package.json'), 'utf8')
+    const v01PatchBefore = readFileSync(resolve(v01Profile, 'cordis.patch.yml'), 'utf8')
+    const v03Manifest = JSON.parse(readFileSync(resolve(v03Profile, 'package.json'), 'utf8')) as {
+      dsh?: { profile?: { bundles?: string[] } }
+    }
+    const v03Patch = yaml.load(readFileSync(resolve(v03Profile, 'cordis.patch.yml'), 'utf8'), { schema: entryListSchema })
+
+    expect(v03Manifest.dsh?.profile?.bundles).toEqual([
+      '@deepseek-ai/dsh-base',
+      '@ds-plugins/dsh-orchestrator',
+      '@ds-plugins/dsh-adaptive-scheduler',
+    ])
+    expect(v03Patch).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'ds-orchestrator' }),
+      expect.objectContaining({ id: 'dsh-adaptive-scheduler' }),
+    ]))
+    expect(readFileSync(resolve(v01Profile, 'package.json'), 'utf8')).toBe(v01ManifestBefore)
+    expect(readFileSync(resolve(v01Profile, 'cordis.patch.yml'), 'utf8')).toBe(v01PatchBefore)
+  })
+})

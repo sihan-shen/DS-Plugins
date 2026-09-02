@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import { agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import { apply, inject } from '../src/index.ts'
 import type { OrchestratorConfig } from '../src/types.ts'
@@ -26,6 +27,19 @@ const config: OrchestratorConfig = {
     }],
     timeoutMs: 60_000,
     maxOutputBytes: 4_096,
+  },
+}
+
+const adaptiveConfig: OrchestratorConfig = {
+  ...config,
+  worker: { provider: 'provider-disabled', model: 'strong-disabled', maxTokens: 64_000 },
+  scheduling: {
+    allowInvalidDecisionFallback: false,
+    allowedRoutes: [{ provider: 'provider-disabled', model: 'strong-disabled', maxTokens: 64_000 }],
+    rootProfile: { coding: 50, reasoning: 50, toolUse: 50, repoContext: 50, risk: 50, difficulty: 50 },
+    workerProfile: { coding: 50, reasoning: 50, toolUse: 50, repoContext: 50, risk: 50, difficulty: 50 },
+    maxLatencyMs: 60_000,
+    allowPaidFallback: false,
   },
 }
 
@@ -69,7 +83,7 @@ function toolRegistry() {
   }
 }
 
-async function mountedDirectMode() {
+async function mountedDirectMode(modeConfig: OrchestratorConfig = config) {
   const ctx = new Context()
   const sessionStore = await ctx.plugin(SessionStore)
   const prompts = promptRegistry()
@@ -78,7 +92,7 @@ async function mountedDirectMode() {
   ctx.provide('tools', tools as never)
   ctx.provide('subprocess', { spawn: () => { throw new Error('verification must not run in this test') } } as never)
 
-  const fiber = await ctx.plugin(apply, config)
+  const fiber = await ctx.plugin(apply, modeConfig)
   return { ctx, sessionStore, fiber, prompts, tools }
 }
 
@@ -102,6 +116,24 @@ function appendRootHeader(ctx: Context, sessionId: string, header: unknown) {
 }
 
 describe('Direct orchestrator mode', () => {
+  it('keeps the optional scheduler injection non-blocking and preserves the four required injections', async () => {
+    const ctxWithoutScheduler = new Context()
+    const sessionStore = await ctxWithoutScheduler.plugin(SessionStore)
+    const prompts = promptRegistry()
+    const tools = toolRegistry()
+    ctxWithoutScheduler.provide('systemPrompt', prompts as never)
+    ctxWithoutScheduler.provide('tools', tools as never)
+    ctxWithoutScheduler.provide('subprocess', { spawn: () => { throw new Error('verification must not run in this test') } } as never)
+
+    const startedAt = performance.now()
+    const fiber = await ctxWithoutScheduler.plugin(apply, config)
+    expect(performance.now() - startedAt).toBeLessThan(100)
+    expect(inject).toEqual(['systemPrompt', 'tools', 'sessions', 'subprocess'])
+
+    await fiber.dispose()
+    await sessionStore.dispose()
+  })
+
   it('registers only targeted verification, a bounded prompt section, and one durable root run record', async () => {
     const { ctx, sessionStore, fiber, prompts, tools } = await mountedDirectMode()
 
@@ -142,6 +174,34 @@ describe('Direct orchestrator mode', () => {
     expect(tools.get('targeted_verify')).toBeUndefined()
     expect(prompts.sectionNames()).toEqual([])
     await sessionStore.dispose()
+  })
+
+  it('orders root schedule selection before request/header and records only that actual route', async () => {
+    const mounted = await mountedDirectMode(adaptiveConfig)
+    const root = mounted.ctx.sessions.create(SessionId('direct-scheduled-root'), {
+      meta: { cwd: '/workspace/ds-plugins' },
+    })
+    const agent = { id: root.id, session: root } as Agent
+
+    const result = await agentEvents(mounted.ctx, agent).waterfall(
+      'agent/request',
+      { turn: 1, step: 1, signal: new AbortController().signal },
+      async () => ({ provider: 'profile-disabled', model: 'profile-disabled', temperature: 0.2 }),
+    )
+    expect(result).toMatchObject({ provider: 'provider-disabled', model: 'strong-disabled', maxTokens: 64_000, temperature: 0.2 })
+    expect(root.events.map(event => event.type)).toEqual(['dsh-plugin/schedule-selected'])
+
+    root.append('request/header', { header: { config: result }, reason: 'initial' })
+    await Promise.resolve()
+    expect(root.events.map(event => event.type)).toEqual([
+      'dsh-plugin/schedule-selected',
+      'request/header',
+      'dsh-plugin/run-started',
+    ])
+    expect(root.events[2]).toMatchObject({ data: { provider: 'provider-disabled', model: 'strong-disabled' } })
+
+    await mounted.fiber.dispose()
+    await mounted.sessionStore.dispose()
   })
 
   it('remounts without duplicating its prompt, tool, or root-session listener', async () => {

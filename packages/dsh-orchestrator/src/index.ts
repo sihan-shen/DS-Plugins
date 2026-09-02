@@ -9,7 +9,7 @@ import { mountDirectMode } from './direct.js'
 import { appendBudgetRejected } from './events.js'
 import { mountTargetedVerificationTool } from './verification.js'
 import { mountSingleWorkerMode } from './worker.js'
-import { mountAdaptiveSchedulerResolver } from './scheduling.js'
+import { mountAdaptiveSchedulerResolver, mountRootScheduling } from './scheduling.js'
 import type { OrchestratorConfig } from './types.js'
 
 export { BudgetController, createBudgetControllerRegistry, mountBudgetControllerRegistry } from './budgets.js'
@@ -89,6 +89,7 @@ export {
   buildCapabilityRequest,
   fixedProfileSchedule,
   mountAdaptiveSchedulerResolver,
+  mountRootScheduling,
   resolveSchedule,
   restoreScheduleSelected,
   scheduleSelectedFrom,
@@ -122,6 +123,7 @@ export const apply = (ctx: Context, config: OrchestratorConfig): void | Promise<
     })
   })
   const schedulerResolver = mountAdaptiveSchedulerResolver(ctx)
+  mountRootScheduling(ctx, config, budgets.registry, schedulerResolver)
   mountTargetedVerificationTool(ctx, {
     workspaceRoot: config.workspaceRoot,
     verification: config.verification,

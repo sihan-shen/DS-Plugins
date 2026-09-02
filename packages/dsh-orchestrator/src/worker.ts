@@ -376,6 +376,7 @@ export function mountSingleWorkerMode(
       const disposeTool = workerCtx.tools.register(createDelegateWorkerTool({ config, subagents: workerCtx.subagents, budgetRegistry, schedulerResolver }))
       const disposeEvents = workerCtx.on('session/event', (session, event) => {
         if (event.type !== 'request/header' || session.header.parentSession !== undefined) return
+        // The durable run record is derived only from this actual request snapshot.
         const route = parseRequestRoute(event.data.header)
         if (route === undefined) return
         if (session.events.some(entry => entry.type === 'dsh-plugin/run-started') || pending.has(session.id)) return

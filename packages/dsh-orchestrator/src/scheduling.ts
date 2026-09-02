@@ -1,4 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-agent'
+import { ReasoningEffortId, type LlmCallConfig } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
 import {
   MAX_SCHEDULING_LATENCY_MS,
@@ -16,6 +18,8 @@ import type {
   ScheduleDecisionV1,
   ScheduleSelectedV1,
 } from '@ds-plugins/dsh-scheduling-contracts'
+import type { BudgetControllerRegistry } from './budgets.js'
+import { appendScheduleSelected } from './events.js'
 import type { HandoffV1, OrchestratorConfig } from './types.js'
 
 /** Resolves the currently active optional scheduler service generation. */
@@ -133,7 +137,7 @@ function routeIsAllowed(config: OrchestratorConfig, route: RouteDecisionV1): boo
   const scheduling = config.scheduling
   if (scheduling === undefined) return false
   const allowed = scheduling.allowedRoutes.find(candidate =>
-    ROUTE_IDENTITY_AND_METADATA_KEYS.every(key => candidate[key] === route[key]),
+    ROUTE_IDENTITY_AND_METADATA_KEYS.every(key => candidate[key] === undefined || candidate[key] === route[key]),
   )
   return allowed !== undefined
     && route.maxTokens <= allowed.maxTokens
@@ -260,4 +264,42 @@ export function restoreScheduleSelected(
     })
   }
   return undefined
+}
+
+/** Enforce the selected root route at DSH's official agent/request waterfall seam. */
+export function mountRootScheduling(
+  ctx: Context,
+  config: OrchestratorConfig,
+  budgetRegistry: Pick<BudgetControllerRegistry, 'forRootSession'>,
+  schedulerResolver: SchedulerResolver,
+): () => void {
+  if (config.scheduling === undefined) return () => undefined
+  return ctx.on('agent/request', async ({ agent, signal }, next): Promise<LlmCallConfig> => {
+    const base = await next()
+    const rootSessionId = agent.session.header.parentSession ?? agent.session.id
+    if (agent.session.header.parentSession !== undefined) return base
+    const input: ResolveScheduleInput = {
+      target: 'root',
+      taskId: String(rootSessionId),
+      objective: 'root request',
+      requiredTools: [],
+      budget: budgetRegistry.forRootSession(rootSessionId).snapshot(),
+      signal,
+    }
+    const restored = restoreScheduleSelected(agent.session.events, config, 'root')
+    const resolved = restored === undefined
+      ? await resolveSchedule(config, schedulerResolver, input)
+      : { request: buildCapabilityRequest(config, input), decision: restored }
+    appendScheduleSelected(agent.session, scheduleSelectedFrom(resolved.decision, 'root'))
+    const { reasoningEffort: _oldEffort, maxTokens: _oldMaxTokens, ...rest } = base
+    return {
+      ...rest,
+      provider: resolved.decision.route.provider,
+      model: resolved.decision.route.model,
+      maxTokens: resolved.decision.route.maxTokens,
+      ...(resolved.decision.route.reasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: ReasoningEffortId(resolved.decision.route.reasoningEffort) }),
+    }
+  })
 }

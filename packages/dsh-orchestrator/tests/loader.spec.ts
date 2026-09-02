@@ -1,5 +1,5 @@
 import { existsSync } from 'node:fs'
-import { copyFile, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { copyFile, cp, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -62,6 +62,7 @@ interface AppBoot {
 interface ProfileLoadOptions {
   readonly mode: 'direct' | 'single-worker'
   readonly enableSubagents?: boolean
+  readonly profile?: 'v0.1' | 'v0.3-adaptive'
 }
 
 interface LoadedProfileRuntime {
@@ -107,27 +108,63 @@ function singleWorkerOverlay(entries: readonly ProfileEntry[]): Record<string, u
   }
 }
 
-async function copyActualProfile(root: string): Promise<string> {
-  const profileDir = join(root, 'profiles/v0.1')
+async function copyActualProfile(root: string, profileName: 'v0.1' | 'v0.3-adaptive'): Promise<string> {
+  const sourceDir = join(repositoryRoot, 'profiles', profileName)
+  const profileDir = join(root, 'profiles', profileName)
   await mkdir(profileDir, { recursive: true })
   await Promise.all([
-    copyFile(sourceProfileManifest, join(profileDir, 'package.json')),
-    copyFile(sourceProfilePatch, join(profileDir, 'cordis.patch.yml')),
+    copyFile(join(sourceDir, 'package.json'), join(profileDir, 'package.json')),
+    copyFile(join(sourceDir, 'cordis.patch.yml'), join(profileDir, 'cordis.patch.yml')),
   ])
-  await symlink(sourceProfileModules, join(profileDir, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir')
+  if (profileName === 'v0.1') {
+    await symlink(sourceProfileModules, join(profileDir, 'node_modules'), process.platform === 'win32' ? 'junction' : 'dir')
+  } else {
+    await mkdir(join(profileDir, 'node_modules'), { recursive: true })
+    await mkdir(join(profileDir, 'node_modules', '@ds-plugins'), { recursive: true })
+    await symlink(
+      join(sourceProfileModules, '@deepseek-ai'),
+      join(profileDir, 'node_modules', '@deepseek-ai'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
+    await symlink(
+      join(sourceProfileModules, '@ds-plugins', 'dsh-orchestrator'),
+      join(profileDir, 'node_modules', '@ds-plugins', 'dsh-orchestrator'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
+    await cp(join(repositoryRoot, 'packages/dsh-adaptive-scheduler'), join(root, 'packages/dsh-adaptive-scheduler'), { recursive: true })
+    await cp(join(repositoryRoot, 'packages/dsh-scheduling-contracts'), join(root, 'packages/dsh-scheduling-contracts'), { recursive: true })
+    await symlink(
+      join(root, 'packages/dsh-adaptive-scheduler'),
+      join(profileDir, 'node_modules', '@ds-plugins', 'dsh-adaptive-scheduler'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
+    await symlink(
+      join(root, 'packages/dsh-scheduling-contracts'),
+      join(profileDir, 'node_modules', '@ds-plugins', 'dsh-scheduling-contracts'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
+    await mkdir(join(root, 'packages/dsh-adaptive-scheduler/node_modules/@ds-plugins'), { recursive: true })
+    await symlink(
+      join(root, 'packages/dsh-scheduling-contracts'),
+      join(root, 'packages/dsh-adaptive-scheduler/node_modules/@ds-plugins/dsh-scheduling-contracts'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
+  }
   await writeFile(join(profileDir, 'cordis.yml'), '[]\n')
   return profileDir
 }
 
 async function loadActualProfile(options: ProfileLoadOptions): Promise<LoadedProfileRuntime> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-orchestrator-profile-'))
+  let rootAdaptiveLink: string | undefined
   try {
-    const profileDir = await copyActualProfile(root)
+    const profileName = options.profile ?? 'v0.1'
+    const profileDir = await copyActualProfile(root, profileName)
     const appBoot = await actualAppBoot()
     const resolver = profileRequire(profileDir)
     const dshBaseManifest = resolver.resolve('@deepseek-ai/dsh-base/package.json')
     appBoot.healProfilesModuleFallback(dshBaseManifest, root)
-    const profile = appBoot.loadProfile('dsh-orchestrator-loader-test', 'v0.1', dshBaseManifest, root)
+    const profile = appBoot.loadProfile('dsh-orchestrator-loader-test', profileName, dshBaseManifest, root)
     const profilePatches = [
       ...profile.layers.flatMap(layer => layer.patches),
       ...profile.patches,
@@ -135,9 +172,21 @@ async function loadActualProfile(options: ProfileLoadOptions): Promise<LoadedPro
     const entries = appBoot.composeEntries([profilePatches])
     const patches = [
       ...profilePatches,
-      ...disabledRows(entries, options.enableSubagents ? ['subagent'] : []),
+      ...disabledRows(entries, [
+        ...(options.enableSubagents ? ['subagent'] : []),
+        ...(profileName === 'v0.3-adaptive' ? ['dsh-adaptive-scheduler'] : []),
+      ]),
       ...(options.mode === 'single-worker' ? [singleWorkerOverlay(entries)] : []),
     ]
+    if (profileName === 'v0.3-adaptive') {
+      const rootPluginModules = join(repositoryRoot, 'node_modules', '@ds-plugins')
+      await mkdir(rootPluginModules, { recursive: true })
+      const candidate = join(rootPluginModules, 'dsh-adaptive-scheduler')
+      if (!existsSync(candidate)) {
+        await symlink(join(root, 'packages/dsh-adaptive-scheduler'), candidate, process.platform === 'win32' ? 'junction' : 'dir')
+        rootAdaptiveLink = candidate
+      }
+    }
     const resolvedOrchestratorEntry = resolver.resolve('@ds-plugins/dsh-orchestrator')
     const context = await appBoot.boot(
       'dsh-orchestrator-loader-test',
@@ -152,11 +201,13 @@ async function loadActualProfile(options: ProfileLoadOptions): Promise<LoadedPro
         try {
           await context.fiber.dispose()
         } finally {
+          if (rootAdaptiveLink !== undefined) await rm(rootAdaptiveLink, { force: true })
           await rm(root, { recursive: true, force: true })
         }
       },
     }
   } catch (error) {
+    if (rootAdaptiveLink !== undefined) await rm(rootAdaptiveLink, { force: true })
     await rm(root, { recursive: true, force: true })
     throw error
   }
@@ -276,6 +327,15 @@ describe('built DSH v0.1 profile Loader composition', () => {
       } finally {
         unregister()
       }
+    })
+  })
+
+  it('boots the scheduler-present v0.3 adaptive profile with the required orchestrator injections', async () => {
+    await withActualProfile({ profile: 'v0.3-adaptive', mode: 'single-worker', enableSubagents: true }, async (runtime) => {
+      const services = await injectedServices(runtime.context, true)
+      expect(services.tools.get('targeted_verify')).toBeDefined()
+      expect(services.tools.get('delegate_worker')).toBeDefined()
+      expect((runtime.context as unknown as { get(name: string): unknown }).get('adaptiveScheduler')).toBeDefined()
     })
   })
 })

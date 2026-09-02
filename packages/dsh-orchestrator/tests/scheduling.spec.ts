@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import { agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import {
   buildCapabilityRequest,
   fixedProfileSchedule,
   mountAdaptiveSchedulerResolver,
+  mountRootScheduling,
   resolveSchedule,
   restoreScheduleSelected,
   scheduleSelectedFrom,
@@ -250,7 +253,124 @@ describe('orchestrator scheduling adapter', () => {
     ], metadataConfig, 'root')).toBeUndefined()
   })
 
+  it('accepts scheduler route metadata when the profile only constrains the hard route', async () => {
+    const hardRouteConfig: OrchestratorConfig = {
+      ...config,
+      scheduling: {
+        ...scheduling,
+        allowedRoutes: [{ provider: 'provider-disabled', model: 'strong-disabled', maxTokens: 64_000 }],
+      },
+    }
+    const schedulerRoute = {
+      provider: 'provider-disabled',
+      model: 'strong-disabled',
+      maxTokens: 64_000,
+      reasoningEffort: 'high' as const,
+      promptProfile: 'coding-strong-v1',
+      modelFamily: 'deepseek',
+    }
+    const scheduler = {
+      schedule: async () => ({
+        schemaVersion: 1 as const,
+        mode: 'single-worker' as const,
+        route: schedulerRoute,
+        workerCount: 1 as const,
+        source: 'scheduler' as const,
+        policyVersion: 'v0.3.0',
+        explanationCode: 'TASK_BASELINE' as const,
+      }),
+    }
+
+    await expect(resolveSchedule(hardRouteConfig, { current: () => scheduler }, workerInput)).resolves.toMatchObject({
+      decision: { route: schedulerRoute },
+    })
+  })
+
   it('rejects target-incompatible fixed profiles', () => {
     expect(() => fixedProfileSchedule(config.worker, config.mode, 'root')).toThrow()
+  })
+
+  it('routes root requests through the official waterfall and records the selected route first', async () => {
+    const ctx = new Context()
+    const root = Session.create(SessionId('root-official-seam'))
+    const agent = { id: root.id, session: root } as Agent
+    const rootConfig: OrchestratorConfig = {
+      ...config,
+      mode: 'direct',
+      budgets: { ...config.budgets, maxWorkers: 0 },
+    }
+    const scheduler = {
+      schedule: async () => ({
+        ...validDecision,
+        mode: 'direct' as const,
+        route: routes[2],
+        workerCount: 0 as const,
+      }),
+    }
+    const dispose = mountRootScheduling(
+      ctx,
+      rootConfig,
+      { forRootSession: () => ({ snapshot: () => workerInput.budget }) as never },
+      { current: () => scheduler },
+    )
+
+    const result = await agentEvents(ctx, agent).waterfall(
+      'agent/request',
+      { turn: 1, step: 1, signal: new AbortController().signal },
+      async () => ({
+        provider: 'profile-disabled',
+        model: 'profile-disabled',
+        temperature: 0.2,
+        stop: ['<stop>'],
+      }),
+    )
+
+    expect(result).toMatchObject({
+      provider: 'provider-disabled',
+      model: 'strong-disabled',
+      maxTokens: 64_000,
+      reasoningEffort: ReasoningEffortId('high'),
+      temperature: 0.2,
+      stop: ['<stop>'],
+    })
+    expect(root.events.map(event => event.type)).toEqual(['dsh-plugin/schedule-selected'])
+    dispose()
+  })
+
+  it('restores the last validated durable root selection after scheduler remount', async () => {
+    const ctx = new Context()
+    const root = Session.create(SessionId('root-durable-restore'))
+    root.append('dsh-plugin/schedule-selected', {
+      schemaVersion: 1,
+      target: 'root',
+      source: 'scheduler',
+      provider: 'provider-disabled',
+      model: 'strong-disabled',
+      maxTokens: 64_000,
+      reasoningEffort: 'high',
+      policyVersion: 'v0.3.0',
+    })
+    const agent = { id: root.id, session: root } as Agent
+    const rootConfig: OrchestratorConfig = {
+      ...config,
+      mode: 'direct',
+      budgets: { ...config.budgets, maxWorkers: 0 },
+    }
+    const throwingScheduler = { schedule: async () => { throw new Error('remounted scheduler must not replace durable sticky route') } }
+    const dispose = mountRootScheduling(
+      ctx,
+      rootConfig,
+      { forRootSession: () => ({ snapshot: () => workerInput.budget }) as never },
+      { current: () => throwingScheduler },
+    )
+
+    const result = await agentEvents(ctx, agent).waterfall(
+      'agent/request',
+      { turn: 2, step: 1, signal: new AbortController().signal },
+      async () => ({ provider: 'profile-disabled', model: 'profile-disabled' }),
+    )
+
+    expect(result).toMatchObject({ provider: 'provider-disabled', model: 'strong-disabled', maxTokens: 64_000 })
+    dispose()
   })
 })
