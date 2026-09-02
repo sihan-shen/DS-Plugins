@@ -65,6 +65,13 @@ const DEFAULT_PROFILE: CapabilityProfileV1 = {
 }
 
 const PROFILE_FALLBACK_POLICY = 'profile-fallback-v1'
+const ROUTE_IDENTITY_AND_METADATA_KEYS = [
+  'provider',
+  'model',
+  'reasoningEffort',
+  'promptProfile',
+  'modelFamily',
+] as const
 
 /** Project one bounded capability request without exposing runtime/provider state. */
 export function buildCapabilityRequest(config: OrchestratorConfig, input: ResolveScheduleInput): CapabilityRequestV1 {
@@ -119,12 +126,14 @@ export function fixedProfileSchedule(
 }
 
 function routeIsAllowed(config: OrchestratorConfig, route: RouteDecisionV1): boolean {
-  const allowed = config.scheduling?.allowedRoutes.find(candidate =>
-    candidate.provider === route.provider && candidate.model === route.model,
+  const scheduling = config.scheduling
+  if (scheduling === undefined) return false
+  const allowed = scheduling.allowedRoutes.find(candidate =>
+    ROUTE_IDENTITY_AND_METADATA_KEYS.every(key => candidate[key] === route[key]),
   )
-  if (config.scheduling !== undefined && allowed === undefined) return false
-  if (allowed !== undefined && route.maxTokens > allowed.maxTokens) return false
-  return route.maxTokens <= config.worker.maxTokens
+  return allowed !== undefined
+    && route.maxTokens <= allowed.maxTokens
+    && route.maxTokens <= config.worker.maxTokens
 }
 
 function validateDecisionForConfig(
@@ -213,6 +222,7 @@ export function restoreScheduleSelected(
   config: OrchestratorConfig,
   target: 'root' | 'worker',
 ): ScheduleDecisionV1 | undefined {
+  if (config.scheduling === undefined) return undefined
   for (let index = events.length - 1; index >= 0; index--) {
     const event = events[index]
     if (event?.type !== 'dsh-plugin/schedule-selected') continue

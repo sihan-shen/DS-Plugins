@@ -16,6 +16,14 @@ const routes = [
   { provider: 'provider-disabled', model: 'baseline-disabled', maxTokens: 32_000 },
   { provider: 'provider-disabled', model: 'fallback-disabled', maxTokens: 32_000 },
   { provider: 'provider-disabled', model: 'strong-disabled', maxTokens: 64_000, reasoningEffort: 'high' },
+  {
+    provider: 'provider-disabled',
+    model: 'metadata-disabled',
+    maxTokens: 32_000,
+    reasoningEffort: 'high',
+    promptProfile: 'coding-v1',
+    modelFamily: 'deepseek',
+  },
 ] as const
 
 const scheduling = {
@@ -100,6 +108,14 @@ describe('orchestrator scheduling adapter', () => {
     })
   })
 
+  it('accepts a valid scheduler response and returns its selected route', async () => {
+    const scheduler = { schedule: async () => validDecision }
+    await expect(resolveSchedule(config, { current: () => scheduler }, workerInput)).resolves.toMatchObject({
+      decision: validDecision,
+      scheduler,
+    })
+  })
+
   it('tracks an optional adaptive scheduler service without making it required', () => {
     const ctx = new Context()
     expect(ctx.get('adaptiveScheduler')).toBeUndefined()
@@ -119,6 +135,33 @@ describe('orchestrator scheduling adapter', () => {
       current: () => ({ schedule: async () => invalid }),
     }, workerInput)).rejects.toThrow('SCHEDULE_DECISION_INVALID')
     expect(workerInput.budget).toEqual(beforeBudget)
+  })
+
+  it('falls back to the fixed profile only when invalid-decision fallback is enabled', async () => {
+    const invalid = { ...validDecision, route: { ...validDecision.route, provider: 'not-configured' } }
+    await expect(resolveSchedule({
+      ...config,
+      scheduling: { ...scheduling, allowInvalidDecisionFallback: true },
+    }, {
+      current: () => ({ schedule: async () => invalid }),
+    }, workerInput)).resolves.toMatchObject({
+      decision: { source: 'profile-fallback', route: config.worker },
+    })
+  })
+
+  it.each([
+    ['reasoningEffort', 'low'],
+    ['promptProfile', 'review-v1'],
+    ['modelFamily', 'other-family'],
+  ] as const)('rejects a scheduler response with mismatched %s route metadata', async (field, value) => {
+    const metadataRoute = routes[3]
+    const invalid = {
+      ...validDecision,
+      route: { ...metadataRoute, [field]: value },
+    }
+    await expect(resolveSchedule(config, {
+      current: () => ({ schedule: async () => invalid }),
+    }, workerInput)).rejects.toThrow('SCHEDULE_DECISION_INVALID')
   })
 
   it('converts decisions into provenance events and restores only configured routes', () => {
@@ -142,6 +185,44 @@ describe('orchestrator scheduling adapter', () => {
     expect(restoreScheduleSelected([
       { type: 'dsh-plugin/schedule-selected', data: { ...validSelectedEvent, model: 'not-configured' } } as SessionEvent,
     ], config, 'root')).toBeUndefined()
+  })
+
+  it('rejects durable selections when scheduling policy is absent', () => {
+    const noSchedulingConfig: OrchestratorConfig = {
+      ...config,
+      mode: 'direct',
+      budgets: { ...config.budgets, maxWorkers: 0 },
+      scheduling: undefined,
+    }
+    expect(restoreScheduleSelected([
+      {
+        type: 'dsh-plugin/schedule-selected',
+        data: { ...validSelectedEvent, provider: 'unconfigured', model: 'unconfigured', target: 'root' },
+      } as SessionEvent,
+    ], noSchedulingConfig, 'root')).toBeUndefined()
+  })
+
+  it('rejects durable selections that omit configured route metadata', () => {
+    const metadataConfig: OrchestratorConfig = {
+      ...config,
+      mode: 'direct',
+      budgets: { ...config.budgets, maxWorkers: 0 },
+      scheduling: { ...scheduling, allowedRoutes: [routes[3]] },
+    }
+    expect(restoreScheduleSelected([
+      {
+        type: 'dsh-plugin/schedule-selected',
+        data: {
+          ...validSelectedEvent,
+          provider: routes[3].provider,
+          model: routes[3].model,
+          maxTokens: routes[3].maxTokens,
+          reasoningEffort: routes[3].reasoningEffort,
+          promptProfile: routes[3].promptProfile,
+          target: 'root',
+        },
+      } as SessionEvent,
+    ], metadataConfig, 'root')).toBeUndefined()
   })
 
   it('rejects target-incompatible fixed profiles', () => {
