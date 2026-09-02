@@ -496,6 +496,7 @@ describe('delegate_worker tool', () => {
     const cancellation = new Error('cancelled while scheduling')
     const aborted = new AbortController()
     let release: (() => void) | undefined
+    const completed: string[] = []
     const scheduler = {
       schedule: async () => new Promise(resolve => {
         release = () => resolve({
@@ -507,6 +508,7 @@ describe('delegate_worker tool', () => {
           policyVersion: 'v0.3.0',
         })
       }),
+      complete: (requestId: string) => { completed.push(requestId) },
     }
     const tool = createDelegateWorkerTool({
       config: adaptiveConfig,
@@ -527,6 +529,7 @@ describe('delegate_worker tool', () => {
     expect(controller.snapshot()).toEqual(before)
     expect(parent.session.events).toEqual([])
     expect(subagents.starts).toBe(0)
+    expect(completed).toEqual([String(parent.session.id)])
   })
 
   it.each([
@@ -540,6 +543,7 @@ describe('delegate_worker tool', () => {
     const subagents = new FakeSubagents(async () => run.run)
     const controller = new BudgetController(adaptiveConfig.budgets, () => undefined)
     const observed: unknown[] = []
+    const completed: string[] = []
     const scheduler = {
       schedule: async (request: unknown, budget: unknown) => {
         observed.push({ request, budget })
@@ -553,6 +557,7 @@ describe('delegate_worker tool', () => {
         }
       },
       observe: (feedback: unknown) => { observed.push(feedback) },
+      complete: (requestId: string) => { completed.push(requestId) },
     }
     const tool = createDelegateWorkerTool({
       config: adaptiveConfig,
@@ -596,6 +601,7 @@ describe('delegate_worker tool', () => {
         handoff: expect.objectContaining({ status: expectedStatus }),
       }),
     ])
+    expect(completed).toEqual([String(parent.session.id)])
   })
 
   it('reports a budget rejection to the scheduler without recording a selection or starting a worker', async () => {
@@ -603,6 +609,7 @@ describe('delegate_worker tool', () => {
     const controller = new BudgetController({ ...adaptiveConfig.budgets, maxPluginToolActions: 0 }, () => undefined)
     const subagents = new FakeSubagents(async () => { throw new Error('worker must not start') })
     const observed: unknown[] = []
+    const completed: string[] = []
     const scheduler = {
       schedule: async () => ({
         schemaVersion: 1 as const,
@@ -613,6 +620,7 @@ describe('delegate_worker tool', () => {
         policyVersion: 'v0.3.0',
       }),
       observe: (feedback: unknown) => { observed.push(feedback) },
+      complete: (requestId: string) => { completed.push(requestId) },
     }
     const tool = createDelegateWorkerTool({
       config: adaptiveConfig,
@@ -634,6 +642,7 @@ describe('delegate_worker tool', () => {
     }])
     expect(parent.session.events).toEqual([])
     expect(subagents.starts).toBe(0)
+    expect(completed).toEqual([String(parent.session.id)])
   })
 
   it('admits one delegation before starting, binds a scrubbed handoff to its tool result, and rejects the second without invoking the provider', async () => {

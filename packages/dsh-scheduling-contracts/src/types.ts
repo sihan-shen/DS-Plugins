@@ -142,6 +142,9 @@ export interface ScheduleSelectedV1 {
 
 export interface AdaptiveSchedulerService {
   schedule(request: CapabilityRequestV1, budget: BudgetViewV1, signal: AbortSignal): Promise<ScheduleDecisionV1>
+  hydrate?(request: CapabilityRequestV1, decision: ScheduleDecisionV1, selectedAt: number): void
   observe?(feedback: ScheduleFeedbackV1): void
+  complete?(requestId: string): void
+  disposeSession?(requestId: string): void
   dispose?(): Promise<void>
 }

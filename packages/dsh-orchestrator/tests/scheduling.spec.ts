@@ -3,6 +3,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { Session, SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+import { createAdaptiveScheduler } from '@ds-plugins/dsh-adaptive-scheduler'
 import {
   buildCapabilityRequest,
   fixedProfileSchedule,
@@ -308,8 +309,34 @@ describe('orchestrator scheduling adapter', () => {
     await expect(resolveSchedule(hardRouteConfig, { current: () => scheduler }, workerInput)).rejects.toThrow('SCHEDULE_DECISION_INVALID')
   })
 
-  it('rejects target-incompatible fixed profiles', () => {
-    expect(() => fixedProfileSchedule(config.worker, config.mode, 'root')).toThrow()
+  it('derives fixed-profile mode from the scheduling target', () => {
+    expect(fixedProfileSchedule(config.worker, config.mode, 'root')).toMatchObject({
+      mode: 'direct',
+      workerCount: 0,
+      source: 'profile-fallback',
+    })
+  })
+
+  it.each([
+    'QUOTA_EXHAUSTED',
+    'NON_TRANSIENT_FAILURE',
+    'LOCAL_TOOL_BUDGET',
+    'SAFETY_GATE',
+  ])('preserves scheduler operational error %s even when invalid fallback is enabled', async code => {
+    const operational = Object.assign(new Error(code), { code })
+    await expect(resolveSchedule({
+      ...config,
+      scheduling: { ...scheduling, allowInvalidDecisionFallback: true },
+    }, {
+      current: () => ({ schedule: async () => { throw operational } }),
+    }, workerInput)).rejects.toBe(operational)
+  })
+
+  it('preserves scheduler operational errors when invalid fallback is disabled', async () => {
+    const operational = Object.assign(new Error('QUOTA_EXHAUSTED'), { code: 'QUOTA_EXHAUSTED' })
+    await expect(resolveSchedule(config, {
+      current: () => ({ schedule: async () => { throw operational } }),
+    }, workerInput)).rejects.toBe(operational)
   })
 
   it('routes root requests through the official waterfall and records the selected route first', async () => {
@@ -359,7 +386,125 @@ describe('orchestrator scheduling adapter', () => {
     dispose()
   })
 
-  it('restores the last validated durable root selection after scheduler remount', async () => {
+  it('degrades a single-worker root request to a direct fixed-profile route when the scheduler is absent', async () => {
+    const ctx = new Context()
+    const root = Session.create(SessionId('root-profile-fallback'))
+    const agent = { id: root.id, session: root } as Agent
+    const dispose = mountRootScheduling(
+      ctx,
+      config,
+      { forRootSession: () => ({ snapshot: () => workerInput.budget }) as never },
+      { current: () => undefined },
+    )
+
+    const result = await agentEvents(ctx, agent).waterfall(
+      'agent/request',
+      { turn: 1, step: 1, signal: new AbortController().signal },
+      async () => ({ provider: 'profile-disabled', model: 'profile-disabled' }),
+    )
+
+    expect(result).toMatchObject({
+      provider: config.worker.provider,
+      model: config.worker.model,
+      maxTokens: config.worker.maxTokens,
+    })
+    expect(root.events).toHaveLength(1)
+    expect(root.events[0]).toMatchObject({
+      type: 'dsh-plugin/schedule-selected',
+      data: { target: 'root', source: 'profile-fallback' },
+    })
+    dispose()
+  })
+
+  it('re-enters the scheduler for every step in one root session', async () => {
+    const ctx = new Context()
+    const root = Session.create(SessionId('root-multiple-steps'))
+    const agent = { id: root.id, session: root } as Agent
+    let calls = 0
+    const scheduler = {
+      schedule: async () => {
+        calls++
+        return {
+          ...validDecision,
+          mode: 'direct' as const,
+          route: calls === 1 ? routes[0] : routes[2],
+          workerCount: 0 as const,
+        }
+      },
+    }
+    const dispose = mountRootScheduling(
+      ctx,
+      config,
+      { forRootSession: () => ({ snapshot: () => workerInput.budget }) as never },
+      { current: () => scheduler },
+    )
+
+    const first = await agentEvents(ctx, agent).waterfall(
+      'agent/request',
+      { turn: 1, step: 1, signal: new AbortController().signal },
+      async () => ({ provider: 'profile-disabled', model: 'profile-disabled' }),
+    )
+    const second = await agentEvents(ctx, agent).waterfall(
+      'agent/request',
+      { turn: 1, step: 2, signal: new AbortController().signal },
+      async () => ({ provider: 'profile-disabled', model: 'profile-disabled' }),
+    )
+
+    expect(first.model).toBe('baseline-disabled')
+    expect(second.model).toBe('strong-disabled')
+    expect(calls).toBe(2)
+    expect(root.events.filter(event => event.type === 'dsh-plugin/schedule-selected')).toHaveLength(2)
+    dispose()
+  })
+
+  it('lets failure and TTL state affect the next root request', async () => {
+    const ctx = new Context()
+    const root = Session.create(SessionId('root-changing-state'))
+    root.append('dsh-plugin/schedule-selected', {
+      ...validSelectedEvent,
+      model: 'fallback-disabled',
+    })
+    const agent = { id: root.id, session: root } as Agent
+    let now = root.events[0]!.time
+    const scheduler = createAdaptiveScheduler({
+      policyVersion: 'v0.3.0',
+      catalog: [
+        { alias: 'baseline', route: routes[0], tier: 'baseline', taskTypes: ['unknown'], toolFilter: [], paid: false, reliability: 70 },
+        { alias: 'fallback', route: routes[1], tier: 'fallback', taskTypes: ['unknown'], toolFilter: [], paid: false, reliability: 80 },
+        { alias: 'strong', route: routes[2], tier: 'strong', taskTypes: ['unknown'], toolFilter: [], paid: false, reliability: 100 },
+      ],
+      baselines: { 'code-fix': 'baseline', 'code-new': 'baseline', research: 'baseline', summarize: 'baseline', review: 'baseline', 'tool-heavy': 'baseline', unknown: 'baseline' },
+      stickyTtlMs: 100,
+      idleTtlMs: 1_000,
+      errorWindowMs: 1_000,
+      cooldownMs: 100,
+      escalationTtlMs: 1_000,
+      maxEscalationsPerTask: 1,
+      maxRounds: 2,
+      historyWindowSize: 8,
+      historyMinSamples: 2,
+    }, { now: () => now, generation: 'root-integration' })
+    const dispose = mountRootScheduling(
+      ctx,
+      config,
+      { forRootSession: () => ({ snapshot: () => workerInput.budget }) as never },
+      { current: () => scheduler },
+    )
+    const request = () => agentEvents(ctx, agent).waterfall(
+      'agent/request',
+      { turn: 1, step: 1, signal: new AbortController().signal },
+      async () => ({ provider: 'profile-disabled', model: 'profile-disabled' }),
+    )
+
+    expect((await request()).model).toBe('fallback-disabled')
+    now += 100
+    expect((await request()).model).toBe('baseline-disabled')
+    scheduler.recordFailure({ requestId: String(root.id), code: 'TIMEOUT' })
+    expect((await request()).model).toBe('fallback-disabled')
+    dispose()
+  })
+
+  it('hydrates a durable root selection once for a remounted scheduler, then schedules normally', async () => {
     const ctx = new Context()
     const root = Session.create(SessionId('root-durable-restore'))
     root.append('dsh-plugin/schedule-selected', {
@@ -378,12 +523,27 @@ describe('orchestrator scheduling adapter', () => {
       mode: 'direct',
       budgets: { ...config.budgets, maxWorkers: 0 },
     }
-    const throwingScheduler = { schedule: async () => { throw new Error('remounted scheduler must not replace durable sticky route') } }
+    const selectedAt = root.events[0]!.time
+    const hydrated: unknown[][] = []
+    let calls = 0
+    const remountedScheduler = {
+      hydrate: (...args: unknown[]) => { hydrated.push(args) },
+      schedule: async () => {
+        calls++
+        return {
+          ...validDecision,
+          mode: 'direct' as const,
+          route: routes[2],
+          workerCount: 0 as const,
+        }
+      },
+    }
+    let currentScheduler = remountedScheduler
     const dispose = mountRootScheduling(
       ctx,
       rootConfig,
       { forRootSession: () => ({ snapshot: () => workerInput.budget }) as never },
-      { current: () => throwingScheduler },
+      { current: () => currentScheduler },
     )
 
     const result = await agentEvents(ctx, agent).waterfall(
@@ -393,6 +553,27 @@ describe('orchestrator scheduling adapter', () => {
     )
 
     expect(result).toMatchObject({ provider: 'provider-disabled', model: 'strong-disabled', maxTokens: 64_000 })
+    await agentEvents(ctx, agent).waterfall(
+      'agent/request',
+      { turn: 2, step: 2, signal: new AbortController().signal },
+      async () => ({ provider: 'profile-disabled', model: 'profile-disabled' }),
+    )
+    expect(hydrated).toHaveLength(1)
+    expect(hydrated[0]?.[2]).toBe(selectedAt)
+    expect(calls).toBe(2)
+
+    const nextGenerationHydrated: unknown[][] = []
+    currentScheduler = {
+      hydrate: (...args: unknown[]) => { nextGenerationHydrated.push(args) },
+      schedule: remountedScheduler.schedule,
+    }
+    await agentEvents(ctx, agent).waterfall(
+      'agent/request',
+      { turn: 2, step: 3, signal: new AbortController().signal },
+      async () => ({ provider: 'profile-disabled', model: 'profile-disabled' }),
+    )
+    expect(nextGenerationHydrated).toHaveLength(1)
+    expect(calls).toBe(3)
     dispose()
   })
 })

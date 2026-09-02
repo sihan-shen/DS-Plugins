@@ -52,6 +52,23 @@ describe('bounded performance history', () => {
     expect(history.hasEnoughEvidence('review')).toBe(false)
   })
 
+  it('uses the weakest provenance level for a mixed verification window', () => {
+    const history = new BoundedPerformanceHistory({ windowSize: 8, minSamples: 1, now: () => 1000 })
+    history.observe(pendingReview, {
+      schemaVersion: 1,
+      requestId: 'session-2',
+      outcome: 'completed',
+      verification: [{ schemaVersion: 1, commandName: 'typecheck', args: [], exitCode: 0, status: 'passed', stdout: '', stderr: '', truncated: false, durationMs: 2 }],
+    })
+    history.observe({ ...pendingReview, requestId: 'session-3' }, {
+      schemaVersion: 1,
+      requestId: 'session-3',
+      outcome: 'failed',
+    })
+
+    expect(history.snapshot('review')).toMatchObject({ n: 2, evidenceLevel: 'observed' })
+  })
+
   it('reorders only catalog candidates after enough evidence', async () => {
     const scheduler = createAdaptiveScheduler(schedulerConfig, { generation: 'g1' })
     for (let index = 0; index < 3; index++) {

@@ -15,7 +15,13 @@ describe('adaptive scheduler Cordis plugin', () => {
     const ctx = new Context()
     const fiber = await ctx.plugin(apply, schedulerConfig)
     const service = ctx.get('adaptiveScheduler')
-    expect(service).toMatchObject({ schedule: expect.any(Function), observe: expect.any(Function) })
+    expect(service).toMatchObject({
+      schedule: expect.any(Function),
+      hydrate: expect.any(Function),
+      observe: expect.any(Function),
+      complete: expect.any(Function),
+      disposeSession: expect.any(Function),
+    })
     await fiber.dispose()
     expect(ctx.get('adaptiveScheduler')).toBeUndefined()
   })
@@ -35,6 +41,53 @@ describe('adaptive scheduler Cordis plugin', () => {
     await fiber.dispose()
     await dispatchFailure('event-after-dispose')
     await expect(service.schedule({ ...request, taskId: 'event-after-dispose' }, budget, new AbortController().signal)).resolves.toMatchObject({ explanationCode: 'TASK_BASELINE' })
+  })
+
+  it('clears session state on disposal so a reused id starts clean', async () => {
+    const ctx = new Context()
+    const fiber = await ctx.plugin(apply, schedulerConfig)
+    const service = ctx.get('adaptiveScheduler')!
+    const taskId = 'reused-session-id'
+    await expect(service.schedule({
+      ...request,
+      taskId,
+      profile: { ...request.profile, risk: 90 },
+      affinity: { workerId: `${taskId}:worker:1` },
+    }, budget, new AbortController().signal)).resolves.toMatchObject({ route: { model: 'strong-disabled' } })
+
+    ctx.emit('session/disposed' as never, { id: taskId, header: {} } as never)
+
+    await expect(service.schedule({
+      ...request,
+      taskId,
+      affinity: { workerId: `${taskId}:worker:1` },
+    }, budget, new AbortController().signal)).resolves.toMatchObject({
+      explanationCode: 'TASK_BASELINE',
+      route: { model: 'baseline-disabled' },
+    })
+    await fiber.dispose()
+  })
+
+  it('clears the entire state store when the runtime is disposed', async () => {
+    const scheduler = createAdaptiveScheduler(schedulerConfig, { generation: 'g1' })
+    const taskId = 'runtime-dispose'
+    await scheduler.schedule({
+      ...request,
+      taskId,
+      profile: { ...request.profile, risk: 90 },
+      affinity: { workerId: `${taskId}:worker:1` },
+    }, budget, new AbortController().signal)
+
+    await scheduler.dispose?.()
+
+    await expect(scheduler.schedule({
+      ...request,
+      taskId,
+      affinity: { workerId: `${taskId}:worker:1` },
+    }, budget, new AbortController().signal)).resolves.toMatchObject({
+      explanationCode: 'TASK_BASELINE',
+      route: { model: 'baseline-disabled' },
+    })
   })
 
   it('escalates a later request from bounded failed Handoff feedback', async () => {

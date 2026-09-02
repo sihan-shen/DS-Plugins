@@ -112,11 +112,10 @@ export function buildCapabilityRequest(config: OrchestratorConfig, input: Resolv
 /** Produce the deployment's fixed route when no scheduler decision is available. */
 export function fixedProfileSchedule(
   worker: OrchestratorConfig['worker'],
-  mode: OrchestratorConfig['mode'],
+  _mode: OrchestratorConfig['mode'],
   target: 'root' | 'worker',
 ): ScheduleDecisionV1 {
   const expectedMode = target === 'worker' ? 'single-worker' : 'direct'
-  if (mode !== expectedMode) throw new TypeError('fixed profile mode does not match scheduling target')
   return parseScheduleDecisionV1({
     schemaVersion: 1,
     mode: expectedMode,
@@ -168,9 +167,12 @@ export async function resolveSchedule(
   throwIfAborted(input.signal)
   const scheduler = config.scheduling === undefined ? undefined : resolver.current()
   if (scheduler === undefined) return { request, decision: fixedProfileSchedule(config.worker, config.mode, input.target) }
-  try {
-    const rawDecision = await scheduler.schedule(request, parseBudgetViewV1(input.budget), input.signal)
+  const rawDecision = await scheduler.schedule(request, parseBudgetViewV1(input.budget), input.signal)
+  if (input.signal.aborted) {
+    if (input.target === 'worker') scheduler.complete?.(request.taskId)
     throwIfAborted(input.signal)
+  }
+  try {
     const decision = validateDecisionForConfig(
       parseScheduleDecisionV1(rawDecision),
       config,
@@ -178,12 +180,58 @@ export async function resolveSchedule(
     )
     return { request, decision, scheduler }
   } catch (error) {
-    throwIfAborted(input.signal)
+    if (input.target === 'worker') scheduler.complete?.(request.taskId)
     if (config.scheduling?.allowInvalidDecisionFallback === true) {
       return { request, decision: fixedProfileSchedule(config.worker, config.mode, input.target), scheduler }
     }
     throw new SchedulingValidationError('SCHEDULE_DECISION_INVALID', { cause: error })
   }
+}
+
+interface RestoredScheduleSelection {
+  readonly decision: ScheduleDecisionV1
+  readonly selectedAt?: number
+}
+
+function restoreScheduleSelection(
+  events: readonly SessionEvent[],
+  config: OrchestratorConfig,
+  target: 'root' | 'worker',
+): RestoredScheduleSelection | undefined {
+  if (config.scheduling === undefined) return undefined
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index]
+    if (event?.type !== 'dsh-plugin/schedule-selected') continue
+    let selected: ScheduleSelectedV1
+    try {
+      selected = parseScheduleSelectedV1(event.data)
+    } catch {
+      continue
+    }
+    if (selected.target !== target) continue
+    const route: RouteDecisionV1 = {
+      provider: selected.provider,
+      model: selected.model,
+      maxTokens: selected.maxTokens,
+      ...(selected.reasoningEffort === undefined ? {} : { reasoningEffort: selected.reasoningEffort }),
+      ...(selected.promptProfile === undefined ? {} : { promptProfile: selected.promptProfile }),
+      ...(selected.modelFamily === undefined ? {} : { modelFamily: selected.modelFamily }),
+    }
+    if (!routeIsAllowed(config, route)) continue
+    return {
+      decision: parseScheduleDecisionV1({
+        schemaVersion: 1,
+        mode: target === 'worker' ? 'single-worker' : 'direct',
+        route,
+        workerCount: target === 'worker' ? 1 : 0,
+        source: selected.source,
+        policyVersion: selected.policyVersion ?? PROFILE_FALLBACK_POLICY,
+        explanationCode: 'DURABLE_STICKY_RESTORE',
+      }),
+      ...(Number.isSafeInteger(event.time) && event.time >= 0 ? { selectedAt: event.time } : {}),
+    }
+  }
+  return undefined
 }
 
 /** Track an optional adaptive scheduler generation using Cordis's unloadable injection lifecycle. */
@@ -235,37 +283,7 @@ export function restoreScheduleSelected(
   config: OrchestratorConfig,
   target: 'root' | 'worker',
 ): ScheduleDecisionV1 | undefined {
-  if (config.scheduling === undefined) return undefined
-  for (let index = events.length - 1; index >= 0; index--) {
-    const event = events[index]
-    if (event?.type !== 'dsh-plugin/schedule-selected') continue
-    let selected: ScheduleSelectedV1
-    try {
-      selected = parseScheduleSelectedV1(event.data)
-    } catch {
-      continue
-    }
-    if (selected.target !== target) continue
-    const route: RouteDecisionV1 = {
-      provider: selected.provider,
-      model: selected.model,
-      maxTokens: selected.maxTokens,
-      ...(selected.reasoningEffort === undefined ? {} : { reasoningEffort: selected.reasoningEffort }),
-      ...(selected.promptProfile === undefined ? {} : { promptProfile: selected.promptProfile }),
-      ...(selected.modelFamily === undefined ? {} : { modelFamily: selected.modelFamily }),
-    }
-    if (!routeIsAllowed(config, route)) continue
-    return parseScheduleDecisionV1({
-      schemaVersion: 1,
-      mode: target === 'worker' ? 'single-worker' : 'direct',
-      route,
-      workerCount: target === 'worker' ? 1 : 0,
-      source: selected.source,
-      policyVersion: selected.policyVersion ?? PROFILE_FALLBACK_POLICY,
-      explanationCode: 'DURABLE_STICKY_RESTORE',
-    })
-  }
-  return undefined
+  return restoreScheduleSelection(events, config, target)?.decision
 }
 
 /** Enforce the selected root route at DSH's official agent/request waterfall seam. */
@@ -276,6 +294,7 @@ export function mountRootScheduling(
   schedulerResolver: SchedulerResolver,
 ): () => void {
   if (config.scheduling === undefined) return () => undefined
+  const hydratedSessions = new WeakMap<object, WeakSet<Session>>()
   return ctx.on('agent/request', async ({ agent, signal }, next): Promise<LlmCallConfig> => {
     const base = await next()
     const rootSessionId = agent.session.header.parentSession ?? agent.session.id
@@ -288,10 +307,22 @@ export function mountRootScheduling(
       budget: budgetRegistry.forRootSession(rootSessionId).snapshot(),
       signal,
     }
-    const restored = restoreScheduleSelected(agent.session.events, config, 'root')
-    const resolved = restored === undefined
-      ? await resolveSchedule(config, schedulerResolver, input)
-      : { request: buildCapabilityRequest(config, input), decision: restored }
+    const scheduler = schedulerResolver.current()
+    if (scheduler !== undefined) {
+      let sessions = hydratedSessions.get(scheduler)
+      if (sessions === undefined) {
+        sessions = new WeakSet<Session>()
+        hydratedSessions.set(scheduler, sessions)
+      }
+      if (!sessions.has(agent.session)) {
+        sessions.add(agent.session)
+        const restored = restoreScheduleSelection(agent.session.events, config, 'root')
+        if (restored?.selectedAt !== undefined) {
+          scheduler.hydrate?.(buildCapabilityRequest(config, input), restored.decision, restored.selectedAt)
+        }
+      }
+    }
+    const resolved = await resolveSchedule(config, { current: () => scheduler }, input)
     appendScheduleSelected(agent.session, scheduleSelectedFrom(resolved.decision, 'root'))
     const { reasoningEffort: _oldEffort, maxTokens: _oldMaxTokens, ...rest } = base
     return {

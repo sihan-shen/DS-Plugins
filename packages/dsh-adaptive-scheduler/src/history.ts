@@ -41,7 +41,7 @@ function latencyBucket(durationMs: number | undefined): LatencyBucket {
 }
 
 function evidenceLevel(samples: readonly Sample[]): EvidenceLevelV1 {
-  return samples.some(sample => sample.verified) ? 'verified' : 'observed'
+  return samples.every(sample => sample.verified) ? 'verified' : 'observed'
 }
 
 function combinedScore(scores: ReadonlyMap<string, RouteScore>, candidate: RouteCatalogEntryV1): RouteScore | undefined {
@@ -109,6 +109,10 @@ export class BoundedPerformanceHistory {
       if (oldest !== undefined) this.pending.delete(oldest)
     }
     this.pending.set(pending.requestId, Object.freeze({ ...pending, route: Object.freeze({ ...pending.route }) }))
+  }
+
+  complete(requestId: string): void {
+    this.pending.delete(requestId)
   }
 
   snapshot(taskType: TaskTypeV1): TaskHistoryV1 | undefined {

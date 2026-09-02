@@ -1,5 +1,6 @@
 import type { CapabilityRequestV1, RouteDecisionV1 } from '@ds-plugins/dsh-scheduling-contracts'
 import type { AdaptiveSchedulerConfig, ProviderFailureFactV1, RouteSwitchRecordV1, StickyRouteStateV1, WorkerAffinityStateV1, RouteCatalogEntryV1 } from './types.js'
+import { MAX_COOLDOWN_MS } from './config.js'
 
 interface FailureRecordV1 extends ProviderFailureFactV1 {
   readonly at: number
@@ -29,8 +30,8 @@ export class SchedulerStateStore {
   private readonly affinity = new Map<string, WorkerAffinityStateV1>()
   private readonly affinityRoutes = new Map<string, RouteDecisionV1>()
   private readonly failures = new Map<string, readonly FailureRecordV1[]>()
-  private readonly selectedFailureCounts = new Map<string, number>()
   private readonly escalations = new Map<string, EscalationStateV1>()
+  private readonly cooldowns = new Map<string, number>()
   private readonly routeSwitches: RouteSwitchRecordV1[] = []
 
   constructor(private readonly config: AdaptiveSchedulerConfig) {}
@@ -45,7 +46,6 @@ export class SchedulerStateStore {
     const state = this.sticky.get(key)
     if (state === undefined || state.generation !== generation || now >= state.expiresAt || now >= state.idleExpiresAt) {
       this.sticky.delete(key)
-      this.selectedFailureCounts.delete(key)
       return undefined
     }
     const refreshed = Object.freeze({ ...state, lastUsedAt: now, idleExpiresAt: now + this.config.idleTtlMs })
@@ -53,7 +53,7 @@ export class SchedulerStateStore {
     return refreshed
   }
 
-  rememberSticky(request: CapabilityRequestV1, alias: string, now: number, generation: string, failureCount: number): StickyRouteStateV1 {
+  rememberSticky(request: CapabilityRequestV1, alias: string, now: number, generation: string): StickyRouteStateV1 {
     const key = requestKey(request)
     const state = Object.freeze({
       requestId: request.taskId,
@@ -66,14 +66,16 @@ export class SchedulerStateStore {
       idleExpiresAt: now + this.config.idleTtlMs,
     })
     this.sticky.set(key, state)
-    this.selectedFailureCounts.set(key, failureCount)
     return state
+  }
+
+  hydrateSticky(request: CapabilityRequestV1, alias: string, selectedAt: number, generation: string): StickyRouteStateV1 {
+    return this.rememberSticky(request, alias, selectedAt, generation)
   }
 
   clearSticky(request: Pick<CapabilityRequestV1, 'taskId' | 'target'>): void {
     const key = requestKey(request)
     this.sticky.delete(key)
-    this.selectedFailureCounts.delete(key)
   }
 
   failuresFor(requestId: string, now: number): readonly FailureRecordV1[] {
@@ -83,14 +85,36 @@ export class SchedulerStateStore {
   }
 
   recordFailure(fact: ProviderFailureFactV1, now: number): void {
-    const records = [...(this.failures.get(fact.requestId) ?? []), Object.freeze({ ...fact, at: now })]
+    const retryAfter = typeof fact.providerRetryAfterMs === 'number' && Number.isSafeInteger(fact.providerRetryAfterMs) && fact.providerRetryAfterMs >= 0
+      ? Math.min(fact.providerRetryAfterMs, MAX_COOLDOWN_MS)
+      : 0
+    const normalizedFact = Object.freeze({
+      requestId: fact.requestId,
+      code: fact.code,
+      ...(retryAfter === 0 ? {} : { providerRetryAfterMs: retryAfter }),
+      at: now,
+    })
+    const records = [...(this.failures.get(fact.requestId) ?? []), normalizedFact]
     const bounded = records.slice(-this.config.historyWindowSize)
     this.failures.set(fact.requestId, Object.freeze(bounded))
+    const cooldownUntil = now + Math.max(this.config.cooldownMs, retryAfter)
+    for (const sticky of this.sticky.values()) {
+      if (sticky.requestId === fact.requestId) this.cooldowns.set(`${fact.requestId}\u0000${sticky.alias}`, cooldownUntil)
+    }
   }
 
-  failuresSinceSelection(request: CapabilityRequestV1, now: number): number {
-    const selectedCount = this.selectedFailureCounts.get(requestKey(request)) ?? 0
-    return Math.max(0, this.failuresFor(request.taskId, now).length - selectedCount)
+  isCoolingDown(requestId: string, alias: string, now: number): boolean {
+    const key = `${requestId}\u0000${alias}`
+    const until = this.cooldowns.get(key)
+    return until !== undefined && now < until
+  }
+
+  consumeExpiredCooldown(requestId: string, alias: string, now: number): boolean {
+    const key = `${requestId}\u0000${alias}`
+    const until = this.cooldowns.get(key)
+    if (until === undefined || now < until) return false
+    this.cooldowns.delete(key)
+    return true
   }
 
   escalation(requestId: string, now: number): EscalationStateV1 | undefined {
@@ -157,11 +181,28 @@ export class SchedulerStateStore {
   }
 
   complete(requestId: string): void {
+    for (const [key, sticky] of this.sticky) {
+      if (sticky.requestId !== requestId) continue
+      this.sticky.delete(key)
+    }
     for (const [key, state] of this.affinity) {
       if (state.requestId !== requestId) continue
       this.affinity.delete(key)
       this.affinityRoutes.delete(key)
     }
+    this.failures.delete(requestId)
+    this.escalations.delete(requestId)
+    for (const key of this.cooldowns.keys()) if (key.startsWith(`${requestId}\u0000`)) this.cooldowns.delete(key)
+  }
+
+  dispose(): void {
+    this.sticky.clear()
+    this.affinity.clear()
+    this.affinityRoutes.clear()
+    this.failures.clear()
+    this.escalations.clear()
+    this.cooldowns.clear()
+    this.routeSwitches.length = 0
   }
 
   recordSwitch(record: RouteSwitchRecordV1): void {

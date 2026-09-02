@@ -58,6 +58,61 @@ describe('adaptive scheduler escalation', () => {
     expect(scheduler.switches().length).toBeLessThanOrEqual(64)
   })
 
+  it('uses the configured cooldown and restores the original route at the exact boundary', async () => {
+    let now = 1_000
+    const config = { ...schedulerConfig, cooldownMs: 100 }
+    const scheduler = createAdaptiveScheduler(config, { now: () => now, generation: 'g1' })
+    await scheduler.schedule(request, budget, signal)
+    scheduler.recordFailure({ requestId: request.taskId, code: 'TIMEOUT' })
+
+    await expect(scheduler.schedule(request, budget, signal)).resolves.toMatchObject({ route: { model: 'fallback-disabled' } })
+    now = 1_099
+    await expect(scheduler.schedule(request, budget, signal)).resolves.toMatchObject({ route: { model: 'fallback-disabled' } })
+    now = 1_100
+    await expect(scheduler.schedule(request, budget, signal)).resolves.toMatchObject({ route: { model: 'baseline-disabled' } })
+  })
+
+  it('honors a bounded provider retry-after when it exceeds the default cooldown', async () => {
+    let now = 1_000
+    const config = { ...schedulerConfig, cooldownMs: 100 }
+    const scheduler = createAdaptiveScheduler(config, { now: () => now, generation: 'g1' })
+    await scheduler.schedule(request, budget, signal)
+    scheduler.recordFailure({ requestId: request.taskId, code: 'RATE_LIMIT', providerRetryAfterMs: 300 })
+
+    now = 1_299
+    await expect(scheduler.schedule(request, budget, signal)).resolves.toMatchObject({ route: { model: 'fallback-disabled' } })
+    now = 1_300
+    await expect(scheduler.schedule(request, budget, signal)).resolves.toMatchObject({ route: { model: 'baseline-disabled' } })
+  })
+
+  it('keeps filtering a cooled route after its sticky idle state expires', async () => {
+    let now = 1_000
+    const scheduler = createAdaptiveScheduler({
+      ...schedulerConfig,
+      cooldownMs: 50,
+      idleTtlMs: 100,
+    }, { now: () => now, generation: 'g1' })
+    await scheduler.schedule(request, budget, signal)
+    scheduler.recordFailure({ requestId: request.taskId, code: 'RATE_LIMIT', providerRetryAfterMs: 300 })
+
+    now = 1_100
+    await expect(scheduler.schedule(request, budget, signal)).resolves.toMatchObject({ route: { model: 'fallback-disabled' } })
+    now = 1_300
+    await expect(scheduler.schedule(request, budget, signal)).resolves.toMatchObject({ route: { model: 'baseline-disabled' } })
+  })
+
+  it('caps an excessive provider retry-after at the configured safety bound', async () => {
+    let now = 1_000
+    const scheduler = createAdaptiveScheduler({ ...schedulerConfig, cooldownMs: 100, idleTtlMs: 900_000 }, { now: () => now, generation: 'g1' })
+    await scheduler.schedule(request, budget, signal)
+    scheduler.recordFailure({ requestId: request.taskId, code: 'RATE_LIMIT', providerRetryAfterMs: 10_000_000 })
+
+    now = 600_999
+    await expect(scheduler.schedule(request, budget, signal)).resolves.toMatchObject({ route: { model: 'fallback-disabled' } })
+    now = 601_000
+    await expect(scheduler.schedule(request, budget, signal)).resolves.toMatchObject({ route: { model: 'baseline-disabled' } })
+  })
+
   it('keeps Handoff escalation above a transient failure fallback', async () => {
     const scheduler = createAdaptiveScheduler(schedulerConfig, { generation: 'g1' })
     scheduler.recordFailure({ requestId: 'handoff-next', code: 'TIMEOUT' })

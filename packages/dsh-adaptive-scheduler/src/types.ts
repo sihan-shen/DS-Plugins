@@ -1,4 +1,4 @@
-import type { AdaptiveSchedulerService, RouteDecisionV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import type { AdaptiveSchedulerService, CapabilityRequestV1, RouteDecisionV1, ScheduleDecisionV1 } from '@ds-plugins/dsh-scheduling-contracts'
 
 export type TaskTypeV1 = 'code-fix' | 'code-new' | 'research' | 'summarize' | 'review' | 'tool-heavy' | 'unknown'
 export type RouteTierV1 = 'baseline' | 'fallback' | 'strong'
@@ -99,7 +99,7 @@ export interface WorkerAffinityStateV1 {
   readonly background: false
 }
 
-export type RouteSwitchReasonV1 = 'EXPLICIT_ROUTE' | 'TRANSIENT_FALLBACK' | 'ADAPTIVE_ESCALATION' | 'HANDOFF_ESCALATION' | 'PHASE_BOUNDARY' | 'TTL_EXPIRED' | 'IDLE_EXPIRED'
+export type RouteSwitchReasonV1 = 'EXPLICIT_ROUTE' | 'TRANSIENT_FALLBACK' | 'ADAPTIVE_ESCALATION' | 'HANDOFF_ESCALATION' | 'PHASE_BOUNDARY' | 'TTL_EXPIRED' | 'IDLE_EXPIRED' | 'COOLDOWN_EXPIRED'
 
 export interface RouteSwitchRecordV1 {
   readonly requestId: string
@@ -119,6 +119,8 @@ export interface CatalogAvailabilityV1 {
 export interface AdaptiveSchedulerRuntime extends AdaptiveSchedulerService {
   recordFailure(fact: ProviderFailureFactV1): void
   switches(): readonly RouteSwitchRecordV1[]
+  hydrate(request: CapabilityRequestV1, decision: ScheduleDecisionV1, selectedAt: number): void
   complete(requestId: string): void
+  disposeSession(requestId: string): void
   readonly generation: string
 }

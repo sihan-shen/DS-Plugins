@@ -68,15 +68,46 @@ describe('adaptive scheduler state', () => {
     expect(state.affinityFor({ ...workerRequest, taskId: 'session-2' }, 'g1')).toBe(otherTask)
   })
 
-  it('cleans the frozen profile through scheduler completion', async () => {
+  it('cleans all invocation state through scheduler completion', async () => {
     const scheduler = createAdaptiveScheduler(schedulerConfig, { generation: 'g1' })
-    const workerRequest = { ...request, affinity: { workerId: 'worker-1' } }
-    await scheduler.schedule(workerRequest, budget, signal)
-    scheduler.complete(request.taskId)
+    const workerRequest = {
+      ...request,
+      profile: { ...request.profile, risk: 90 },
+      affinity: { workerId: 'worker-1' },
+    }
+    await expect(scheduler.schedule(workerRequest, budget, signal)).resolves.toMatchObject({ route: { model: 'strong-disabled' } })
     scheduler.recordFailure({ requestId: request.taskId, code: 'TIMEOUT' })
-    await expect(scheduler.schedule(workerRequest, budget, signal)).resolves.toMatchObject({
-      explanationCode: 'TRANSIENT_FALLBACK',
+    scheduler.complete(request.taskId)
+    await expect(scheduler.schedule({
+      ...request,
+      affinity: { workerId: 'worker-1' },
+    }, budget, signal)).resolves.toMatchObject({
+      explanationCode: 'TASK_BASELINE',
+      route: { model: 'baseline-disabled' },
+    })
+  })
+
+  it('hydrates durable stickiness with the original event timestamp', async () => {
+    let now = 1_000
+    const config = { ...schedulerConfig, stickyTtlMs: 100, idleTtlMs: 100 }
+    const scheduler = createAdaptiveScheduler(config, { now: () => now, generation: 'g1' })
+    scheduler.hydrate(request, {
+      schemaVersion: 1,
+      mode: 'single-worker',
+      route: schedulerConfig.catalog[1].route,
+      workerCount: 1,
+      source: 'scheduler',
+      policyVersion: schedulerConfig.policyVersion,
+    }, 950)
+
+    await expect(scheduler.schedule(request, budget, signal)).resolves.toMatchObject({
+      explanationCode: 'STICKY_ROUTE',
       route: { model: 'fallback-disabled' },
+    })
+    now = 1_050
+    await expect(scheduler.schedule(request, budget, signal)).resolves.toMatchObject({
+      explanationCode: 'TASK_BASELINE',
+      route: { model: 'baseline-disabled' },
     })
   })
 

@@ -1,5 +1,5 @@
 import { parseBudgetViewV1, parseCapabilityRequestV1, parseScheduleDecisionV1, parseScheduleFeedbackV1 } from '@ds-plugins/dsh-scheduling-contracts'
-import type { BudgetViewV1, CapabilityRequestV1, ScheduleDecisionV1, ScheduleFeedbackV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import type { BudgetViewV1, CapabilityRequestV1, RouteDecisionV1, ScheduleDecisionV1, ScheduleFeedbackV1 } from '@ds-plugins/dsh-scheduling-contracts'
 import { classifyTaskType, resolveCatalogCandidate, strongestAllowedAlias } from './catalog.js'
 import { BoundedPerformanceHistory } from './history.js'
 import { SchedulerStateStore } from './state.js'
@@ -87,11 +87,44 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
     state.recordSwitch({ requestId: request.taskId, generation, reason, ...(previous === undefined ? {} : { previousRoute: previous.route }), nextRoute: next.route, at })
   }
 
-  function fallbackSelection(request: CapabilityRequestV1): RouteCatalogEntryV1 | undefined {
+  function fallbackSelection(request: CapabilityRequestV1, timestamp: number): RouteCatalogEntryV1 | undefined {
     for (const entry of config.catalog) {
       if (entry.tier !== 'fallback') continue
+      if (state.isCoolingDown(request.taskId, entry.alias, timestamp)) continue
       const candidate = resolveCatalogCandidate(config, entry.alias, request)
       if (candidate !== undefined) return candidate
+    }
+    return undefined
+  }
+
+  function matchingHydrationCandidate(request: CapabilityRequestV1, route: RouteDecisionV1): RouteCatalogEntryV1 | undefined {
+    const entry = config.catalog.find(candidate =>
+      candidate.route.provider === route.provider
+      && candidate.route.model === route.model
+      && candidate.route.reasoningEffort === route.reasoningEffort
+      && candidate.route.promptProfile === route.promptProfile
+      && candidate.route.modelFamily === route.modelFamily
+      && route.maxTokens <= candidate.route.maxTokens,
+    )
+    return entry === undefined
+      ? undefined
+      : resolveCatalogCandidate(config, entry.alias, request, { route, toolFilter: entry.toolFilter })
+  }
+
+  function cooldownAlternative(request: CapabilityRequestV1, current: RouteCatalogEntryV1, timestamp: number): RouteCatalogEntryV1 | undefined {
+    const tierOrder = current.tier === 'baseline'
+      ? ['fallback', 'strong'] as const
+      : current.tier === 'fallback'
+        ? ['strong', 'baseline'] as const
+        : ['fallback', 'baseline'] as const
+    for (const tier of tierOrder) {
+      let best: RouteCatalogEntryV1 | undefined
+      for (const entry of config.catalog) {
+        if (entry.tier !== tier || state.isCoolingDown(request.taskId, entry.alias, timestamp)) continue
+        const candidate = resolveCatalogCandidate(config, entry.alias, request)
+        if (candidate !== undefined && (best === undefined || candidate.reliability > best.reliability)) best = candidate
+      }
+      if (best !== undefined) return best
     }
     return undefined
   }
@@ -103,6 +136,16 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
     },
     switches() {
       return state.switches()
+    },
+    hydrate(requestValue: CapabilityRequestV1, decisionValue: ScheduleDecisionV1, selectedAt: number): void {
+      const request = parseCapabilityRequestV1(requestValue)
+      const decision = parseScheduleDecisionV1(decisionValue)
+      if (!Number.isSafeInteger(selectedAt) || selectedAt < 0) throw new TypeError('selectedAt must be a non-negative safe integer')
+      const expectedMode = request.target === 'worker' ? 'single-worker' : 'direct'
+      const expectedWorkers = request.target === 'worker' ? 1 : 0
+      if (decision.mode !== expectedMode || decision.workerCount !== expectedWorkers) throw new TypeError('hydrated decision target shape is invalid')
+      const candidate = matchingHydrationCandidate(request, decision.route)
+      if (candidate !== undefined) state.hydrateSticky(request, candidate.alias, selectedAt, generation)
     },
     observe(feedbackValue: ScheduleFeedbackV1): void {
       const feedback = parseScheduleFeedbackV1(feedbackValue)
@@ -159,14 +202,18 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
           previousCandidate = sticky === undefined ? previousCandidate : resolveCatalogCandidate(config, sticky.alias, request)
           switchReason = 'ADAPTIVE_ESCALATION'
         }
+      } else if (sticky !== undefined && sticky.alias !== selected.candidate.alias && state.consumeExpiredCooldown(request.taskId, selected.candidate.alias, timestamp)) {
+        previousCandidate = resolveCatalogCandidate(config, sticky.alias, request)
+        candidate = selected.candidate
+        reason = selected.reason
+        switchReason = 'COOLDOWN_EXPIRED'
       } else if (sticky !== undefined) {
         previousCandidate = resolveCatalogCandidate(config, sticky.alias, request)
         if (previousCandidate !== undefined) {
           candidate = previousCandidate
           reason = 'STICKY_ROUTE'
-          const failuresSinceSelection = state.failuresSinceSelection(request, timestamp)
-          if (failuresSinceSelection > 0 && previousCandidate.tier === 'baseline') {
-            const fallback = fallbackSelection(request)
+          if (state.isCoolingDown(request.taskId, previousCandidate.alias, timestamp) && previousCandidate.tier === 'baseline') {
+            const fallback = fallbackSelection(request, timestamp)
             if (fallback !== undefined) {
               candidate = fallback
               reason = 'TRANSIENT_FALLBACK'
@@ -180,7 +227,7 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
                 switchReason = 'ADAPTIVE_ESCALATION'
               }
             }
-          } else if (failuresSinceSelection > 0 && previousCandidate.tier === 'fallback') {
+          } else if (state.isCoolingDown(request.taskId, previousCandidate.alias, timestamp) && previousCandidate.tier === 'fallback') {
             if ((state.escalation(request.taskId, timestamp)?.count ?? 0) >= config.maxEscalationsPerTask) throw new SchedulingError('ESCALATION_ROUNDS_EXHAUSTED')
             const strongAlias = strongestAllowedAlias(config, request)
             const strong = resolveCatalogCandidate(config, strongAlias, request)
@@ -204,6 +251,16 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
         reason = selected.reason
       }
 
+      if (state.isCoolingDown(request.taskId, candidate.alias, timestamp)) {
+        const cooled = candidate
+        const alternate = cooldownAlternative(request, cooled, timestamp)
+        if (alternate === undefined) throw new SchedulingError('NO_CATALOG_ROUTE')
+        previousCandidate ??= cooled
+        candidate = alternate
+        reason = alternate.tier === 'strong' ? 'ADAPTIVE_ESCALATION' : 'TRANSIENT_FALLBACK'
+        switchReason = alternate.tier === 'strong' ? 'ADAPTIVE_ESCALATION' : 'TRANSIENT_FALLBACK'
+      }
+
       const frozenAffinity = state.affinityFor(request, generation)
       if (frozenAffinity !== undefined) {
         const frozenRoute = state.affinityRouteFor(request, generation)
@@ -218,8 +275,7 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
       if (candidate !== selected.candidate && switchReason === undefined && reason !== 'HISTORY_ORDERED_CANDIDATE') switchReason = 'TTL_EXPIRED'
       if (switchReason !== undefined) recordSwitch(request, previousCandidate, candidate, switchReason, timestamp)
       if (reason === 'ADAPTIVE_ESCALATION') state.markEscalation(request.taskId, timestamp)
-      const activeFailureCount = failures.length
-      if (sticky === undefined || sticky.alias !== candidate.alias) state.rememberSticky(request, candidate.alias, timestamp, generation, activeFailureCount)
+      if (sticky === undefined || sticky.alias !== candidate.alias) state.rememberSticky(request, candidate.alias, timestamp, generation)
       state.freezeAffinity(request, candidate, generation)
       rememberSelection(request, candidate, reason)
       const decision = decisionFor(request, config, generation, candidate, reason)
@@ -227,9 +283,15 @@ export function createAdaptiveScheduler(config: AdaptiveSchedulerConfig, options
     },
     complete(requestId: string): void {
       state.complete(requestId)
+      history.complete(requestId)
+    },
+    disposeSession(requestId: string): void {
+      state.complete(requestId)
+      history.complete(requestId)
     },
     async dispose(): Promise<void> {
       history.dispose()
+      state.dispose()
     },
   }
 }

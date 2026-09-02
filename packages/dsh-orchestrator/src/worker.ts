@@ -316,22 +316,26 @@ export function createDelegateWorkerTool(options: DelegateWorkerToolOptions): To
         budget: budget.snapshot(),
         signal: exec.signal,
       })
-      if (exec.signal.aborted) throwReason(exec.signal)
-      const action = budget.admitPluginTool('delegate_worker')
-      if (!action.allowed) {
-        resolvedSchedule.scheduler?.observe?.(budgetFeedback(resolvedSchedule.request.taskId, action))
-        throw new Error(`delegate_worker rejected by budget: ${action.code}`)
+      try {
+        if (exec.signal.aborted) throwReason(exec.signal)
+        const action = budget.admitPluginTool('delegate_worker')
+        if (!action.allowed) {
+          resolvedSchedule.scheduler?.observe?.(budgetFeedback(resolvedSchedule.request.taskId, action))
+          throw new Error(`delegate_worker rejected by budget: ${action.code}`)
+        }
+        const worker = budget.admitWorker()
+        if (!worker.allowed) {
+          resolvedSchedule.scheduler?.observe?.(budgetFeedback(resolvedSchedule.request.taskId, worker))
+          throw new Error(`delegate_worker rejected by budget: ${worker.code}`)
+        }
+        appendScheduleSelected(parent.session, scheduleSelectedFrom(resolvedSchedule.decision, 'worker'))
+        const handoff = await runWorker({ ...input, config: options.config, resolvedSchedule, parent, signal: exec.signal, subagents: options.subagents })
+        resolvedSchedule.scheduler?.observe?.(handoffFeedback(resolvedSchedule.request.taskId, handoff))
+        if (!exec.signal.aborted) exec.deferContext(handoffContext(handoff))
+        return handoff
+      } finally {
+        resolvedSchedule.scheduler?.complete?.(resolvedSchedule.request.taskId)
       }
-      const worker = budget.admitWorker()
-      if (!worker.allowed) {
-        resolvedSchedule.scheduler?.observe?.(budgetFeedback(resolvedSchedule.request.taskId, worker))
-        throw new Error(`delegate_worker rejected by budget: ${worker.code}`)
-      }
-      appendScheduleSelected(parent.session, scheduleSelectedFrom(resolvedSchedule.decision, 'worker'))
-      const handoff = await runWorker({ ...input, config: options.config, resolvedSchedule, parent, signal: exec.signal, subagents: options.subagents })
-      resolvedSchedule.scheduler?.observe?.(handoffFeedback(resolvedSchedule.request.taskId, handoff))
-      if (!exec.signal.aborted) exec.deferContext(handoffContext(handoff))
-      return handoff
     },
     presentCall: rawArgs => {
       try {

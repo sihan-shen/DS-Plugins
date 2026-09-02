@@ -20,7 +20,8 @@ interface RequestErrorPayload {
 
 interface EventContext {
   provide(name: string, value: unknown): () => void
-  on(name: string, listener: (payload: RequestErrorPayload, next: () => Promise<unknown>) => Promise<unknown>): () => void
+  on(name: 'agent/request-error', listener: (payload: RequestErrorPayload, next: () => Promise<unknown>) => Promise<unknown>): () => void
+  on(name: 'session/disposed', listener: (session: { readonly id: unknown; readonly header: { readonly parentSession?: unknown } }) => void): () => void
 }
 
 export const name = 'dsh-adaptive-scheduler'
@@ -43,7 +44,11 @@ export const apply: Plugin.Function<AdaptiveSchedulerConfig> = (ctx: Context, ra
       }
       return next()
     })
+    const disposeSessions = eventContext.on('session/disposed', session => {
+      runtime.disposeSession(String(session.header.parentSession ?? session.id))
+    })
     return async () => {
+      disposeSessions()
       disposeFailures()
       disposeService()
       await runtime.dispose?.()
