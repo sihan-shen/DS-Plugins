@@ -136,6 +136,7 @@ export interface ScheduleSelectedV1 {
   readonly maxTokens: number
   readonly reasoningEffort?: string
   readonly promptProfile?: string
+  readonly modelFamily?: string
   readonly policyVersion?: string
 }
 

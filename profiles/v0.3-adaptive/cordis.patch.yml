@@ -7,9 +7,9 @@
     scheduling:
       allowInvalidDecisionFallback: false
       allowedRoutes:
-        - { provider: provider-disabled, model: baseline-disabled, maxTokens: 32000 }
-        - { provider: provider-disabled, model: fallback-disabled, maxTokens: 32000 }
-        - { provider: provider-disabled, model: strong-disabled, maxTokens: 64000 }
+        - { provider: provider-disabled, model: baseline-disabled, maxTokens: 32000, promptProfile: coding-v1, modelFamily: deepseek }
+        - { provider: provider-disabled, model: fallback-disabled, maxTokens: 32000, promptProfile: coding-v1, modelFamily: deepseek }
+        - { provider: provider-disabled, model: strong-disabled, maxTokens: 64000, reasoningEffort: high, promptProfile: coding-strong-v1, modelFamily: deepseek }
       rootProfile: { coding: 50, reasoning: 50, toolUse: 50, repoContext: 50, risk: 50, difficulty: 50 }
       workerProfile: { coding: 80, reasoning: 70, toolUse: 60, repoContext: 80, risk: 30, difficulty: 60 }
       maxLatencyMs: 60000

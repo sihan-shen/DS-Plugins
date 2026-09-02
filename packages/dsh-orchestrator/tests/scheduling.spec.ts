@@ -253,7 +253,31 @@ describe('orchestrator scheduling adapter', () => {
     ], metadataConfig, 'root')).toBeUndefined()
   })
 
-  it('accepts scheduler route metadata when the profile only constrains the hard route', async () => {
+  it('preserves all configured route metadata when a selected route is replayed', () => {
+    const metadataConfig: OrchestratorConfig = {
+      ...config,
+      mode: 'direct',
+      budgets: { ...config.budgets, maxWorkers: 0 },
+      scheduling: { ...scheduling, allowedRoutes: [routes[3]] },
+    }
+    const decision = {
+      ...validDecision,
+      mode: 'direct' as const,
+      route: routes[3],
+      workerCount: 0 as const,
+    }
+    const selected = scheduleSelectedFrom(decision, 'root')
+    expect(selected).toMatchObject({
+      reasoningEffort: 'high',
+      promptProfile: 'coding-v1',
+      modelFamily: 'deepseek',
+    })
+    expect(restoreScheduleSelected([
+      { type: 'dsh-plugin/schedule-selected', data: selected },
+    ], metadataConfig, 'root')).toMatchObject({ route: routes[3] })
+  })
+
+  it('rejects scheduler route metadata when the profile omits those fields', async () => {
     const hardRouteConfig: OrchestratorConfig = {
       ...config,
       scheduling: {
@@ -281,9 +305,7 @@ describe('orchestrator scheduling adapter', () => {
       }),
     }
 
-    await expect(resolveSchedule(hardRouteConfig, { current: () => scheduler }, workerInput)).resolves.toMatchObject({
-      decision: { route: schedulerRoute },
-    })
+    await expect(resolveSchedule(hardRouteConfig, { current: () => scheduler }, workerInput)).rejects.toThrow('SCHEDULE_DECISION_INVALID')
   })
 
   it('rejects target-incompatible fixed profiles', () => {

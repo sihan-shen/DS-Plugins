@@ -1,10 +1,12 @@
 import { Context } from '@deepseek-ai/cordis'
+import { agentEvents, type Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-subagent'
 import type {} from '@deepseek-ai/dsh-tools'
 import { describe, expect, it, vi } from 'vitest'
+import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { BudgetController } from '../src/budgets.ts'
-import type { ResolvedScheduleV1 } from '../src/scheduling.ts'
+import { mountRootScheduling, type ResolvedScheduleV1, type SchedulerResolver } from '../src/scheduling.ts'
 import { createDelegateWorkerTool, HANDOFF_V1_JSON_SCHEMA, mountSingleWorkerMode, runWorker, SINGLE_WORKER_STARTUP_TIMEOUT_MS } from '../src/worker.ts'
 import type { HandoffV1, OrchestratorConfig } from '../src/types.ts'
 
@@ -221,7 +223,10 @@ function toolRegistry() {
   }
 }
 
-async function mountedSingleWorkerMode() {
+async function mountedSingleWorkerMode(
+  modeConfig: OrchestratorConfig = config,
+  schedulerResolver: SchedulerResolver = noSchedulerResolver,
+) {
   const ctx = new Context()
   const sessionStore = await ctx.plugin(SessionStore)
   const tools = toolRegistry()
@@ -237,7 +242,8 @@ async function mountedSingleWorkerMode() {
     }),
   }
   const fiber = await ctx.plugin(child => {
-    mountSingleWorkerMode(child, config, budgetRegistry, noSchedulerResolver)
+    mountRootScheduling(child, modeConfig, budgetRegistry, schedulerResolver)
+    return mountSingleWorkerMode(child, modeConfig, budgetRegistry, schedulerResolver)
   })
   return { ctx, sessionStore, fiber }
 }
@@ -776,6 +782,73 @@ describe('single-worker service lifecycle', () => {
     ctx.provide('subagents', new FakeSubagents(async () => { throw new Error('must not mount') }) as never)
     expect(tools.get('delegate_worker')).toBeUndefined()
     vi.useRealTimers()
+  })
+
+  it('routes a Single Worker root request before its actual header and ignores malformed actual routes', async () => {
+    const scheduler = {
+      schedule: async () => ({
+        schemaVersion: 1 as const,
+        mode: 'direct' as const,
+        route: {
+          provider: 'provider-disabled',
+          model: 'strong-disabled',
+          maxTokens: 64_000,
+          reasoningEffort: 'high',
+        },
+        workerCount: 0 as const,
+        source: 'scheduler' as const,
+        policyVersion: 'v0.3.0',
+      }),
+    }
+    const mounted = await mountedSingleWorkerMode(adaptiveConfig, { current: () => scheduler })
+    const root = mounted.ctx.sessions.create(SessionId('worker-scheduled-root'), {
+      meta: { cwd: workspaceRoot },
+    })
+    const agent = { id: root.id, session: root } as Agent
+
+    const result = await agentEvents(mounted.ctx, agent).waterfall(
+      'agent/request',
+      { turn: 1, step: 1, signal: new AbortController().signal },
+      async () => ({ provider: 'profile-disabled', model: 'profile-disabled', temperature: 0.2, stop: ['<stop>'] }),
+    )
+    expect(result).toMatchObject({
+      provider: 'provider-disabled',
+      model: 'strong-disabled',
+      maxTokens: 64_000,
+      reasoningEffort: ReasoningEffortId('high'),
+      temperature: 0.2,
+      stop: ['<stop>'],
+    })
+    expect(root.events.map(event => event.type)).toEqual(['dsh-plugin/schedule-selected'])
+
+    root.append('request/header', { header: { config: result }, reason: 'initial' })
+    const missingModel = mounted.ctx.sessions.create(SessionId('worker-scheduled-missing-model'), {
+      meta: { cwd: workspaceRoot },
+    })
+    missingModel.append('request/header', {
+      header: { config: { provider: 'provider-disabled' } },
+      reason: 'initial',
+    } as never)
+    const malformedConfig = mounted.ctx.sessions.create(SessionId('worker-scheduled-malformed'), {
+      meta: { cwd: workspaceRoot },
+    })
+    malformedConfig.append('request/header', {
+      header: { config: 'not-a-route' },
+      reason: 'initial',
+    } as never)
+    await Promise.resolve()
+
+    expect(root.events.map(event => event.type)).toEqual([
+      'dsh-plugin/schedule-selected',
+      'request/header',
+      'dsh-plugin/run-started',
+    ])
+    expect(root.events[2]).toMatchObject({ data: { provider: 'provider-disabled', model: 'strong-disabled' } })
+    expect(missingModel.events.filter(event => event.type === 'dsh-plugin/run-started')).toEqual([])
+    expect(malformedConfig.events.filter(event => event.type === 'dsh-plugin/run-started')).toEqual([])
+
+    await mounted.fiber.dispose()
+    await mounted.sessionStore.dispose()
   })
 
   it('records the actual root request route and ignores malformed route snapshots', async () => {

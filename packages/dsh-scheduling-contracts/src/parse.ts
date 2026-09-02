@@ -349,16 +349,17 @@ export function parseScheduleFeedbackV1(value: unknown): ScheduleFeedbackV1 {
 
 export function parseScheduleSelectedV1(value: unknown): ScheduleSelectedV1 {
   assertJsonValue(value, 'scheduleSelected')
-  const input = exactRecord(value, 'scheduleSelected', ['schemaVersion', 'target', 'source', 'provider', 'model', 'maxTokens', 'reasoningEffort', 'promptProfile', 'policyVersion'])
+  const input = exactRecord(value, 'scheduleSelected', ['schemaVersion', 'target', 'source', 'provider', 'model', 'maxTokens', 'reasoningEffort', 'promptProfile', 'modelFamily', 'policyVersion'])
   const route = parseRouteDecisionV1({
     provider: input.provider,
     model: input.model,
     maxTokens: input.maxTokens,
     ...(Object.prototype.hasOwnProperty.call(input, 'reasoningEffort') ? { reasoningEffort: input.reasoningEffort } : {}),
     ...(Object.prototype.hasOwnProperty.call(input, 'promptProfile') ? { promptProfile: input.promptProfile } : {}),
+    ...(Object.prototype.hasOwnProperty.call(input, 'modelFamily') ? { modelFamily: input.modelFamily } : {}),
   })
   if (input.schemaVersion !== 1) throw new TypeError('scheduleSelected.schemaVersion must be 1')
   if (input.target !== 'root' && input.target !== 'worker') throw new TypeError('scheduleSelected.target is unsupported')
   if (input.source !== 'scheduler' && input.source !== 'profile-fallback') throw new TypeError('scheduleSelected.source is unsupported')
-  return deepFreeze({ schemaVersion: 1, target: input.target, source: input.source, provider: route.provider, model: route.model, maxTokens: route.maxTokens, ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort }), ...(route.promptProfile === undefined ? {} : { promptProfile: route.promptProfile }), ...optionalIdentifier(input, 'policyVersion', 'scheduleSelected.policyVersion') })
+  return deepFreeze({ schemaVersion: 1, target: input.target, source: input.source, provider: route.provider, model: route.model, maxTokens: route.maxTokens, ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort }), ...(route.promptProfile === undefined ? {} : { promptProfile: route.promptProfile }), ...(route.modelFamily === undefined ? {} : { modelFamily: route.modelFamily }), ...optionalIdentifier(input, 'policyVersion', 'scheduleSelected.policyVersion') })
 }

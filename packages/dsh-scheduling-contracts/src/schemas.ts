@@ -282,6 +282,7 @@ export const SCHEDULE_SELECTED_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
     maxTokens: { type: 'integer', minimum: 1, maximum: 128_000 },
     reasoningEffort: boundedIdentifier,
     promptProfile: boundedIdentifier,
+    modelFamily: boundedIdentifier,
     policyVersion: boundedIdentifier,
   },
   required: ['schemaVersion', 'target', 'source', 'provider', 'model', 'maxTokens'],

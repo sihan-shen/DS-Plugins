@@ -137,7 +137,7 @@ function routeIsAllowed(config: OrchestratorConfig, route: RouteDecisionV1): boo
   const scheduling = config.scheduling
   if (scheduling === undefined) return false
   const allowed = scheduling.allowedRoutes.find(candidate =>
-    ROUTE_IDENTITY_AND_METADATA_KEYS.every(key => candidate[key] === undefined || candidate[key] === route[key]),
+    ROUTE_IDENTITY_AND_METADATA_KEYS.every(key => candidate[key] === route[key]),
   )
   return allowed !== undefined
     && route.maxTokens <= allowed.maxTokens
@@ -224,6 +224,7 @@ export function scheduleSelectedFrom(decision: ScheduleDecisionV1, target: 'root
     maxTokens: selectedDecision.route.maxTokens,
     ...(selectedDecision.route.reasoningEffort === undefined ? {} : { reasoningEffort: selectedDecision.route.reasoningEffort }),
     ...(selectedDecision.route.promptProfile === undefined ? {} : { promptProfile: selectedDecision.route.promptProfile }),
+    ...(selectedDecision.route.modelFamily === undefined ? {} : { modelFamily: selectedDecision.route.modelFamily }),
     policyVersion: selectedDecision.policyVersion,
   })
 }
@@ -251,6 +252,7 @@ export function restoreScheduleSelected(
       maxTokens: selected.maxTokens,
       ...(selected.reasoningEffort === undefined ? {} : { reasoningEffort: selected.reasoningEffort }),
       ...(selected.promptProfile === undefined ? {} : { promptProfile: selected.promptProfile }),
+      ...(selected.modelFamily === undefined ? {} : { modelFamily: selected.modelFamily }),
     }
     if (!routeIsAllowed(config, route)) continue
     return parseScheduleDecisionV1({
