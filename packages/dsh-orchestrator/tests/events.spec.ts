@@ -4,6 +4,7 @@ import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
 import {
   appendBudgetRejected,
   appendRunStarted,
+  appendScheduleSelected,
   appendVerificationFinished,
   appendWorkerFinished,
   appendWorkerRequested,
@@ -49,6 +50,29 @@ function payloadKeys(value: unknown): string[] {
 }
 
 describe('durable orchestrator events', () => {
+  it('appends a detached schedule-selected event without sensitive fields', () => {
+    const session = Session.create(SessionId('dsh-schedule-selected'))
+    const input = {
+      schemaVersion: 1,
+      target: 'worker',
+      source: 'scheduler',
+      provider: 'provider-disabled',
+      model: 'baseline-disabled',
+      maxTokens: 32_000,
+      policyVersion: 'v0.3.0',
+    } as const
+
+    expect(appendScheduleSelected(session, input)).toBe(0)
+    ;(input as { model: string }).model = 'mutated'
+    expect(session.events[0]).toMatchObject({
+      type: 'dsh-plugin/schedule-selected',
+      data: { model: 'baseline-disabled' },
+    })
+    expect(JSON.stringify(session.events[0])).not.toContain('credential')
+    expect(() => session.append('dsh-plugin/schedule-selected', input)).not.toThrow()
+    expect(JSON.parse(JSON.stringify(session.events))).toEqual(session.events)
+  })
+
   it('appends required orchestration records in order and returns their sequence numbers', () => {
     const session = Session.create(SessionId('dsh-events'))
 

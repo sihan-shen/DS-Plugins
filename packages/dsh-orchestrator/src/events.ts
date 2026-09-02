@@ -1,4 +1,6 @@
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { parseScheduleSelectedV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import type { ScheduleSelectedV1 } from '@ds-plugins/dsh-scheduling-contracts'
 import type { HandoffV1, VerificationEvidenceV1, WorkerSpecV1 } from './types.js'
 
 /** Durable record of the resolved run configuration. */
@@ -50,6 +52,8 @@ declare module '@deepseek-ai/dsh-session/types' {
     'dsh-plugin/budget-rejected': BudgetRejectedV1
     /** Required replay record of one targeted verification result. */
     'dsh-plugin/verification-finished': VerificationEvidenceV1
+    /** Durable record of the selected bounded scheduler route. */
+    'dsh-plugin/schedule-selected': ScheduleSelectedV1
   }
 }
 
@@ -155,4 +159,9 @@ export function appendBudgetRejected(session: Session, rejection: BudgetRejected
  */
 export function appendVerificationFinished(session: Session, evidence: VerificationEvidenceV1): number {
   return session.append('dsh-plugin/verification-finished', snapshotVerification(evidence)).seq
+}
+
+/** Append a validated, detached scheduler selection provenance record. */
+export function appendScheduleSelected(session: Session, selected: ScheduleSelectedV1): number {
+  return session.append('dsh-plugin/schedule-selected', parseScheduleSelectedV1(selected)).seq
 }

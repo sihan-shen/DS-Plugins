@@ -9,5 +9,7 @@ describe('published orchestrator package entry', () => {
     expect(entry.appendWorkerFinished).toEqual(expect.any(Function))
     expect(entry.appendBudgetRejected).toEqual(expect.any(Function))
     expect(entry.appendVerificationFinished).toEqual(expect.any(Function))
+    expect(entry.appendScheduleSelected).toEqual(expect.any(Function))
+    expect(entry.resolveSchedule).toEqual(expect.any(Function))
   })
 })

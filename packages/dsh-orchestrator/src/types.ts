@@ -1,3 +1,5 @@
+import type { CapabilityProfileV1, RouteDecisionV1 } from '@ds-plugins/dsh-scheduling-contracts'
+
 /** Caller-argument policy for one deployment-controlled verification program. */
 export type VerificationAllowedArgs = 'none' | 'orchestrator-test-paths'
 
@@ -30,6 +32,18 @@ export interface OrchestratorConfig {
     readonly timeoutMs: number
     readonly maxOutputBytes: number
   }
+  /** Optional deterministic capability-to-route scheduling policy. */
+  readonly scheduling?: OrchestratorSchedulingConfig
+}
+
+/** Deployment-controlled hard bounds and capability profiles for adaptive scheduling. */
+export interface OrchestratorSchedulingConfig {
+  readonly allowInvalidDecisionFallback: boolean
+  readonly allowedRoutes: readonly RouteDecisionV1[]
+  readonly rootProfile: CapabilityProfileV1
+  readonly workerProfile: CapabilityProfileV1
+  readonly maxLatencyMs: number
+  readonly allowPaidFallback: boolean
 }
 
 /** One immutable, provenance-carrying context disclosure returned by the optional compiler service. */

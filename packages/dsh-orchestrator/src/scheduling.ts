@@ -1,0 +1,245 @@
+import type { Context } from '@deepseek-ai/cordis'
+import type { Session, SessionEvent } from '@deepseek-ai/dsh-session'
+import {
+  MAX_SCHEDULING_LATENCY_MS,
+  parseBudgetViewV1,
+  parseCapabilityRequestV1,
+  parseScheduleDecisionV1,
+  parseScheduleSelectedV1,
+} from '@ds-plugins/dsh-scheduling-contracts'
+import type {
+  AdaptiveSchedulerService,
+  BudgetViewV1,
+  CapabilityProfileV1,
+  CapabilityRequestV1,
+  RouteDecisionV1,
+  ScheduleDecisionV1,
+  ScheduleSelectedV1,
+} from '@ds-plugins/dsh-scheduling-contracts'
+import type { HandoffV1, OrchestratorConfig } from './types.js'
+
+/** Resolves the currently active optional scheduler service generation. */
+export interface SchedulerResolver {
+  current(): AdaptiveSchedulerService | undefined
+}
+
+/** Inputs projected into one scheduler capability request. */
+export interface ResolveScheduleInput {
+  readonly target: 'root' | 'worker'
+  readonly taskId: string
+  readonly objective: string
+  readonly requiredTools: readonly string[]
+  readonly affinity?: CapabilityRequestV1['affinity']
+  readonly priorHandoff?: HandoffV1
+  readonly budget: BudgetViewV1
+  readonly signal: AbortSignal
+}
+
+/** The validated request, selected decision, and scheduler generation that produced it. */
+export interface ResolvedScheduleV1 {
+  readonly request: CapabilityRequestV1
+  readonly decision: ScheduleDecisionV1
+  readonly scheduler?: AdaptiveSchedulerService
+}
+
+/** Error raised when a scheduler response is not acceptable to the Orchestrator boundary. */
+export class SchedulingValidationError extends Error {
+  readonly code: 'SCHEDULE_DECISION_INVALID'
+  readonly cause: unknown
+
+  constructor(code: 'SCHEDULE_DECISION_INVALID', options: { readonly cause?: unknown } = {}) {
+    super(code)
+    this.name = 'SchedulingValidationError'
+    this.code = code
+    this.cause = options.cause
+  }
+}
+
+const DEFAULT_PROFILE: CapabilityProfileV1 = {
+  coding: 50,
+  reasoning: 50,
+  toolUse: 50,
+  repoContext: 50,
+  risk: 50,
+  difficulty: 50,
+}
+
+const PROFILE_FALLBACK_POLICY = 'profile-fallback-v1'
+
+/** Project one bounded capability request without exposing runtime/provider state. */
+export function buildCapabilityRequest(config: OrchestratorConfig, input: ResolveScheduleInput): CapabilityRequestV1 {
+  const scheduling = config.scheduling
+  const profile = input.target === 'root'
+    ? scheduling?.rootProfile ?? DEFAULT_PROFILE
+    : scheduling?.workerProfile ?? DEFAULT_PROFILE
+  const allowedProviders = scheduling === undefined
+    ? undefined
+    : [...new Set(scheduling.allowedRoutes.map(route => route.provider))]
+  return parseCapabilityRequestV1({
+    schemaVersion: 1,
+    target: input.target,
+    taskId: input.taskId,
+    objective: input.objective,
+    profile,
+    constraints: {
+      maxWorkers: input.target === 'worker' ? config.budgets.maxWorkers : 0,
+      maxOutputTokens: config.worker.maxTokens,
+      maxLatencyMs: scheduling?.maxLatencyMs ?? MAX_SCHEDULING_LATENCY_MS,
+      allowPaidFallback: scheduling?.allowPaidFallback ?? false,
+      ...(allowedProviders === undefined ? {} : { allowedProviders }),
+      requiredTools: [...input.requiredTools],
+    },
+    ...(input.affinity === undefined ? {} : { affinity: input.affinity }),
+    ...(input.priorHandoff === undefined ? {} : { priorHandoff: input.priorHandoff }),
+  })
+}
+
+/** Produce the deployment's fixed route when no scheduler decision is available. */
+export function fixedProfileSchedule(
+  worker: OrchestratorConfig['worker'],
+  mode: OrchestratorConfig['mode'],
+  target: 'root' | 'worker',
+): ScheduleDecisionV1 {
+  const expectedMode = target === 'worker' ? 'single-worker' : 'direct'
+  if (mode !== expectedMode) throw new TypeError('fixed profile mode does not match scheduling target')
+  return parseScheduleDecisionV1({
+    schemaVersion: 1,
+    mode: expectedMode,
+    route: {
+      provider: worker.provider,
+      model: worker.model,
+      maxTokens: worker.maxTokens,
+      ...(worker.reasoningEffort === undefined ? {} : { reasoningEffort: worker.reasoningEffort }),
+    },
+    workerCount: target === 'worker' ? 1 : 0,
+    source: 'profile-fallback',
+    policyVersion: PROFILE_FALLBACK_POLICY,
+    explanationCode: 'PROFILE_FALLBACK',
+  })
+}
+
+function routeIsAllowed(config: OrchestratorConfig, route: RouteDecisionV1): boolean {
+  const allowed = config.scheduling?.allowedRoutes.find(candidate =>
+    candidate.provider === route.provider && candidate.model === route.model,
+  )
+  if (config.scheduling !== undefined && allowed === undefined) return false
+  if (allowed !== undefined && route.maxTokens > allowed.maxTokens) return false
+  return route.maxTokens <= config.worker.maxTokens
+}
+
+function validateDecisionForConfig(
+  decision: ScheduleDecisionV1,
+  config: OrchestratorConfig,
+  target: 'root' | 'worker',
+): ScheduleDecisionV1 {
+  const expectedMode = target === 'worker' ? 'single-worker' : 'direct'
+  const expectedWorkers = target === 'worker' ? 1 : 0
+  if (decision.mode !== expectedMode || decision.workerCount !== expectedWorkers || decision.source !== 'scheduler') {
+    throw new TypeError('decision target shape is invalid')
+  }
+  if (!routeIsAllowed(config, decision.route)) throw new TypeError('decision route is not configured')
+  return decision
+}
+
+/** Resolve scheduler-first while keeping invalid responses outside final budget admission. */
+export async function resolveSchedule(
+  config: OrchestratorConfig,
+  resolver: SchedulerResolver,
+  input: ResolveScheduleInput,
+): Promise<ResolvedScheduleV1> {
+  const request = buildCapabilityRequest(config, input)
+  const scheduler = config.scheduling === undefined ? undefined : resolver.current()
+  if (scheduler === undefined) return { request, decision: fixedProfileSchedule(config.worker, config.mode, input.target) }
+  try {
+    const decision = validateDecisionForConfig(
+      parseScheduleDecisionV1(await scheduler.schedule(request, parseBudgetViewV1(input.budget), input.signal)),
+      config,
+      input.target,
+    )
+    return { request, decision, scheduler }
+  } catch (error) {
+    if (config.scheduling?.allowInvalidDecisionFallback === true) {
+      return { request, decision: fixedProfileSchedule(config.worker, config.mode, input.target), scheduler }
+    }
+    throw new SchedulingValidationError('SCHEDULE_DECISION_INVALID', { cause: error })
+  }
+}
+
+/** Track an optional adaptive scheduler generation using Cordis's unloadable injection lifecycle. */
+export function mountAdaptiveSchedulerResolver(ctx: Context): SchedulerResolver {
+  let current: AdaptiveSchedulerService | undefined
+  const injectOptional = (ctx as Context & { inject?: Context['inject'] }).inject
+  if (typeof injectOptional === 'function') {
+    injectOptional.call(ctx, ['adaptiveScheduler'], schedulerCtx => {
+      const scheduler = schedulerCtx.get('adaptiveScheduler') as AdaptiveSchedulerService | undefined
+      if (scheduler === undefined) return
+      schedulerCtx.effect(() => {
+        current = scheduler
+        return () => {
+          if (current === scheduler) current = undefined
+        }
+      }, 'ds-orchestrator: optional adaptive scheduler')
+    })
+  }
+  return {
+    current: () => current ?? (ctx.get('adaptiveScheduler') as AdaptiveSchedulerService | undefined),
+  }
+}
+
+/** Project a validated decision into its durable, bounded selection provenance. */
+export function scheduleSelectedFrom(decision: ScheduleDecisionV1, target: 'root' | 'worker'): ScheduleSelectedV1 {
+  const selectedDecision = parseScheduleDecisionV1(decision)
+  const expectedMode = target === 'worker' ? 'single-worker' : 'direct'
+  const expectedWorkers = target === 'worker' ? 1 : 0
+  if (selectedDecision.mode !== expectedMode || selectedDecision.workerCount !== expectedWorkers) {
+    throw new TypeError('schedule selection target shape is invalid')
+  }
+  return parseScheduleSelectedV1({
+    schemaVersion: 1,
+    target,
+    source: selectedDecision.source,
+    provider: selectedDecision.route.provider,
+    model: selectedDecision.route.model,
+    maxTokens: selectedDecision.route.maxTokens,
+    ...(selectedDecision.route.reasoningEffort === undefined ? {} : { reasoningEffort: selectedDecision.route.reasoningEffort }),
+    ...(selectedDecision.route.promptProfile === undefined ? {} : { promptProfile: selectedDecision.route.promptProfile }),
+    policyVersion: selectedDecision.policyVersion,
+  })
+}
+
+/** Restore the newest configured durable selection for one scheduling target. */
+export function restoreScheduleSelected(
+  events: readonly SessionEvent[],
+  config: OrchestratorConfig,
+  target: 'root' | 'worker',
+): ScheduleDecisionV1 | undefined {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index]
+    if (event?.type !== 'dsh-plugin/schedule-selected') continue
+    let selected: ScheduleSelectedV1
+    try {
+      selected = parseScheduleSelectedV1(event.data)
+    } catch {
+      continue
+    }
+    if (selected.target !== target) continue
+    const route: RouteDecisionV1 = {
+      provider: selected.provider,
+      model: selected.model,
+      maxTokens: selected.maxTokens,
+      ...(selected.reasoningEffort === undefined ? {} : { reasoningEffort: selected.reasoningEffort }),
+      ...(selected.promptProfile === undefined ? {} : { promptProfile: selected.promptProfile }),
+    }
+    if (!routeIsAllowed(config, route)) continue
+    return parseScheduleDecisionV1({
+      schemaVersion: 1,
+      mode: target === 'worker' ? 'single-worker' : 'direct',
+      route,
+      workerCount: target === 'worker' ? 1 : 0,
+      source: selected.source,
+      policyVersion: selected.policyVersion ?? PROFILE_FALLBACK_POLICY,
+      explanationCode: 'DURABLE_STICKY_RESTORE',
+    })
+  }
+  return undefined
+}

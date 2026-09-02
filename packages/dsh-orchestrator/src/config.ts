@@ -1,3 +1,4 @@
+import { MAX_SCHEDULING_ITEMS, MAX_SCHEDULING_LATENCY_MS, parseRouteDecisionV1 } from '@ds-plugins/dsh-scheduling-contracts'
 import type { OrchestratorConfig, VerificationAllowedArgs, VerificationCommand } from './types.js'
 
 /** Maximum number of plugin-owned tool actions admitted in one run. */
@@ -71,6 +72,53 @@ function verificationCommand(value: unknown, index: number): VerificationCommand
   return { name, executable, fixedArgs, allowedArgs: allowedArgs as VerificationAllowedArgs }
 }
 
+const SCHEDULING_KEYS = ['allowInvalidDecisionFallback', 'allowedRoutes', 'rootProfile', 'workerProfile', 'maxLatencyMs', 'allowPaidFallback'] as const
+const PROFILE_KEYS = ['coding', 'reasoning', 'toolUse', 'repoContext', 'risk', 'difficulty'] as const
+
+function booleanValue(value: unknown, path: string): boolean {
+  if (typeof value !== 'boolean') fail(path, 'must be a boolean')
+  return value
+}
+
+function capabilityProfile(value: unknown, path: string) {
+  const profile = record(value, path)
+  onlyKeys(profile, path, PROFILE_KEYS)
+  const result = {} as Record<(typeof PROFILE_KEYS)[number], number>
+  for (const key of PROFILE_KEYS) {
+    const score = profile[key]
+    if (typeof score !== 'number' || !Number.isFinite(score) || score < 0 || score > 100) {
+      fail(`${path}.${key}`, 'must be a finite number between 0 and 100')
+    }
+    result[key] = score
+  }
+  return result
+}
+
+function schedulingConfig(value: unknown): NonNullable<OrchestratorConfig['scheduling']> {
+  const scheduling = record(value, 'scheduling')
+  onlyKeys(scheduling, 'scheduling', SCHEDULING_KEYS)
+  if (!Array.isArray(scheduling.allowedRoutes)) fail('scheduling.allowedRoutes', 'must be an array')
+  if (scheduling.allowedRoutes.length === 0) fail('scheduling.allowedRoutes', 'must not be empty')
+  if (scheduling.allowedRoutes.length > MAX_SCHEDULING_ITEMS) fail('scheduling.allowedRoutes', `must not contain more than ${MAX_SCHEDULING_ITEMS} items`)
+  const allowedRoutes = scheduling.allowedRoutes.map((route, index) => {
+    try {
+      return parseRouteDecisionV1(route)
+    } catch (error) {
+      fail(`scheduling.allowedRoutes[${index}]`, error instanceof Error ? error.message : 'is invalid')
+    }
+  })
+  const routeKeys = new Set(allowedRoutes.map(route => `${route.provider}\u0000${route.model}`))
+  if (routeKeys.size !== allowedRoutes.length) fail('scheduling.allowedRoutes', 'must not contain duplicate provider/model routes')
+  return {
+    allowInvalidDecisionFallback: booleanValue(scheduling.allowInvalidDecisionFallback, 'scheduling.allowInvalidDecisionFallback'),
+    allowedRoutes,
+    rootProfile: capabilityProfile(scheduling.rootProfile, 'scheduling.rootProfile'),
+    workerProfile: capabilityProfile(scheduling.workerProfile, 'scheduling.workerProfile'),
+    maxLatencyMs: positiveInteger(scheduling.maxLatencyMs, 'scheduling.maxLatencyMs', MAX_SCHEDULING_LATENCY_MS),
+    allowPaidFallback: booleanValue(scheduling.allowPaidFallback, 'scheduling.allowPaidFallback'),
+  }
+}
+
 /**
  * Validate deployment configuration before the plugin starts.
  * @param value - Raw Cordis configuration.
@@ -79,7 +127,7 @@ function verificationCommand(value: unknown, index: number): VerificationCommand
  */
 export function parseConfig(value: unknown): OrchestratorConfig {
   const config = record(value, 'config')
-  onlyKeys(config, 'config', ['workspaceRoot', 'mode', 'worker', 'budgets', 'verification'])
+  onlyKeys(config, 'config', ['workspaceRoot', 'mode', 'worker', 'budgets', 'verification', 'scheduling'])
 
   const workspaceRoot = nonEmptyString(config.workspaceRoot, 'workspaceRoot')
   if (workspaceRoot.includes('\0')) fail('workspaceRoot', 'must not contain NUL bytes')
@@ -135,6 +183,7 @@ export function parseConfig(value: unknown): OrchestratorConfig {
     worker: { provider, model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }), maxTokens },
     budgets: { maxWorkers, maxPluginToolActions, toolTimeoutMs },
     verification: { commands, timeoutMs, maxOutputBytes },
+    ...(config.scheduling === undefined ? {} : { scheduling: schedulingConfig(config.scheduling) }),
   }
 }
 

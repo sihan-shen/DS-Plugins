@@ -32,6 +32,18 @@ const validConfig = {
   },
 } as const
 
+const validScheduling = {
+  allowInvalidDecisionFallback: false,
+  allowedRoutes: [
+    { provider: 'provider-disabled', model: 'baseline-disabled', maxTokens: 32_000 },
+    { provider: 'provider-disabled', model: 'strong-disabled', maxTokens: 64_000, reasoningEffort: 'high' },
+  ],
+  rootProfile: { coding: 50, reasoning: 50, toolUse: 50, repoContext: 50, risk: 50, difficulty: 50 },
+  workerProfile: { coding: 80, reasoning: 70, toolUse: 60, repoContext: 80, risk: 30, difficulty: 60 },
+  maxLatencyMs: 60_000,
+  allowPaidFallback: false,
+} as const
+
 function configWith(patch: Record<string, unknown>) {
   return {
     ...validConfig,
@@ -60,6 +72,18 @@ function configWithVerificationExecutable(executable: string) {
 describe('parseConfig', () => {
   it('returns valid bounded configuration', () => {
     expect(parseConfig(validConfig)).toEqual(validConfig)
+  })
+
+  it('accepts the optional bounded scheduling configuration', () => {
+    expect(parseConfig({ ...validConfig, scheduling: validScheduling })).toEqual({ ...validConfig, scheduling: validScheduling })
+  })
+
+  it('rejects unknown scheduling keys and out-of-range capability profiles', () => {
+    expect(() => parseConfig({ ...validConfig, scheduling: { ...validScheduling, unexpected: true } })).toThrow(/scheduling\.unexpected/)
+    expect(() => parseConfig({
+      ...validConfig,
+      scheduling: { ...validScheduling, workerProfile: { ...validScheduling.workerProfile, risk: 101 } },
+    })).toThrow(/scheduling\.workerProfile\.risk/)
   })
 
   it.each(['', '/workspace\0ds-plugins'])('rejects an invalid deployment workspace root', workspaceRoot => {

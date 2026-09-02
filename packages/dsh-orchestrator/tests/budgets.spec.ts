@@ -26,6 +26,24 @@ function rejections(): { readonly values: BudgetRejection[]; readonly record: (r
 }
 
 describe('deterministic budget admission', () => {
+  it('exposes an immutable read-only scheduling budget snapshot', () => {
+    const recorder = rejections()
+    const controller = new BudgetController({ ...budgets, maxPluginToolActions: 24 }, recorder.record)
+
+    expect(controller.snapshot()).toEqual({
+      maxWorkers: 1,
+      admittedWorkers: 0,
+      maxPluginToolActions: 24,
+      admittedPluginToolActions: 0,
+      remainingWorkers: 1,
+      remainingPluginToolActions: 24,
+    })
+    controller.admitPluginTool('delegate_worker')
+    expect(controller.snapshot()).toMatchObject({ admittedPluginToolActions: 1, remainingPluginToolActions: 23 })
+    expect('admitWorker' in controller.snapshot()).toBe(false)
+    expect(Object.isFrozen(controller.snapshot())).toBe(true)
+  })
+
   it('rejects the first worker in Direct mode and records its exact rejected observation', () => {
     const recorder = rejections()
     const controller = new BudgetController({ ...budgets, maxWorkers: 0 }, recorder.record)

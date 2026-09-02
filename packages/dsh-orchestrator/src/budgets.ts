@@ -1,5 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session'
+import { parseBudgetViewV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import type { BudgetViewV1 } from '@ds-plugins/dsh-scheduling-contracts'
 import type { OrchestratorConfig } from './types.js'
 
 /** The only plugin-owned tools counted by the v0.1 action budget. */
@@ -86,6 +88,18 @@ export class BudgetController {
     }
     this.pluginToolActionCount = observed
     return { allowed: true }
+  }
+
+  /** Return a detached immutable view for scheduler admission decisions. */
+  snapshot(): BudgetViewV1 {
+    return parseBudgetViewV1({
+      maxWorkers: this.workerLimit,
+      admittedWorkers: this.workerCount,
+      maxPluginToolActions: this.pluginToolActionLimit,
+      admittedPluginToolActions: this.pluginToolActionCount,
+      remainingWorkers: this.workerLimit - this.workerCount,
+      remainingPluginToolActions: this.pluginToolActionLimit - this.pluginToolActionCount,
+    })
   }
 
   /** Dispose this controller so every later admission fails without changing counters. */

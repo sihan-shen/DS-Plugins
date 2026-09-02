@@ -9,6 +9,7 @@ import { mountDirectMode } from './direct.js'
 import { appendBudgetRejected } from './events.js'
 import { mountTargetedVerificationTool } from './verification.js'
 import { mountSingleWorkerMode } from './worker.js'
+import { mountAdaptiveSchedulerResolver } from './scheduling.js'
 import type { OrchestratorConfig } from './types.js'
 
 export { BudgetController, createBudgetControllerRegistry, mountBudgetControllerRegistry } from './budgets.js'
@@ -34,6 +35,7 @@ export {
 export { DIRECT_PROMPT_ORDER, DIRECT_PROMPT_SECTION, mountDirectMode } from './direct.js'
 export {
   appendBudgetRejected,
+  appendScheduleSelected,
   appendRunStarted,
   appendVerificationFinished,
   appendWorkerFinished,
@@ -77,10 +79,25 @@ export type {
   ContextCompiler,
   HandoffV1,
   OrchestratorConfig,
+  OrchestratorSchedulingConfig,
   VerificationCommand,
   VerificationEvidenceV1,
   WorkerSpecV1,
 } from './types.js'
+export {
+  buildCapabilityRequest,
+  fixedProfileSchedule,
+  mountAdaptiveSchedulerResolver,
+  resolveSchedule,
+  restoreScheduleSelected,
+  scheduleSelectedFrom,
+  SchedulingValidationError,
+} from './scheduling.js'
+export type {
+  ResolveScheduleInput,
+  ResolvedScheduleV1,
+  SchedulerResolver,
+} from './scheduling.js'
 
 /** Stable Cordis plugin name for the DSH v0.1 orchestration bundle. */
 export const name = 'ds-orchestrator'
@@ -103,6 +120,7 @@ export const apply = (ctx: Context, config: OrchestratorConfig): void | Promise<
       observed: rejection.observed,
     })
   })
+  mountAdaptiveSchedulerResolver(ctx)
   mountTargetedVerificationTool(ctx, {
     workspaceRoot: config.workspaceRoot,
     verification: config.verification,
