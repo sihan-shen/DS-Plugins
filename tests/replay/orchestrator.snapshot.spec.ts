@@ -64,11 +64,12 @@ describe('DSH v0.1 keyless replay fixtures', () => {
     expect(replay.startsBeforeInvalidOutput).toBe(1)
     expect(replay.secondError).toContain('WORKER_LIMIT')
     expect(replay.events.map(event => event.type)).toEqual([
+      'dsh-plugin/schedule-selected',
       'dsh-plugin/worker-requested',
       'dsh-plugin/worker-finished',
       'dsh-plugin/budget-rejected',
     ])
-    expect(replay.events[2]).toMatchObject({ data: { reason: 'WORKER_LIMIT', limit: 1, observed: 2 } })
+    expect(replay.events[3]).toMatchObject({ data: { reason: 'WORKER_LIMIT', limit: 1, observed: 2 } })
     expect(replay.invalid).toMatchObject({ status: 'failed', changedFiles: [], verification: [] })
     expect(JSON.stringify(replay)).not.toContain('SECRET_CHILD_OUTPUT')
     expect(replay.invalidEvents.map(event => event.type)).toEqual([

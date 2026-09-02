@@ -4,11 +4,14 @@ import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentRun, SubagentRuntime, SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
 import type { ObjectJsonSchema, ToolDefinition } from '@deepseek-ai/dsh-tools'
-import type { BudgetControllerRegistry } from './budgets.js'
+import type { ScheduleFeedbackV1, RouteDecisionV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import { parseScheduleFeedbackV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import type { BudgetControllerRegistry, BudgetRejected } from './budgets.js'
 import { MAX_HANDOFF_ITEMS, MAX_HANDOFF_STRING_BYTES } from './config.js'
 import { mountContextIntegration } from './context.js'
-import { appendRunStarted, appendWorkerFinished, appendWorkerRequested } from './events.js'
+import { appendRunStarted, appendScheduleSelected, appendWorkerFinished, appendWorkerRequested } from './events.js'
 import { failedHandoff, normalizeWorkerOutput } from './handoff.js'
+import { resolveSchedule, scheduleSelectedFrom, type ResolvedScheduleV1, type SchedulerResolver } from './scheduling.js'
 import { parseRequestRoute, type HandoffV1, type OrchestratorConfig, type WorkerSpecV1 } from './types.js'
 
 /** Exact structured result contract requested from every v0.1 child worker. */
@@ -57,6 +60,7 @@ export interface DelegateWorkerInput {
 /** Dependencies required to run one already-admitted foreground worker. */
 export interface RunWorkerOptions extends DelegateWorkerInput {
   readonly config: OrchestratorConfig
+  readonly resolvedSchedule: ResolvedScheduleV1
   readonly parent: Agent
   readonly signal: AbortSignal
   readonly subagents: Pick<SubagentRuntime, 'start'>
@@ -67,6 +71,7 @@ export interface DelegateWorkerToolOptions {
   readonly config: OrchestratorConfig
   readonly subagents: Pick<SubagentRuntime, 'start'>
   readonly budgetRegistry: Pick<BudgetControllerRegistry, 'forRootSession'>
+  readonly schedulerResolver: SchedulerResolver
 }
 
 const workerPromptInstruction = [
@@ -139,14 +144,14 @@ function failedStart(signal: AbortSignal): HandoffV1 {
     : failedHandoff('Worker could not be started.')
 }
 
-function workerSpec(input: DelegateWorkerInput, config: OrchestratorConfig): WorkerSpecV1 {
+export function workerSpec(input: DelegateWorkerInput, resolvedRoute: RouteDecisionV1): WorkerSpecV1 {
   return {
     schemaVersion: 1,
     task: input.task,
-    provider: config.worker.provider,
-    model: config.worker.model,
-    ...(config.worker.reasoningEffort === undefined ? {} : { reasoningEffort: config.worker.reasoningEffort }),
-    maxTokens: config.worker.maxTokens,
+    provider: resolvedRoute.provider,
+    model: resolvedRoute.model,
+    ...(resolvedRoute.reasoningEffort === undefined ? {} : { reasoningEffort: resolvedRoute.reasoningEffort }),
+    maxTokens: resolvedRoute.maxTokens,
     allowedTools: [...input.allowedTools],
     expectedOutput: 'handoff-v1',
   }
@@ -201,6 +206,32 @@ function handoffContext(handoff: HandoffV1) {
   })
 }
 
+function budgetFeedback(requestId: string, rejection: BudgetRejected): ScheduleFeedbackV1 {
+  return parseScheduleFeedbackV1({
+    schemaVersion: 1,
+    requestId,
+    outcome: 'budget-rejected',
+    budgetRejection: {
+      code: rejection.code,
+      limit: rejection.limit,
+      observed: rejection.observed,
+    },
+  })
+}
+
+function handoffFeedback(requestId: string, handoff: HandoffV1): ScheduleFeedbackV1 {
+  const outcome = handoff.status === 'completed'
+    ? handoff.verification.some(item => item.status !== 'passed') ? 'verification-failed' : 'completed'
+    : handoff.status
+  return parseScheduleFeedbackV1({
+    schemaVersion: 1,
+    requestId,
+    outcome,
+    handoff,
+    verification: handoff.verification,
+  })
+}
+
 /**
  * Start one already-admitted foreground child, persist only validated evidence, and return the bounded handoff.
  * @param options - Validated deployment config, bounded input, root parent, and the caller's cancellation signal.
@@ -210,7 +241,7 @@ export async function runWorker(options: RunWorkerOptions): Promise<HandoffV1> {
   const input = parseDelegateWorkerInput({ task: options.task, allowedTools: options.allowedTools })
   if (options.signal.aborted) return blockedHandoff('Worker was cancelled before publication.')
 
-  const spec = workerSpec(input, options.config)
+  const spec = workerSpec(input, options.resolvedSchedule.decision.route)
   appendWorkerRequested(options.parent.session, spec)
 
   let run: SubagentRun | undefined
@@ -276,11 +307,28 @@ export function createDelegateWorkerTool(options: DelegateWorkerToolOptions): To
       if (parent === undefined) throw new Error('delegate_worker requires an active parent agent')
       const rootSessionId = parent.session.header.parentSession ?? parent.session.id
       const budget = options.budgetRegistry.forRootSession(rootSessionId)
+      const resolvedSchedule = await resolveSchedule(options.config, options.schedulerResolver, {
+        target: 'worker',
+        taskId: String(rootSessionId),
+        objective: input.task,
+        requiredTools: input.allowedTools,
+        affinity: { workerId: `${rootSessionId}:worker:1` },
+        budget: budget.snapshot(),
+        signal: exec.signal,
+      })
       const action = budget.admitPluginTool('delegate_worker')
-      if (!action.allowed) throw new Error(`delegate_worker rejected by budget: ${action.code}`)
+      if (!action.allowed) {
+        resolvedSchedule.scheduler?.observe?.(budgetFeedback(resolvedSchedule.request.taskId, action))
+        throw new Error(`delegate_worker rejected by budget: ${action.code}`)
+      }
       const worker = budget.admitWorker()
-      if (!worker.allowed) throw new Error(`delegate_worker rejected by budget: ${worker.code}`)
-      const handoff = await runWorker({ ...input, config: options.config, parent, signal: exec.signal, subagents: options.subagents })
+      if (!worker.allowed) {
+        resolvedSchedule.scheduler?.observe?.(budgetFeedback(resolvedSchedule.request.taskId, worker))
+        throw new Error(`delegate_worker rejected by budget: ${worker.code}`)
+      }
+      appendScheduleSelected(parent.session, scheduleSelectedFrom(resolvedSchedule.decision, 'worker'))
+      const handoff = await runWorker({ ...input, config: options.config, resolvedSchedule, parent, signal: exec.signal, subagents: options.subagents })
+      resolvedSchedule.scheduler?.observe?.(handoffFeedback(resolvedSchedule.request.taskId, handoff))
       if (!exec.signal.aborted) exec.deferContext(handoffContext(handoff))
       return handoff
     },
@@ -305,6 +353,7 @@ export function mountSingleWorkerMode(
   ctx: Context,
   config: OrchestratorConfig,
   budgetRegistry: Pick<BudgetControllerRegistry, 'forRootSession'>,
+  schedulerResolver: SchedulerResolver,
 ): Promise<void> {
   if (config.mode !== 'single-worker') throw new TypeError('mountSingleWorkerMode requires mode "single-worker"')
   mountContextIntegration(ctx, config)
@@ -323,7 +372,7 @@ export function mountSingleWorkerMode(
     workerCtx.effect(() => {
       const pending = new Map<SessionId, Session>()
       let active = true
-      const disposeTool = workerCtx.tools.register(createDelegateWorkerTool({ config, subagents: workerCtx.subagents, budgetRegistry }))
+      const disposeTool = workerCtx.tools.register(createDelegateWorkerTool({ config, subagents: workerCtx.subagents, budgetRegistry, schedulerResolver }))
       const disposeEvents = workerCtx.on('session/event', (session, event) => {
         if (event.type !== 'request/header' || session.header.parentSession !== undefined) return
         const route = parseRequestRoute(event.data.header)

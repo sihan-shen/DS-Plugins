@@ -1,8 +1,10 @@
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { createBudgetControllerRegistry } from '../../packages/dsh-orchestrator/src/budgets.ts'
 import { appendBudgetRejected } from '../../packages/dsh-orchestrator/src/events.ts'
+import { fixedProfileSchedule } from '../../packages/dsh-orchestrator/src/scheduling.ts'
 import { createDelegateWorkerTool, runWorker } from '../../packages/dsh-orchestrator/src/worker.ts'
 import type { HandoffV1, OrchestratorConfig } from '../../packages/dsh-orchestrator/src/types.ts'
+import type { ResolvedScheduleV1 } from '../../packages/dsh-orchestrator/src/scheduling.ts'
 
 const config: OrchestratorConfig = {
   workspaceRoot: '/workspace/dsh',
@@ -25,6 +27,11 @@ const validHandoff: HandoffV1 = {
   verification: [],
   blockers: [],
 }
+
+const resolvedSchedule = {
+  request: {} as never,
+  decision: fixedProfileSchedule(config.worker, config.mode, 'worker'),
+} as ResolvedScheduleV1
 
 class ReplaySubagents {
   starts = 0
@@ -62,7 +69,12 @@ export async function replaySingleWorkerFixture() {
   })
   const subagents = new ReplaySubagents(validHandoff)
   const deferred: unknown[] = []
-  const tool = createDelegateWorkerTool({ config, subagents: subagents as never, budgetRegistry: registry })
+  const tool = createDelegateWorkerTool({
+    config,
+    subagents: subagents as never,
+    budgetRegistry: registry,
+    schedulerResolver: { current: () => undefined },
+  })
   const first = await tool.execute(
     { task: 'Apply the focused change.', allowedTools: ['read_file'] },
     { signal: new AbortController().signal, agent: parent, deferContext: (message: unknown) => { deferred.push(message) } } as never,
@@ -81,6 +93,7 @@ export async function replaySingleWorkerFixture() {
   const invalidParent = { session: session('replay-invalid-worker') }
   const invalid = await runWorker({
     config,
+    resolvedSchedule,
     parent: invalidParent as never,
     task: 'Return malformed structured output.',
     allowedTools: ['read_file'],

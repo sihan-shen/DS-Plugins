@@ -3,6 +3,8 @@ import type {} from '@deepseek-ai/dsh-subagent'
 import type {} from '@deepseek-ai/dsh-tools'
 import { describe, expect, it, vi } from 'vitest'
 import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { BudgetController } from '../src/budgets.ts'
+import type { ResolvedScheduleV1 } from '../src/scheduling.ts'
 import { createDelegateWorkerTool, HANDOFF_V1_JSON_SCHEMA, mountSingleWorkerMode, runWorker, SINGLE_WORKER_STARTUP_TIMEOUT_MS } from '../src/worker.ts'
 import type { HandoffV1, OrchestratorConfig } from '../src/types.ts'
 
@@ -34,6 +36,24 @@ const config: OrchestratorConfig = {
   },
 }
 
+const adaptiveConfig: OrchestratorConfig = {
+  ...config,
+  worker: {
+    ...config.worker,
+    provider: 'profile-disabled',
+    model: 'profile-disabled',
+    maxTokens: 64_000,
+  },
+  scheduling: {
+    allowInvalidDecisionFallback: false,
+    allowedRoutes: [{ provider: 'provider-disabled', model: 'strong-disabled', maxTokens: 64_000, reasoningEffort: 'high' }],
+    rootProfile: { coding: 50, reasoning: 50, toolUse: 50, repoContext: 50, risk: 50, difficulty: 50 },
+    workerProfile: { coding: 80, reasoning: 70, toolUse: 60, repoContext: 80, risk: 30, difficulty: 60 },
+    maxLatencyMs: 60_000,
+    allowPaidFallback: false,
+  },
+}
+
 const validHandoff: HandoffV1 = {
   schemaVersion: 1,
   status: 'completed',
@@ -42,6 +62,31 @@ const validHandoff: HandoffV1 = {
   decisions: ['Kept the delegation foreground-only.'],
   verification: [],
   blockers: [],
+}
+
+const profileResolvedSchedule = {
+  request: {} as never,
+  decision: {
+    schemaVersion: 1,
+    mode: 'single-worker',
+    route: config.worker,
+    workerCount: 1,
+    source: 'profile-fallback',
+    policyVersion: 'profile-fallback-v1',
+  },
+} as ResolvedScheduleV1
+
+const noSchedulerResolver = { current: () => undefined }
+
+function emptyBudgetSnapshot() {
+  return {
+    maxWorkers: 1,
+    admittedWorkers: 0,
+    maxPluginToolActions: 2,
+    admittedPluginToolActions: 0,
+    remainingWorkers: 1,
+    remainingPluginToolActions: 2,
+  }
 }
 
 interface FakeRequest {
@@ -77,10 +122,12 @@ type Start = (request: FakeRequest) => Promise<FakeRun>
 class FakeSubagents {
   readonly requests: FakeRequest[] = []
   readonly providers: string[] = []
+  starts = 0
 
   constructor(private readonly startRun: Start) {}
 
   start(provider: string, request: FakeRequest): Promise<FakeRun> {
+    this.starts += 1
     this.providers.push(provider)
     this.requests.push(request)
     return this.startRun(request)
@@ -127,6 +174,7 @@ function workerOptions(overrides: Partial<Parameters<typeof runWorker>[0]> = {})
   return {
     options: {
       config,
+      resolvedSchedule: profileResolvedSchedule,
       parent,
       task: 'Update the focused worker file.',
       allowedTools: ['read_file', 'write_file'],
@@ -173,10 +221,11 @@ async function mountedSingleWorkerMode() {
     forRootSession: () => ({
       admitPluginTool: () => ({ allowed: true as const }),
       admitWorker: () => ({ allowed: true as const }),
+      snapshot: emptyBudgetSnapshot,
     }),
   }
   const fiber = await ctx.plugin(child => {
-    mountSingleWorkerMode(child, config, budgetRegistry)
+    mountSingleWorkerMode(child, config, budgetRegistry, noSchedulerResolver)
   })
   return { ctx, sessionStore, fiber }
 }
@@ -191,6 +240,7 @@ describe('one-shot worker runtime', () => {
 
     const running = runWorker({
       config,
+      resolvedSchedule: profileResolvedSchedule,
       parent,
       task: 'Update the focused worker file.',
       allowedTools: ['read_file', 'write_file'],
@@ -248,6 +298,7 @@ describe('one-shot worker runtime', () => {
     const { parent, injected } = parentFor()
     const handoff = await runWorker({
       config,
+      resolvedSchedule: profileResolvedSchedule,
       parent,
       task: 'Bounded task.',
       allowedTools: ['read_file'],
@@ -288,6 +339,7 @@ describe('one-shot worker runtime', () => {
 
     const handoff = await runWorker({
       config,
+      resolvedSchedule: profileResolvedSchedule,
       parent,
       task: 'Bounded task.',
       allowedTools: ['read_file'],
@@ -312,6 +364,7 @@ describe('one-shot worker runtime', () => {
 
     const handoff = await runWorker({
       config,
+      resolvedSchedule: profileResolvedSchedule,
       parent,
       task: 'Bounded task.',
       allowedTools: ['read_file'],
@@ -333,6 +386,7 @@ describe('one-shot worker runtime', () => {
 
     const handoff = await runWorker({
       config,
+      resolvedSchedule: profileResolvedSchedule,
       parent,
       task: 'Bounded task.',
       allowedTools: ['read_file'],
@@ -356,6 +410,7 @@ describe('one-shot worker runtime', () => {
     const subagents = new FakeSubagents(async () => run.run)
     const running = runWorker({
       config,
+      resolvedSchedule: profileResolvedSchedule,
       parent,
       task: 'Bounded task.',
       allowedTools: ['read_file'],
@@ -383,6 +438,140 @@ describe('one-shot worker runtime', () => {
 })
 
 describe('delegate_worker tool', () => {
+  it('rejects an invalid scheduler decision without consuming either budget', async () => {
+    const controller = new BudgetController(config.budgets, () => undefined)
+    const { parent } = parentFor()
+    const subagents = new FakeSubagents(async () => { throw new Error('worker must not start') })
+    const tool = createDelegateWorkerTool({
+      config: adaptiveConfig,
+      subagents,
+      budgetRegistry: { forRootSession: () => controller },
+      schedulerResolver: {
+        current: () => ({
+          schedule: async () => ({
+            schemaVersion: 1,
+            mode: 'single-worker' as const,
+            route: { provider: 'unconfigured', model: 'bad', maxTokens: 32_000 },
+            workerCount: 1 as const,
+            source: 'scheduler' as const,
+            policyVersion: 'bad',
+          }),
+        }),
+      },
+    })
+    const before = controller.snapshot()
+
+    await expect(tool.execute(
+      { task: 'Fix parser', allowedTools: ['targeted_verify'] },
+      { signal: new AbortController().signal, agent: parent } as never,
+    )).rejects.toThrow('SCHEDULE_DECISION_INVALID')
+    expect(controller.snapshot()).toEqual(before)
+    expect(subagents.starts).toBe(0)
+    expect(parent.session.events).toEqual([])
+  })
+
+  it('records the selected route before the worker and reports a bounded completion feedback', async () => {
+    const { parent } = parentFor()
+    const run = publishedRun(Promise.resolve({ stopReason: 'completed', structured: validHandoff, output: [] }))
+    const subagents = new FakeSubagents(async () => run.run)
+    const controller = new BudgetController(adaptiveConfig.budgets, () => undefined)
+    const observed: unknown[] = []
+    const scheduler = {
+      schedule: async (request: unknown, budget: unknown) => {
+        observed.push({ request, budget })
+        return {
+          schemaVersion: 1 as const,
+          mode: 'single-worker' as const,
+          route: { provider: 'provider-disabled', model: 'strong-disabled', maxTokens: 64_000, reasoningEffort: 'high' },
+          workerCount: 1 as const,
+          source: 'scheduler' as const,
+          policyVersion: 'v0.3.0',
+        }
+      },
+      observe: (feedback: unknown) => { observed.push(feedback) },
+    }
+    const tool = createDelegateWorkerTool({
+      config: adaptiveConfig,
+      subagents,
+      budgetRegistry: { forRootSession: () => controller },
+      schedulerResolver: { current: () => scheduler },
+    })
+    const deferContext = vi.fn()
+
+    await expect(tool.execute(
+      { task: 'Fix parser', allowedTools: ['targeted_verify'] },
+      { signal: new AbortController().signal, agent: parent, deferContext } as never,
+    )).resolves.toEqual(validHandoff)
+
+    expect(parent.session.events.map(event => event.type)).toEqual([
+      'dsh-plugin/schedule-selected',
+      'dsh-plugin/worker-requested',
+      'dsh-plugin/worker-finished',
+    ])
+    expect(parent.session.events[1]).toMatchObject({
+      data: { provider: 'provider-disabled', model: 'strong-disabled', reasoningEffort: 'high', maxTokens: 64_000 },
+    })
+    expect(subagents.requests[0]).toMatchObject({
+      agentOptions: { provider: 'provider-disabled', model: 'strong-disabled', maxTokens: 64_000 },
+      maxDepth: 1,
+      toolFilter: { allow: ['targeted_verify'] },
+    })
+    expect(subagents.requests[0]?.agentOptions).not.toHaveProperty('reasoningEffort')
+    expect(observed).toEqual([
+      expect.objectContaining({
+        request: expect.objectContaining({
+          taskId: String(parent.session.id),
+          affinity: { workerId: `${parent.session.id}:worker:1` },
+        }),
+        budget: expect.objectContaining({ admittedWorkers: 0, admittedPluginToolActions: 0 }),
+      }),
+      expect.objectContaining({
+        schemaVersion: 1,
+        requestId: String(parent.session.id),
+        outcome: 'completed',
+        handoff: expect.objectContaining({ status: 'completed' }),
+      }),
+    ])
+  })
+
+  it('reports a budget rejection to the scheduler without recording a selection or starting a worker', async () => {
+    const { parent } = parentFor()
+    const controller = new BudgetController({ ...adaptiveConfig.budgets, maxPluginToolActions: 0 }, () => undefined)
+    const subagents = new FakeSubagents(async () => { throw new Error('worker must not start') })
+    const observed: unknown[] = []
+    const scheduler = {
+      schedule: async () => ({
+        schemaVersion: 1 as const,
+        mode: 'single-worker' as const,
+        route: { provider: 'provider-disabled', model: 'strong-disabled', maxTokens: 64_000, reasoningEffort: 'high' },
+        workerCount: 1 as const,
+        source: 'scheduler' as const,
+        policyVersion: 'v0.3.0',
+      }),
+      observe: (feedback: unknown) => { observed.push(feedback) },
+    }
+    const tool = createDelegateWorkerTool({
+      config: adaptiveConfig,
+      subagents,
+      budgetRegistry: { forRootSession: () => controller },
+      schedulerResolver: { current: () => scheduler },
+    })
+
+    await expect(tool.execute(
+      { task: 'Fix parser', allowedTools: ['targeted_verify'] },
+      { signal: new AbortController().signal, agent: parent } as never,
+    )).rejects.toThrow('PLUGIN_TOOL_LIMIT')
+
+    expect(observed).toEqual([{
+      schemaVersion: 1,
+      requestId: String(parent.session.id),
+      outcome: 'budget-rejected',
+      budgetRejection: { code: 'PLUGIN_TOOL_LIMIT', limit: 0, observed: 1 },
+    }])
+    expect(parent.session.events).toEqual([])
+    expect(subagents.starts).toBe(0)
+  })
+
   it('admits one delegation before starting, binds a scrubbed handoff to its tool result, and rejects the second without invoking the provider', async () => {
     const { parent, injected } = parentFor()
     const first = publishedRun(Promise.resolve({ stopReason: 'completed', structured: validHandoff, output: [] }))
@@ -394,7 +583,8 @@ describe('delegate_worker tool', () => {
     const tool = createDelegateWorkerTool({
       config,
       subagents,
-      budgetRegistry: { forRootSession: () => ({ admitPluginTool, admitWorker }) },
+      budgetRegistry: { forRootSession: () => ({ admitPluginTool, admitWorker, snapshot: emptyBudgetSnapshot }) },
+      schedulerResolver: noSchedulerResolver,
     })
     const deferContext = vi.fn()
 
@@ -442,7 +632,8 @@ describe('delegate_worker tool', () => {
     const tool = createDelegateWorkerTool({
       config,
       subagents,
-      budgetRegistry: { forRootSession: () => ({ admitPluginTool, admitWorker }) },
+      budgetRegistry: { forRootSession: () => ({ admitPluginTool, admitWorker, snapshot: emptyBudgetSnapshot }) },
+      schedulerResolver: noSchedulerResolver,
     })
     const aborted = new AbortController()
     const cancellation = new Error('already cancelled')
@@ -481,9 +672,10 @@ describe('single-worker service lifecycle', () => {
       forRootSession: () => ({
         admitPluginTool: () => ({ allowed: true as const }),
         admitWorker: () => ({ allowed: true as const }),
+        snapshot: emptyBudgetSnapshot,
       }),
     }
-    const fiber = ctx.plugin(child => mountSingleWorkerMode(child, config, budgetRegistry))
+    const fiber = ctx.plugin(child => mountSingleWorkerMode(child, config, budgetRegistry, noSchedulerResolver))
 
     expect(tools.get('delegate_worker')).toBeUndefined()
     await vi.advanceTimersByTimeAsync(SINGLE_WORKER_STARTUP_TIMEOUT_MS - 1)
@@ -506,8 +698,8 @@ describe('single-worker service lifecycle', () => {
     const ctx = new Context()
     ctx.provide('tools', toolRegistry() as never)
     const fiber = ctx.plugin(child => mountSingleWorkerMode(child, config, {
-      forRootSession: () => ({ admitPluginTool: () => ({ allowed: true as const }), admitWorker: () => ({ allowed: true as const }) }),
-    }))
+      forRootSession: () => ({ admitPluginTool: () => ({ allowed: true as const }), admitWorker: () => ({ allowed: true as const }), snapshot: emptyBudgetSnapshot }),
+    }, noSchedulerResolver))
     await vi.advanceTimersByTimeAsync(SINGLE_WORKER_STARTUP_TIMEOUT_MS)
     await expect(fiber).rejects.toThrow(/single-worker.*subagents.*timeout/i)
     vi.useRealTimers()
@@ -519,8 +711,8 @@ describe('single-worker service lifecycle', () => {
     const tools = toolRegistry()
     ctx.provide('tools', tools as never)
     const fiber = ctx.plugin(child => mountSingleWorkerMode(child, config, {
-      forRootSession: () => ({ admitPluginTool: () => ({ allowed: true as const }), admitWorker: () => ({ allowed: true as const }) }),
-    }))
+      forRootSession: () => ({ admitPluginTool: () => ({ allowed: true as const }), admitWorker: () => ({ allowed: true as const }), snapshot: emptyBudgetSnapshot }),
+    }, noSchedulerResolver))
     await fiber.dispose()
     await vi.advanceTimersByTimeAsync(SINGLE_WORKER_STARTUP_TIMEOUT_MS)
     ctx.provide('subagents', new FakeSubagents(async () => { throw new Error('must not mount') }) as never)

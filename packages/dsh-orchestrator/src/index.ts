@@ -62,6 +62,7 @@ export {
   mountSingleWorkerMode,
   parseDelegateWorkerInput,
   runWorker,
+  workerSpec,
   SINGLE_WORKER_STARTUP_TIMEOUT_MS,
 } from './worker.js'
 export type {
@@ -120,7 +121,7 @@ export const apply = (ctx: Context, config: OrchestratorConfig): void | Promise<
       observed: rejection.observed,
     })
   })
-  mountAdaptiveSchedulerResolver(ctx)
+  const schedulerResolver = mountAdaptiveSchedulerResolver(ctx)
   mountTargetedVerificationTool(ctx, {
     workspaceRoot: config.workspaceRoot,
     verification: config.verification,
@@ -130,7 +131,7 @@ export const apply = (ctx: Context, config: OrchestratorConfig): void | Promise<
   if (config.mode === 'direct') {
     mountDirectMode(ctx, config)
   } else {
-    return mountSingleWorkerMode(ctx, config, budgets.registry)
+    return mountSingleWorkerMode(ctx, config, budgets.registry, schedulerResolver)
   }
 }
 
