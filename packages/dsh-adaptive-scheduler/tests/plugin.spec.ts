@@ -68,6 +68,60 @@ describe('adaptive scheduler Cordis plugin', () => {
     await fiber.dispose()
   })
 
+  it('does not clear root scheduling state when a child worker session is disposed', async () => {
+    const ctx = new Context()
+    const fiber = await ctx.plugin(apply, schedulerConfig)
+    const service = ctx.get('adaptiveScheduler')!
+    const taskId = 'live-root-with-disposed-child'
+    const rootRequest = {
+      ...request,
+      target: 'root' as const,
+      taskId,
+      constraints: { ...request.constraints, maxWorkers: 0 as const },
+    }
+    await service.schedule(rootRequest, budget, new AbortController().signal)
+    service.recordFailure({ requestId: taskId, code: 'TIMEOUT' })
+    await expect(service.schedule(rootRequest, budget, new AbortController().signal)).resolves.toMatchObject({
+      route: { model: 'fallback-disabled' },
+    })
+
+    ctx.emit('session/disposed' as never, {
+      id: 'disposed-child',
+      header: { parentSession: taskId },
+    } as never)
+
+    await expect(service.schedule(rootRequest, budget, new AbortController().signal)).resolves.toMatchObject({
+      explanationCode: 'STICKY_ROUTE',
+      route: { model: 'fallback-disabled' },
+    })
+    await fiber.dispose()
+  })
+
+  it('does not attribute a child worker request failure to its live root session', async () => {
+    const ctx = new Context()
+    const fiber = await ctx.plugin(apply, schedulerConfig)
+    const service = ctx.get('adaptiveScheduler')!
+    const taskId = 'root-with-child-failure'
+    const rootRequest = {
+      ...request,
+      target: 'root' as const,
+      taskId,
+      constraints: { ...request.constraints, maxWorkers: 0 as const },
+    }
+    await service.schedule(rootRequest, budget, new AbortController().signal)
+
+    await ctx.events.waterfall('agent/request-error', {
+      agent: { session: { id: 'failed-child', header: { parentSession: taskId } } },
+      failure: { code: 'TIMEOUT' },
+    } as never, async () => undefined)
+
+    await expect(service.schedule(rootRequest, budget, new AbortController().signal)).resolves.toMatchObject({
+      explanationCode: 'STICKY_ROUTE',
+      route: { model: 'baseline-disabled' },
+    })
+    await fiber.dispose()
+  })
+
   it('clears the entire state store when the runtime is disposed', async () => {
     const scheduler = createAdaptiveScheduler(schedulerConfig, { generation: 'g1' })
     const taskId = 'runtime-dispose'

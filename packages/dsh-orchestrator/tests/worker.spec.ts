@@ -5,6 +5,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import { describe, expect, it, vi } from 'vitest'
 import { ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import SessionStore, { Session, SessionId } from '@deepseek-ai/dsh-session'
+import { apply as applyAdaptiveScheduler, createAdaptiveScheduler } from '@ds-plugins/dsh-adaptive-scheduler'
 import { BudgetController } from '../src/budgets.ts'
 import { mountRootScheduling, type ResolvedScheduleV1, type SchedulerResolver } from '../src/scheduling.ts'
 import { createDelegateWorkerTool, HANDOFF_V1_JSON_SCHEMA, mountSingleWorkerMode, runWorker, SINGLE_WORKER_STARTUP_TIMEOUT_MS } from '../src/worker.ts'
@@ -55,6 +56,39 @@ const adaptiveConfig: OrchestratorConfig = {
     allowPaidFallback: false,
   },
 }
+
+const adaptiveRoutes = [
+  { provider: 'provider-disabled', model: 'baseline-disabled', maxTokens: 32_000, modelFamily: 'deepseek' },
+  { provider: 'provider-disabled', model: 'fallback-disabled', maxTokens: 32_000, modelFamily: 'deepseek' },
+  { provider: 'provider-disabled', model: 'strong-disabled', maxTokens: 64_000, reasoningEffort: 'high', modelFamily: 'deepseek' },
+] as const
+
+const scopedAdaptiveConfig: OrchestratorConfig = {
+  ...adaptiveConfig,
+  scheduling: {
+    ...adaptiveConfig.scheduling!,
+    allowedRoutes: adaptiveRoutes,
+  },
+}
+
+const scopedSchedulerConfig = {
+  policyVersion: 'v0.3.0',
+  catalog: [
+    { alias: 'baseline', route: adaptiveRoutes[0], tier: 'baseline', taskTypes: ['code-fix', 'unknown'], toolFilter: ['targeted_verify'], paid: false, reliability: 70 },
+    { alias: 'fallback', route: adaptiveRoutes[1], tier: 'fallback', taskTypes: ['code-fix', 'unknown'], toolFilter: ['targeted_verify'], paid: false, reliability: 80 },
+    { alias: 'strong', route: adaptiveRoutes[2], tier: 'strong', taskTypes: ['code-fix', 'unknown'], toolFilter: ['targeted_verify'], paid: false, reliability: 100 },
+  ],
+  baselines: { 'code-fix': 'baseline', 'code-new': 'strong', research: 'baseline', summarize: 'baseline', review: 'strong', 'tool-heavy': 'strong', unknown: 'baseline' },
+  stickyTtlMs: 900_000,
+  idleTtlMs: 300_000,
+  errorWindowMs: 300_000,
+  cooldownMs: 60_000,
+  escalationTtlMs: 600_000,
+  maxEscalationsPerTask: 1,
+  maxRounds: 2,
+  historyWindowSize: 8,
+  historyMinSamples: 3,
+} as const
 
 const validHandoff: HandoffV1 = {
   schemaVersion: 1,
@@ -456,6 +490,113 @@ describe('one-shot worker runtime', () => {
 })
 
 describe('delegate_worker tool', () => {
+  it('keeps root sticky and cooldown state when its worker invocation completes', async () => {
+    const { parent } = parentFor(rootSession('shared-root-worker-scope'))
+    const rootId = String(parent.session.id)
+    let now = 1_000
+    const scheduler = createAdaptiveScheduler({
+      ...scopedSchedulerConfig,
+      idleTtlMs: 100,
+      cooldownMs: 1_000,
+    }, { generation: 'scope-test', now: () => now })
+    const rootRequest = {
+      schemaVersion: 1 as const,
+      target: 'root' as const,
+      taskId: rootId,
+      objective: 'Fix parser failure',
+      profile: scopedAdaptiveConfig.scheduling!.rootProfile,
+      constraints: {
+        maxWorkers: 0 as const,
+        maxOutputTokens: 64_000,
+        maxLatencyMs: 60_000,
+        allowPaidFallback: false,
+        requiredTools: ['targeted_verify'],
+      },
+    }
+    const signal = new AbortController().signal
+    await scheduler.schedule(rootRequest, emptyBudgetSnapshot(), signal)
+    scheduler.recordFailure({ requestId: rootId, code: 'TIMEOUT' })
+    await expect(scheduler.schedule(rootRequest, emptyBudgetSnapshot(), signal)).resolves.toMatchObject({
+      route: { model: 'fallback-disabled' },
+    })
+    const run = publishedRun(Promise.resolve({ stopReason: 'completed', structured: validHandoff, output: [] }))
+    const tool = createDelegateWorkerTool({
+      config: scopedAdaptiveConfig,
+      subagents: new FakeSubagents(async () => run.run),
+      budgetRegistry: { forRootSession: () => new BudgetController(scopedAdaptiveConfig.budgets, () => undefined) },
+      schedulerResolver: { current: () => scheduler },
+    })
+
+    await tool.execute(
+      { task: 'Fix parser failure', allowedTools: ['targeted_verify'] },
+      { signal, agent: parent, deferContext: () => undefined } as never,
+    )
+
+    await expect(scheduler.schedule(rootRequest, emptyBudgetSnapshot(), signal)).resolves.toMatchObject({
+      explanationCode: 'STICKY_ROUTE',
+      route: { model: 'fallback-disabled' },
+    })
+    now += 101
+    await expect(scheduler.schedule(rootRequest, emptyBudgetSnapshot(), signal)).resolves.toMatchObject({
+      explanationCode: 'TRANSIENT_FALLBACK',
+      route: { model: 'fallback-disabled' },
+    })
+  })
+
+  it('records failed worker feedback in history before in-process child disposal', async () => {
+    const ctx = new Context()
+    const historyConfig = {
+      ...scopedSchedulerConfig,
+      catalog: [scopedSchedulerConfig.catalog[1], scopedSchedulerConfig.catalog[0], scopedSchedulerConfig.catalog[2]],
+      historyMinSamples: 1,
+    }
+    const schedulerFiber = await ctx.plugin(applyAdaptiveScheduler, historyConfig)
+    const scheduler = ctx.get('adaptiveScheduler')!
+    const { parent } = parentFor(rootSession('history-worker-root'))
+    const child = Session.create(SessionId('history-worker-child'), undefined, {
+      version: 0,
+      id: SessionId('history-worker-child'),
+      createdAt: 0,
+      cwd: workspaceRoot,
+      parentSession: parent.session.id,
+    })
+    const run = publishedRun(
+      Promise.resolve({ stopReason: 'error', output: [] }),
+      String(child.id),
+      async () => { ctx.emit('session/disposed' as never, child as never) },
+    )
+    const tool = createDelegateWorkerTool({
+      config: scopedAdaptiveConfig,
+      subagents: new FakeSubagents(async () => run.run),
+      budgetRegistry: { forRootSession: () => new BudgetController(scopedAdaptiveConfig.budgets, () => undefined) },
+      schedulerResolver: { current: () => scheduler },
+    })
+
+    await expect(tool.execute(
+      { task: 'Fix parser failure', allowedTools: ['targeted_verify'] },
+      { signal: new AbortController().signal, agent: parent, deferContext: () => undefined } as never,
+    )).resolves.toMatchObject({ status: 'failed' })
+
+    await expect(scheduler.schedule({
+      schemaVersion: 1,
+      target: 'worker',
+      taskId: 'history-probe',
+      objective: 'Fix parser failure',
+      profile: scopedAdaptiveConfig.scheduling!.workerProfile,
+      constraints: {
+        maxWorkers: 1,
+        maxOutputTokens: 64_000,
+        maxLatencyMs: 60_000,
+        allowPaidFallback: false,
+        requiredTools: ['targeted_verify'],
+      },
+    }, emptyBudgetSnapshot(), new AbortController().signal)).resolves.toMatchObject({
+      explanationCode: 'HISTORY_ORDERED_CANDIDATE',
+      route: { model: 'fallback-disabled' },
+    })
+    await schedulerFiber.dispose()
+  })
+
   it('rejects an invalid scheduler decision without consuming either budget', async () => {
     const controller = new BudgetController(config.budgets, () => undefined)
     const { parent } = parentFor()
@@ -497,8 +638,10 @@ describe('delegate_worker tool', () => {
     const aborted = new AbortController()
     let release: (() => void) | undefined
     const completed: string[] = []
+    let scheduledTaskId = ''
     const scheduler = {
-      schedule: async () => new Promise(resolve => {
+      schedule: async (request: { readonly taskId: string }) => new Promise(resolve => {
+        scheduledTaskId = request.taskId
         release = () => resolve({
           schemaVersion: 1 as const,
           mode: 'single-worker' as const,
@@ -529,7 +672,9 @@ describe('delegate_worker tool', () => {
     expect(controller.snapshot()).toEqual(before)
     expect(parent.session.events).toEqual([])
     expect(subagents.starts).toBe(0)
-    expect(completed).toEqual([String(parent.session.id)])
+    expect(scheduledTaskId).toMatch(/^worker:[0-9a-f-]{36}$/)
+    expect(scheduledTaskId).not.toBe(String(parent.session.id))
+    expect(completed).toEqual([scheduledTaskId])
   })
 
   it.each([
@@ -586,22 +731,26 @@ describe('delegate_worker tool', () => {
       toolFilter: { allow: ['targeted_verify'] },
     })
     expect(subagents.requests[0]?.agentOptions).not.toHaveProperty('reasoningEffort')
+    expect(observed).toHaveLength(2)
+    const scheduledTaskId = (observed[0] as { request: { taskId: string } }).request.taskId
+    expect(scheduledTaskId).toMatch(/^worker:[0-9a-f-]{36}$/)
+    expect(scheduledTaskId).not.toBe(String(parent.session.id))
     expect(observed).toEqual([
       expect.objectContaining({
         request: expect.objectContaining({
-          taskId: String(parent.session.id),
+          taskId: scheduledTaskId,
           affinity: { workerId: `${parent.session.id}:worker:1` },
         }),
         budget: expect.objectContaining({ admittedWorkers: 0, admittedPluginToolActions: 0 }),
       }),
       expect.objectContaining({
         schemaVersion: 1,
-        requestId: String(parent.session.id),
+        requestId: scheduledTaskId,
         outcome: expectedOutcome,
         handoff: expect.objectContaining({ status: expectedStatus }),
       }),
     ])
-    expect(completed).toEqual([String(parent.session.id)])
+    expect(completed).toEqual([scheduledTaskId])
   })
 
   it('reports a budget rejection to the scheduler without recording a selection or starting a worker', async () => {
@@ -610,15 +759,19 @@ describe('delegate_worker tool', () => {
     const subagents = new FakeSubagents(async () => { throw new Error('worker must not start') })
     const observed: unknown[] = []
     const completed: string[] = []
+    let scheduledTaskId = ''
     const scheduler = {
-      schedule: async () => ({
-        schemaVersion: 1 as const,
-        mode: 'single-worker' as const,
-        route: { provider: 'provider-disabled', model: 'strong-disabled', maxTokens: 64_000, reasoningEffort: 'high' },
-        workerCount: 1 as const,
-        source: 'scheduler' as const,
-        policyVersion: 'v0.3.0',
-      }),
+      schedule: async (request: { readonly taskId: string }) => {
+        scheduledTaskId = request.taskId
+        return {
+          schemaVersion: 1 as const,
+          mode: 'single-worker' as const,
+          route: { provider: 'provider-disabled', model: 'strong-disabled', maxTokens: 64_000, reasoningEffort: 'high' },
+          workerCount: 1 as const,
+          source: 'scheduler' as const,
+          policyVersion: 'v0.3.0',
+        }
+      },
       observe: (feedback: unknown) => { observed.push(feedback) },
       complete: (requestId: string) => { completed.push(requestId) },
     }
@@ -636,13 +789,15 @@ describe('delegate_worker tool', () => {
 
     expect(observed).toEqual([{
       schemaVersion: 1,
-      requestId: String(parent.session.id),
+      requestId: scheduledTaskId,
       outcome: 'budget-rejected',
       budgetRejection: { code: 'PLUGIN_TOOL_LIMIT', limit: 0, observed: 1 },
     }])
     expect(parent.session.events).toEqual([])
     expect(subagents.starts).toBe(0)
-    expect(completed).toEqual([String(parent.session.id)])
+    expect(scheduledTaskId).toMatch(/^worker:[0-9a-f-]{36}$/)
+    expect(scheduledTaskId).not.toBe(String(parent.session.id))
+    expect(completed).toEqual([scheduledTaskId])
   })
 
   it('admits one delegation before starting, binds a scrubbed handoff to its tool result, and rejects the second without invoking the provider', async () => {

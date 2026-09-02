@@ -38,3 +38,35 @@ Commands use `/home/sihan/.cache/codex-runtimes/codex-primary-runtime/dependenci
 - `pnpm-lock.yaml` remains deferred exactly as instructed. The sandbox cannot use pnpm's SQLite store or registry path, so no lock content was fabricated; regenerate and verify it in a normal pnpm environment before merge.
 - The two full-suite provider smoke failures are the pre-existing sandbox child-stdout capture artifact. The direct smoke command passes with the exact disabled message. No provider, credential, endpoint, paid call, network, raw transcript, or real coding-task behavior was exercised.
 - Independent subagent review was unavailable in this tool environment; a controller-level scoped diff audit found no remaining Critical or Important issue. The requested external scoped re-review remains the next gate.
+
+## Final re-review Important follow-up
+
+Base: `2feba3e` (`docs: reconcile v0.3 final review status`)
+
+### Fix
+
+- `delegate_worker` now assigns every scheduling attempt a bounded `worker:<uuid>` invocation `taskId`; feedback and `complete()` use that same ID, while root scheduling continues to use the root Session ID. Worker completion therefore cannot clear root sticky, cooldown, failure, or escalation state.
+- Adaptive Scheduler lifecycle listeners now scope both `agent/request-error` and `session/disposed` to the exact emitting Session ID. Disposing an in-process child clears only child-owned state, not its live root's state or the Worker's separately keyed pending history.
+- The existing `run.dispose()` before outer `observe()` sequence is safe under these disjoint IDs: child disposal cannot remove the pending Worker selection, so the subsequent bounded Handoff feedback is consumed into performance history before Worker `complete()` runs.
+
+### Regression coverage and TDD evidence
+
+- Initial RED: focused plugin/Worker run failed 3/39 exactly on child disposal preserving root state, Worker completion preserving root sticky/cooldown, and failed Worker feedback affecting the next history-ranked route.
+- Additional failure-scope RED: plugin suite failed 1/13 because child `agent/request-error` produced `TRANSIENT_FALLBACK` on the root instead of retaining its baseline sticky route.
+- GREEN: focused plugin/Worker suite passed 2 files / 40 tests. The Worker state test separately proves immediate sticky preservation and cooldown preservation after sticky idle expiry.
+- The history integration executes the real `delegate_worker` result/disposal/feedback path; its run disposer emits the same child `session/disposed` lifecycle event as in-process subagent teardown, and the next scheduling request selects `HISTORY_ORDERED_CANDIDATE` from the recorded failed sample.
+
+### Fresh commands and output
+
+All commands used `/home/sihan/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node`.
+
+- `node node_modules/typescript/bin/tsc -b` — exit 0, no diagnostics.
+- `node --expose-internals node_modules/vitest/vitest.mjs run packages/dsh-scheduling-contracts/tests packages/dsh-orchestrator/tests packages/dsh-adaptive-scheduler/tests tests/replay --config vitest.config.ts` — 24 files / 258 tests passed.
+- `node --expose-internals node_modules/vitest/vitest.mjs run packages/dsh-adaptive-scheduler/tests/plugin.spec.ts packages/dsh-orchestrator/tests/worker.spec.ts --config vitest.config.ts` — 2 files / 40 tests passed.
+- `git diff --check` — exit 0.
+
+### Concerns
+
+- `pnpm-lock.yaml` remains untouched as instructed; this follow-up changes no dependency metadata.
+- Provider smoke, credentials, network, paid calls, and live coding-task behavior were not exercised. The v0.3 keyless gate is green; the previously documented provider child-stdout sandbox artifact is unchanged.
+- No multi-agent spawn tool was exposed in this turn, so independent subagent review could not run. A controller-level clean-diff and call-chain audit found no remaining Critical or Important issue in this scope.

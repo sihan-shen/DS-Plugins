@@ -306,10 +306,11 @@ export function createDelegateWorkerTool(options: DelegateWorkerToolOptions): To
       const parent = exec.agent
       if (parent === undefined) throw new Error('delegate_worker requires an active parent agent')
       const rootSessionId = parent.session.header.parentSession ?? parent.session.id
+      const workerTaskId = `worker:${crypto.randomUUID()}`
       const budget = options.budgetRegistry.forRootSession(rootSessionId)
       const resolvedSchedule = await resolveSchedule(options.config, options.schedulerResolver, {
         target: 'worker',
-        taskId: String(rootSessionId),
+        taskId: workerTaskId,
         objective: input.task,
         requiredTools: input.allowedTools,
         affinity: { workerId: `${rootSessionId}:worker:1` },

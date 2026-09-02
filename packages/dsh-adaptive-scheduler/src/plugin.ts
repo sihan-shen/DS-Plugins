@@ -37,7 +37,7 @@ export const apply: Plugin.Function<AdaptiveSchedulerConfig> = (ctx: Context, ra
     const disposeFailures = eventContext.on('agent/request-error', async ({ agent, failure }, next) => {
       if (FAILURE_CODES.has(failure.code as ProviderFailureCodeV1)) {
         runtime.recordFailure({
-          requestId: String(agent.session.header.parentSession ?? agent.session.id),
+          requestId: String(agent.session.id),
           code: failure.code as ProviderFailureCodeV1,
           ...(failure.providerRetryAfterMs === undefined ? {} : { providerRetryAfterMs: failure.providerRetryAfterMs }),
         })
@@ -45,7 +45,7 @@ export const apply: Plugin.Function<AdaptiveSchedulerConfig> = (ctx: Context, ra
       return next()
     })
     const disposeSessions = eventContext.on('session/disposed', session => {
-      runtime.disposeSession(String(session.header.parentSession ?? session.id))
+      runtime.disposeSession(String(session.id))
     })
     return async () => {
       disposeSessions()
