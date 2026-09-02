@@ -149,6 +149,31 @@ describe('orchestrator scheduling adapter', () => {
     })
   })
 
+  it('does not fall back to the fixed profile when cancellation races with invalid scheduling', async () => {
+    const cancellation = new Error('cancelled while scheduling')
+    const aborted = new AbortController()
+    let release: (() => void) | undefined
+    const pending = resolveSchedule({
+      ...config,
+      scheduling: { ...scheduling, allowInvalidDecisionFallback: true },
+    }, {
+      current: () => ({
+        schedule: async () => new Promise(resolve => {
+          release = () => resolve({
+            ...validDecision,
+            route: { ...validDecision.route, provider: 'not-configured' },
+          })
+        }),
+      }),
+    }, { ...workerInput, signal: aborted.signal })
+
+    await Promise.resolve()
+    aborted.abort(cancellation)
+    release?.()
+
+    await expect(pending).rejects.toBe(cancellation)
+  })
+
   it.each([
     ['reasoningEffort', 'low'],
     ['promptProfile', 'review-v1'],

@@ -73,6 +73,10 @@ const ROUTE_IDENTITY_AND_METADATA_KEYS = [
   'modelFamily',
 ] as const
 
+function throwIfAborted(signal: AbortSignal): void {
+  if (signal.aborted) throw signal.reason ?? new DOMException('Scheduling cancelled', 'AbortError')
+}
+
 /** Project one bounded capability request without exposing runtime/provider state. */
 export function buildCapabilityRequest(config: OrchestratorConfig, input: ResolveScheduleInput): CapabilityRequestV1 {
   const scheduling = config.scheduling
@@ -157,16 +161,20 @@ export async function resolveSchedule(
   input: ResolveScheduleInput,
 ): Promise<ResolvedScheduleV1> {
   const request = buildCapabilityRequest(config, input)
+  throwIfAborted(input.signal)
   const scheduler = config.scheduling === undefined ? undefined : resolver.current()
   if (scheduler === undefined) return { request, decision: fixedProfileSchedule(config.worker, config.mode, input.target) }
   try {
+    const rawDecision = await scheduler.schedule(request, parseBudgetViewV1(input.budget), input.signal)
+    throwIfAborted(input.signal)
     const decision = validateDecisionForConfig(
-      parseScheduleDecisionV1(await scheduler.schedule(request, parseBudgetViewV1(input.budget), input.signal)),
+      parseScheduleDecisionV1(rawDecision),
       config,
       input.target,
     )
     return { request, decision, scheduler }
   } catch (error) {
+    throwIfAborted(input.signal)
     if (config.scheduling?.allowInvalidDecisionFallback === true) {
       return { request, decision: fixedProfileSchedule(config.worker, config.mode, input.target), scheduler }
     }

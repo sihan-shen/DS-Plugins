@@ -64,6 +64,18 @@ const validHandoff: HandoffV1 = {
   blockers: [],
 }
 
+const failedVerification = {
+  schemaVersion: 1 as const,
+  commandName: 'typecheck',
+  args: [],
+  exitCode: 1,
+  status: 'failed' as const,
+  stdout: '',
+  stderr: 'verification failed',
+  truncated: false,
+  durationMs: 1,
+}
+
 const profileResolvedSchedule = {
   request: {} as never,
   decision: {
@@ -470,9 +482,55 @@ describe('delegate_worker tool', () => {
     expect(parent.session.events).toEqual([])
   })
 
-  it('records the selected route before the worker and reports a bounded completion feedback', async () => {
+  it('abandons a schedule that resolves after cancellation before changing budget or publishing events', async () => {
+    const controller = new BudgetController(adaptiveConfig.budgets, () => undefined)
+    const before = controller.snapshot()
     const { parent } = parentFor()
-    const run = publishedRun(Promise.resolve({ stopReason: 'completed', structured: validHandoff, output: [] }))
+    const subagents = new FakeSubagents(async () => { throw new Error('worker must not start') })
+    const cancellation = new Error('cancelled while scheduling')
+    const aborted = new AbortController()
+    let release: (() => void) | undefined
+    const scheduler = {
+      schedule: async () => new Promise(resolve => {
+        release = () => resolve({
+          schemaVersion: 1 as const,
+          mode: 'single-worker' as const,
+          route: { provider: 'provider-disabled', model: 'strong-disabled', maxTokens: 64_000, reasoningEffort: 'high' as const },
+          workerCount: 1 as const,
+          source: 'scheduler' as const,
+          policyVersion: 'v0.3.0',
+        })
+      }),
+    }
+    const tool = createDelegateWorkerTool({
+      config: adaptiveConfig,
+      subagents,
+      budgetRegistry: { forRootSession: () => controller },
+      schedulerResolver: { current: () => scheduler },
+    })
+
+    const running = tool.execute(
+      { task: 'Fix parser', allowedTools: ['targeted_verify'] },
+      { signal: aborted.signal, agent: parent } as never,
+    )
+    await Promise.resolve()
+    aborted.abort(cancellation)
+    release?.()
+
+    await expect(running).rejects.toBe(cancellation)
+    expect(controller.snapshot()).toEqual(before)
+    expect(parent.session.events).toEqual([])
+    expect(subagents.starts).toBe(0)
+  })
+
+  it.each([
+    ['completed', 'completed', validHandoff, 'completed', 'completed'],
+    ['verification-failed', 'completed', { ...validHandoff, summary: '[verification: failed] Updated the focused worker file.', verification: [failedVerification] }, 'verification-failed', 'completed'],
+    ['blocked', 'aborted', undefined, 'blocked', 'blocked'],
+    ['failed', 'error', undefined, 'failed', 'failed'],
+  ] as const)('records the selected route before the worker and reports %s feedback', async (_label, stopReason, structured, expectedOutcome, expectedStatus) => {
+    const { parent } = parentFor()
+    const run = publishedRun(Promise.resolve({ stopReason, structured, output: [] }))
     const subagents = new FakeSubagents(async () => run.run)
     const controller = new BudgetController(adaptiveConfig.budgets, () => undefined)
     const observed: unknown[] = []
@@ -501,7 +559,7 @@ describe('delegate_worker tool', () => {
     await expect(tool.execute(
       { task: 'Fix parser', allowedTools: ['targeted_verify'] },
       { signal: new AbortController().signal, agent: parent, deferContext } as never,
-    )).resolves.toEqual(validHandoff)
+    )).resolves.toMatchObject({ status: expectedStatus })
 
     expect(parent.session.events.map(event => event.type)).toEqual([
       'dsh-plugin/schedule-selected',
@@ -528,8 +586,8 @@ describe('delegate_worker tool', () => {
       expect.objectContaining({
         schemaVersion: 1,
         requestId: String(parent.session.id),
-        outcome: 'completed',
-        handoff: expect.objectContaining({ status: 'completed' }),
+        outcome: expectedOutcome,
+        handoff: expect.objectContaining({ status: expectedStatus }),
       }),
     ])
   })

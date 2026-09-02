@@ -316,6 +316,7 @@ export function createDelegateWorkerTool(options: DelegateWorkerToolOptions): To
         budget: budget.snapshot(),
         signal: exec.signal,
       })
+      if (exec.signal.aborted) throwReason(exec.signal)
       const action = budget.admitPluginTool('delegate_worker')
       if (!action.allowed) {
         resolvedSchedule.scheduler?.observe?.(budgetFeedback(resolvedSchedule.request.taskId, action))
