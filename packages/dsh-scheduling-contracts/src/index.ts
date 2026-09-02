@@ -12,6 +12,16 @@ export {
   parseScheduleSelectedV1,
 } from './parse.js'
 export {
+  parseDagValidationLimitsV1,
+  parseTaskDagV1,
+} from './dag.js'
+export {
+  MAX_VERIFICATION_ARG_BYTES,
+  MAX_VERIFICATION_ARGS,
+  MAX_VERIFICATION_COMMANDS,
+  parseParallelVerificationPolicyV1,
+} from './parallel-verification.js'
+export {
   MAX_AGGREGATE_PATH_BYTES,
   MAX_DAG_CHANGED_FILES,
   MAX_DAG_DEPS,
@@ -39,6 +49,8 @@ export {
   SCHEDULE_DECISION_V1_JSON_SCHEMA,
   SCHEDULE_FEEDBACK_V1_JSON_SCHEMA,
   SCHEDULE_SELECTED_V1_JSON_SCHEMA,
+  TASK_DAG_V1_JSON_SCHEMA,
+  PARALLEL_VERIFICATION_POLICY_V1_JSON_SCHEMA,
 } from './schemas.js'
 export type {
   AdaptiveSchedulerService,
@@ -53,6 +65,13 @@ export type {
   ScheduleSelectedV1,
   SchedulingConstraintsV1,
   SchedulingTargetV1,
+  DagValidationIssueV1,
+  DagValidationLimitsV1,
+  DagValidationV1,
+  ParallelVerificationCommandV1,
+  ParallelVerificationPolicyV1,
+  TaskDagV1,
+  TaskNodeV1,
   VerificationEvidenceV1,
 } from './types.js'
 export type { RepoDirectoryPrefix, RepoFilePath, RepoPathDeclaration } from './parallel-paths.js'

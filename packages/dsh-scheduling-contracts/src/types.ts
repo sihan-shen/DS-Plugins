@@ -1,3 +1,5 @@
+import type { RepoPathDeclaration } from './parallel-paths.js'
+
 export type JsonSchema = {
   readonly type?: 'object' | 'array' | 'string' | 'number' | 'integer' | 'boolean' | 'null'
   readonly additionalProperties?: boolean
@@ -9,6 +11,7 @@ export type JsonSchema = {
   readonly minimum?: number
   readonly maximum?: number
   readonly maxItems?: number
+  readonly minItems?: number
   readonly minLength?: number
   readonly maxLength?: number
   readonly pattern?: string
@@ -60,6 +63,61 @@ export interface SchedulingConstraintsV1 {
   readonly allowPaidFallback: boolean
   readonly allowedProviders?: readonly string[]
   readonly requiredTools: readonly string[]
+}
+
+export interface TaskNodeV1 {
+  readonly schemaVersion: 1
+  readonly nodeId: string
+  readonly objective: string
+  readonly profile: CapabilityProfileV1
+  readonly constraints: SchedulingConstraintsV1
+  readonly readPaths: readonly RepoPathDeclaration[]
+  readonly writePaths: readonly RepoPathDeclaration[]
+  readonly dependsOn: readonly string[]
+}
+
+export interface TaskDagV1 {
+  readonly schemaVersion: 1
+  readonly rootTaskId: string
+  readonly nodes: readonly TaskNodeV1[]
+}
+
+export interface DagValidationLimitsV1 {
+  readonly schemaVersion: 1
+  readonly maxNodes: number
+  readonly maxLevels: number
+  readonly maxWidth: number
+  readonly maxCumulativeWorkers: number
+}
+
+export type DagValidationIssueV1 =
+  | { readonly code: 'duplicate-node'; readonly nodeId: string }
+  | { readonly code: 'self-dependency'; readonly nodeId: string }
+  | { readonly code: 'missing-dependency'; readonly nodeId: string; readonly dependsOn: string }
+  | { readonly code: 'cycle'; readonly nodeId: string }
+  | { readonly code: 'overlapping-access'; readonly nodeA: string; readonly nodeB: string; readonly mode: 'ww' | 'wr' | 'rw' }
+  | { readonly code: 'too-many-nodes'; readonly count: number; readonly limit: number }
+  | { readonly code: 'too-many-levels'; readonly levelCount: number; readonly limit: number }
+  | { readonly code: 'level-width-exceeded'; readonly level: number; readonly width: number; readonly limit: number }
+  | { readonly code: 'cumulative-worker-limit-exceeded'; readonly count: number; readonly limit: number }
+
+export interface DagValidationV1 {
+  readonly schemaVersion: 1
+  readonly valid: boolean
+  readonly issues: readonly DagValidationIssueV1[]
+  readonly levels: readonly (readonly string[])[]
+  readonly levelCount: number
+}
+
+export interface ParallelVerificationCommandV1 {
+  readonly name: string
+  readonly args: readonly string[]
+}
+
+export interface ParallelVerificationPolicyV1 {
+  readonly schemaVersion: 1
+  readonly scope: 'level' | 'dag'
+  readonly commands: readonly ParallelVerificationCommandV1[]
 }
 
 export interface CapabilityRequestV1 {
