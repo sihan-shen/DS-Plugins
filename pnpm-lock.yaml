@@ -8,12 +8,21 @@ importers:
 
   .:
     devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.1
+        version: 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
+      '@deepseek-ai/dsh-agent':
+        specifier: 0.1.1-rc.2
+        version: 0.1.1-rc.2(c1537a8836b04097f168b024f1e38d85)
       '@deepseek-ai/dsh-app-boot':
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(d7ed335ddbfb7670edc51bd2c8928580)
       '@deepseek-ai/dsh-session':
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(a4e4bb24a1f3580ac25e11cfa3c6b8cc)
+      js-yaml:
+        specifier: 4.1.0
+        version: 4.1.0
       tsdown:
         specifier: 0.18.0
         version: 0.18.0(@emnapi/core@1.10.0)(@emnapi/runtime@1.11.3)(typescript@5.9.3)
@@ -23,6 +32,16 @@ importers:
       vitest:
         specifier: 4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.1)(@types/node@26.3.0)(yaml@2.9.0)
+
+  packages/dsh-adaptive-scheduler:
+    dependencies:
+      '@ds-plugins/dsh-scheduling-contracts':
+        specifier: workspace:*
+        version: link:../dsh-scheduling-contracts
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.1
+        version: 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
 
   packages/dsh-code-intelligence:
     dependencies:
@@ -94,6 +113,9 @@ importers:
       '@ds-plugins/dsh-context':
         specifier: workspace:*
         version: link:../dsh-context
+      '@ds-plugins/dsh-scheduling-contracts':
+        specifier: workspace:*
+        version: link:../dsh-scheduling-contracts
     devDependencies:
       '@deepseek-ai/cordis':
         specifier: 4.0.1
@@ -125,6 +147,8 @@ importers:
       js-yaml:
         specifier: 4.1.0
         version: 4.1.0
+
+  packages/dsh-scheduling-contracts: {}
 
   profiles/v0.1:
     dependencies:
@@ -196,6 +220,42 @@ importers:
       '@deepseek-ai/cordis':
         specifier: 4.0.1
         version: 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
+
+  profiles/v0.3-adaptive:
+    dependencies:
+      '@deepseek-ai/dsh-agent':
+        specifier: 0.1.1-rc.2
+        version: 0.1.1-rc.2(c1537a8836b04097f168b024f1e38d85)
+      '@deepseek-ai/dsh-base':
+        specifier: 0.1.1-rc.2
+        version: 0.1.1-rc.2(c92576aadcd90dfc5984d616252f9698)
+      '@deepseek-ai/dsh-llm':
+        specifier: 0.1.1-rc.2
+        version: 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-attachment@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))(@deepseek-ai/dsh-timeout@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))
+      '@deepseek-ai/dsh-session':
+        specifier: 0.1.1-rc.2
+        version: 0.1.1-rc.2(a4e4bb24a1f3580ac25e11cfa3c6b8cc)
+      '@deepseek-ai/dsh-subagent':
+        specifier: 0.1.1-rc.2
+        version: 0.1.1-rc.2(41d5ff529e06289e51a68d84fe32d51b)
+      '@deepseek-ai/dsh-subprocess':
+        specifier: 0.1.1-rc.2
+        version: 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))
+      '@deepseek-ai/dsh-system-prompt':
+        specifier: 0.1.1-rc.2
+        version: 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))(@deepseek-ai/dsh-llm@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-attachment@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-brand@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))(@deepseek-ai/dsh-timeout@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))))(@deepseek-ai/dsh-scope@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)))
+      '@deepseek-ai/dsh-tools':
+        specifier: 0.1.1-rc.2
+        version: 0.1.1-rc.2(119bc70f73f8eddebfaa6b47561adeb3)
+      '@ds-plugins/dsh-adaptive-scheduler':
+        specifier: workspace:*
+        version: link:../../packages/dsh-adaptive-scheduler
+      '@ds-plugins/dsh-orchestrator':
+        specifier: workspace:*
+        version: link:../../packages/dsh-orchestrator
+      '@ds-plugins/dsh-scheduling-contracts':
+        specifier: workspace:*
+        version: link:../../packages/dsh-scheduling-contracts
 
 packages:
 
