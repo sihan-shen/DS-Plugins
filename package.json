@@ -7,12 +7,13 @@
     "node": "^22.19.0 || >=24"
   },
   "scripts": {
-    "build": "pnpm --filter @ds-plugins/dsh-orchestrator run build",
+    "build": "pnpm --filter @ds-plugins/dsh-scheduling-contracts build && pnpm --filter @ds-plugins/dsh-adaptive-scheduler build && pnpm --filter @ds-plugins/dsh-orchestrator build",
     "typecheck": "tsc -b",
     "test": "pnpm build && node --expose-internals ./node_modules/vitest/vitest.mjs run --config vitest.config.ts",
     "test:v0.2a": "pnpm --filter @ds-plugins/dsh-context build && pnpm --filter @ds-plugins/dsh-eval build && pnpm exec vitest run packages/dsh-context/tests packages/dsh-eval/tests tests/eval tests/plugins",
     "test:v0.2b": "pnpm --filter @ds-plugins/dsh-context build && pnpm --filter @ds-plugins/dsh-code-intelligence build && pnpm --filter @ds-plugins/dsh-eval build && pnpm exec vitest run packages/dsh-context/tests packages/dsh-code-intelligence/tests packages/dsh-eval/tests tests/eval tests/plugins tests/replay",
     "test:v0.2c": "pnpm --filter @ds-plugins/dsh-context build && pnpm --filter @ds-plugins/dsh-context-cache build && pnpm --filter @ds-plugins/dsh-code-intelligence build && pnpm --filter @ds-plugins/dsh-eval build && pnpm --filter @ds-plugins/dsh-orchestrator build && pnpm exec vitest run packages/dsh-context/tests packages/dsh-context-cache/tests packages/dsh-code-intelligence/tests packages/dsh-eval/tests packages/dsh-orchestrator/tests tests/eval tests/plugins tests/replay --config vitest.config.ts",
+    "test:v0.3": "pnpm --filter @ds-plugins/dsh-scheduling-contracts build && pnpm --filter @ds-plugins/dsh-adaptive-scheduler build && pnpm --filter @ds-plugins/dsh-orchestrator build && pnpm exec vitest run packages/dsh-scheduling-contracts/tests packages/dsh-adaptive-scheduler/tests packages/dsh-orchestrator/tests tests/replay --config vitest.config.ts",
     "test:profile": "vitest run packages/dsh-orchestrator/tests/profile.spec.ts",
     "test:provider": "node --experimental-strip-types tests/provider/openai-codex.smoke.ts"
   },

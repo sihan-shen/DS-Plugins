@@ -1,8 +1,22 @@
 import { describe, expect, it } from 'vitest'
-import { replayDirectFixture, replayVerificationVariants } from './direct.fixture.ts'
+import { replayDirectFixture, replayScheduledDirectFixture, replayVerificationVariants } from './direct.fixture.ts'
 import { replaySingleWorkerFixture } from './single-worker.fixture.ts'
 
 describe('DSH v0.1 keyless replay fixtures', () => {
+  it('records the scheduled Direct selection before the actual request header and route', async () => {
+    const replay = await replayScheduledDirectFixture()
+
+    expect(replay.events.map(event => event.type)).toEqual([
+      'dsh-plugin/schedule-selected',
+      'request/header',
+      'dsh-plugin/run-started',
+    ])
+    expect(replay.actualRoute).toEqual({ provider: 'actual-disabled', model: 'actual-model-disabled' })
+    expect(replay.events[2]).toMatchObject({
+      data: { mode: 'direct', provider: 'actual-disabled', model: 'actual-model-disabled' },
+    })
+  })
+
   it('records the Direct passing verification outcome as canonical event evidence', async () => {
     const replay = await replayDirectFixture()
 
