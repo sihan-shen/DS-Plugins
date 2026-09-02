@@ -69,3 +69,27 @@ The exact `pnpm test:v0.3` command was attempted and failed before executing the
 - Direct pnpm workspace commands remain unavailable in this sandbox due SQLite/registry restrictions. Equivalent cached-Node commands provide the executable evidence; pnpm lockfile behavior remains unverified.
 - Root-level replay imports require the Vitest aliases documented above because the pinned runtime packages are installed under the orchestrator workspace rather than as root dependencies. No new dependency was introduced.
 - Provider, credentials, network isolation, quota/cost endpoints, raw transcripts, and real coding-task acceptance remain intentionally unverified by this keyless gate.
+
+## Review follow-up (2026-09-02)
+
+- Replaced the detached invalid-decision check with `replayInvalidWorkerDecisionFixture()`, which executes the real `createDelegateWorkerTool`/`delegate_worker` path with a session-scoped budget registry and an invalid scheduler route. The replay now asserts unchanged admission counters, zero child starts, and an empty durable event list; this proves rejection occurs before action/worker admission, event publication, or child publication.
+- Changed `test:v0.3` to launch Vitest through `node --expose-internals`, matching the root `test` loader behavior. Added exact root devDependencies for the direct replay imports (`@deepseek-ai/cordis@4.0.1`, `@deepseek-ai/dsh-agent@0.1.1-rc.2`, and `js-yaml@4.1.0`) and removed the Vitest aliases that pointed at Orchestrator-private `node_modules`.
+- `replayScheduledDirectFixture()` now derives `actualRoute` by parsing the recorded `request/header` event. The adaptive replay also retains complete worker/root event payload projections and scans those payloads for sensitive markers, while the existing Single Worker snapshot continues to assert the full valid Handoff/context result.
+- `tsconfig.json` was inspected against the brief: all three v0.3 project references were already present, so no redundant hunk was made. `pnpm-lock.yaml` was not changed because pnpm lock generation remains blocked by the sandbox SQLite/registry limitation; the new manifest dependency intent is recorded here.
+- README now states that the v0.3 gate evidence is from the equivalent cached-Node command because the exact pnpm command could not execute in this sandbox.
+
+### Review follow-up verification
+
+All commands below used cached Node `v24.19.0` with `PATH=/home/sihan/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin:$PATH`:
+
+| Check | Result |
+|---|---|
+| Invalid-decision RED regression | Failed as expected before fixture update: missing `childStarts` and `events` assertions |
+| Focused adaptive replay GREEN | 1 file / 1 test passed |
+| Replay regression | 4 files / 21 tests passed |
+| Complete v0.3 equivalent gate | 24 files / 238 tests passed using `node --expose-internals node_modules/vitest/vitest.mjs run packages/dsh-scheduling-contracts/tests packages/dsh-adaptive-scheduler/tests packages/dsh-orchestrator/tests tests/replay --config vitest.config.ts` |
+| Root project-reference typecheck | `node node_modules/typescript/bin/tsc -b` exited 0 |
+| `git diff --check` | passed |
+| Manifest parse | passed |
+
+The exact `pnpm test:v0.3` command remains unverified because pnpm cannot open its sandbox SQLite store and attempts registry metadata access. No provider, credential, endpoint, transcript, paid call, or network behavior was introduced or exercised.

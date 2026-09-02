@@ -1011,7 +1011,7 @@ v0.2c 已合入 `main`：`@ds-plugins/dsh-context` 作为不可变 ContextBlockV
 
 状态：已实现并通过 v0.3 keyless gate。详见 [`2026-09-01-dsh-v0.3-adaptive-scheduling-design.md`](docs/superpowers/specs/2026-09-01-dsh-v0.3-adaptive-scheduling-design.md)。验收保持 keyless 边界与 `profiles/v0.1` 不变；不宣称 provider、网络隔离或真实 coding-task 验收。
 
-独立的 `profiles/v0.3-adaptive` overlay 组合纯 scheduling contracts、独立 Adaptive Scheduler service 和 Orchestrator-owned hard admission。验收仅覆盖 keyless replay：不访问 provider、credential、network、quota/cost endpoint、raw transcript 或真实 coding-task；`pnpm test:provider` 仍是固定的 `DISABLED` safety check。使用 `pnpm test:v0.3` 运行 v0.3 gate。
+独立的 `profiles/v0.3-adaptive` overlay 组合纯 scheduling contracts、独立 Adaptive Scheduler service 和 Orchestrator-owned hard admission。验收仅覆盖 keyless replay：不访问 provider、credential、network、quota/cost endpoint、raw transcript 或真实 coding-task；`pnpm test:provider` 仍是固定的 `DISABLED` safety check。使用 `pnpm test:v0.3` 运行 v0.3 gate；本次沙箱无法完成精确 pnpm 命令（SQLite/registry 限制），报告中的通过证据是等价的 cached-Node `node --expose-internals ./node_modules/vitest/vitest.mjs ...` 命令。
 
 插件归属：新增独立 Adaptive Scheduler 插件；Orchestrator 只提交能力请求并消费路由决定，Scheduler 缺失时安全退化到 Profile 的固定路线。
 

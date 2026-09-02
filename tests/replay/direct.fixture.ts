@@ -5,7 +5,7 @@ import { createBudgetControllerRegistry } from '../../packages/dsh-orchestrator/
 import { mountDirectMode } from '../../packages/dsh-orchestrator/src/direct.ts'
 import { mountRootScheduling } from '../../packages/dsh-orchestrator/src/scheduling.ts'
 import { createTargetedVerificationTool } from '../../packages/dsh-orchestrator/src/verification.ts'
-import type { OrchestratorConfig, RequestRouteV1, VerificationEvidenceV1 } from '../../packages/dsh-orchestrator/src/types.ts'
+import { parseRequestRoute, type OrchestratorConfig, type RequestRouteV1, type VerificationEvidenceV1 } from '../../packages/dsh-orchestrator/src/types.ts'
 
 const config: OrchestratorConfig = {
   workspaceRoot: '/workspace/dsh',
@@ -171,7 +171,9 @@ export async function replayScheduledDirectFixture(): Promise<{
   await Promise.resolve()
 
   const events = root.events
-  const actualRoute = { provider: 'actual-disabled', model: 'actual-model-disabled' }
+  const requestHeader = events.find(event => event.type === 'request/header')
+  const actualRoute = requestHeader === undefined ? undefined : parseRequestRoute(requestHeader.data.header)
+  if (actualRoute === undefined) throw new Error('scheduled Direct replay did not record an actual request route')
   await sessionStore.dispose()
   return { events, actualRoute }
 }

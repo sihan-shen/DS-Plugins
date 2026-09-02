@@ -16,6 +16,14 @@ const config: OrchestratorConfig = {
     timeoutMs: 60_000,
     maxOutputBytes: 4_096,
   },
+  scheduling: {
+    allowInvalidDecisionFallback: false,
+    allowedRoutes: [{ provider: 'replay', model: 'replay', maxTokens: 32_000 }],
+    rootProfile: { coding: 50, reasoning: 50, toolUse: 50, repoContext: 50, risk: 50, difficulty: 50 },
+    workerProfile: { coding: 50, reasoning: 50, toolUse: 50, repoContext: 50, risk: 50, difficulty: 50 },
+    maxLatencyMs: 60_000,
+    allowPaidFallback: false,
+  },
 }
 
 const validHandoff: HandoffV1 = {
@@ -109,5 +117,53 @@ export async function replaySingleWorkerFixture() {
     events: parent.session.events.map(event => ({ type: event.type, data: event.data })),
     invalid,
     invalidEvents: invalidParent.session.events.map(event => ({ type: event.type, data: event.data })),
+  }
+}
+
+/** Prove an invalid scheduler decision is rejected before any real worker admission or publication. */
+export async function replayInvalidWorkerDecisionFixture() {
+  const parent = { session: session('replay-invalid-decision') }
+  const registry = createBudgetControllerRegistry(config.budgets, () => rejection => {
+    appendBudgetRejected(parent.session, {
+      reason: rejection.code,
+      limit: rejection.limit,
+      observed: rejection.observed,
+    })
+  })
+  const subagents = new ReplaySubagents(validHandoff)
+  const tool = createDelegateWorkerTool({
+    config,
+    subagents: subagents as never,
+    budgetRegistry: registry,
+    schedulerResolver: {
+      current: () => ({
+        schedule: async () => ({
+          schemaVersion: 1,
+          mode: 'single-worker',
+          route: { provider: 'unconfigured', model: 'invalid', maxTokens: 32_000 },
+          workerCount: 1,
+          source: 'scheduler',
+          policyVersion: 'v0.3.0',
+        }),
+      }),
+    } as never,
+  })
+  const budget = registry.forRootSession(parent.session.id)
+  const before = budget.snapshot()
+  let error = ''
+  try {
+    await tool.execute(
+      { task: 'Reject this invalid route.', allowedTools: ['read_file'] },
+      { signal: new AbortController().signal, agent: parent } as never,
+    )
+  } catch (cause) {
+    error = cause instanceof Error ? cause.message : String(cause)
+  }
+  return {
+    error,
+    before,
+    after: budget.snapshot(),
+    childStarts: subagents.starts,
+    events: parent.session.events.map(event => ({ type: event.type, data: event.data })),
   }
 }

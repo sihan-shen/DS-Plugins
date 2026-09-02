@@ -4,7 +4,7 @@ import * as yaml from 'js-yaml'
 import { BudgetController, parseConfig, resolveSchedule } from '@ds-plugins/dsh-orchestrator'
 import { createAdaptiveScheduler, parseAdaptiveSchedulerConfig } from '@ds-plugins/dsh-adaptive-scheduler'
 import { replayScheduledDirectFixture } from './direct.fixture.ts'
-import { replaySingleWorkerFixture } from './single-worker.fixture.ts'
+import { replayInvalidWorkerDecisionFixture, replaySingleWorkerFixture } from './single-worker.fixture.ts'
 
 function loadProfileConfigs() {
   const patch = yaml.load(readFileSync(resolve('profiles/v0.3-adaptive/cordis.patch.yml'), 'utf8')) as Array<{ id: string; config: unknown }>
@@ -27,14 +27,7 @@ export async function replayAdaptiveScheduling() {
   const schedulerPresentRequest = schedulerPresentResult.request
   const failedHandoff = { schemaVersion: 1 as const, status: 'failed' as const, summary: 'Replay failure.', changedFiles: [], decisions: [], verification: [], blockers: ['Schema mismatch.'] }
 
-  const invalidController = new BudgetController(config.orchestrator.budgets, () => undefined)
-  const before = invalidController.snapshot()
-  let invalidError = ''
-  try {
-    await resolveSchedule(config.orchestrator, { current: () => ({ schedule: async () => ({ schemaVersion: 1, mode: 'single-worker', route: { provider: 'unconfigured', model: 'invalid', maxTokens: 32000 }, workerCount: 1, source: 'scheduler', policyVersion: 'invalid' }) }) }, { ...workerInput, budget: before })
-  } catch (error) {
-    invalidError = error instanceof Error ? error.message : String(error)
-  }
+  const invalidDecision = await replayInvalidWorkerDecisionFixture()
 
   scheduler.recordFailure({ requestId: 'replay-session', code: 'TIMEOUT' })
   const timeout = (await resolveSchedule(config.orchestrator, resolver, schedulerInput)).decision.route.model
@@ -59,11 +52,13 @@ export async function replayAdaptiveScheduling() {
   return {
     profileFallback,
     schedulerPresent,
-    invalidDecision: { error: invalidError, before, after: invalidController.snapshot() },
+    invalidDecision,
     failurePolicy: { quota, timeout, cooldown, repeated },
     handoffEscalation,
     workerEvents: worker.events.filter(event => event.type !== 'dsh-plugin/budget-rejected').map(event => event.type),
+    workerEventPayloads: worker.events.map(event => ({ type: event.type, data: event.data })),
     rootEvents: root.events.map(event => event.type),
+    rootEventPayloads: root.events.map(event => ({ type: event.type, data: event.data })),
     directActualRoute: root.actualRoute,
     budgetView: controller.snapshot(),
   }

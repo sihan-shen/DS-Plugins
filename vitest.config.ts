@@ -9,9 +9,6 @@ export default defineConfig({
       '@ds-plugins/dsh-code-intelligence': fileURLToPath(new URL('./packages/dsh-code-intelligence/src/index.ts', import.meta.url)),
       '@ds-plugins/dsh-orchestrator': fileURLToPath(new URL('./packages/dsh-orchestrator/src/index.ts', import.meta.url)),
       '@ds-plugins/dsh-adaptive-scheduler': fileURLToPath(new URL('./packages/dsh-adaptive-scheduler/src/index.ts', import.meta.url)),
-      '@deepseek-ai/cordis': fileURLToPath(new URL('./packages/dsh-orchestrator/node_modules/@deepseek-ai/cordis', import.meta.url)),
-      '@deepseek-ai/dsh-agent': fileURLToPath(new URL('./packages/dsh-orchestrator/node_modules/@deepseek-ai/dsh-agent', import.meta.url)),
-      'js-yaml': fileURLToPath(new URL('./packages/dsh-orchestrator/node_modules/js-yaml', import.meta.url)),
     },
   },
   test: {

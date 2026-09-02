@@ -6,7 +6,14 @@ describe('DSH v0.3 keyless adaptive scheduling replay', () => {
     const replay = await replayAdaptiveScheduling()
     expect(replay.profileFallback).toMatchObject({ source: 'profile-fallback', route: { provider: 'provider-disabled', model: 'baseline-disabled' } })
     expect(replay.schedulerPresent).toMatchObject({ source: 'scheduler', policyVersion: 'v0.3.0' })
-    expect(replay.invalidDecision).toMatchObject({ error: 'SCHEDULE_DECISION_INVALID', before: { admittedWorkers: 0, admittedPluginToolActions: 0 }, after: { admittedWorkers: 0, admittedPluginToolActions: 0 } })
+    expect(replay.invalidDecision).toMatchObject({
+      error: 'SCHEDULE_DECISION_INVALID',
+      before: { admittedWorkers: 0, admittedPluginToolActions: 0 },
+      after: { admittedWorkers: 0, admittedPluginToolActions: 0 },
+      childStarts: 0,
+      events: [],
+    })
+    expect(replay.invalidDecision.after).toEqual(replay.invalidDecision.before)
     expect(replay.failurePolicy).toEqual({ quota: 'QUOTA_EXHAUSTED', timeout: 'fallback-disabled', cooldown: 'fallback-disabled', repeated: 'strong-disabled' })
     expect(replay.handoffEscalation).toMatchObject({ route: { model: 'strong-disabled' }, explanationCode: 'HANDOFF_ESCALATION' })
     expect(replay.workerEvents).toEqual(['dsh-plugin/schedule-selected', 'dsh-plugin/worker-requested', 'dsh-plugin/worker-finished'])
@@ -14,5 +21,7 @@ describe('DSH v0.3 keyless adaptive scheduling replay', () => {
     expect(replay.directActualRoute).toEqual({ provider: 'actual-disabled', model: 'actual-model-disabled' })
     expect(replay.budgetView).toEqual({ maxWorkers: 1, admittedWorkers: 0, maxPluginToolActions: 24, admittedPluginToolActions: 0, remainingWorkers: 1, remainingPluginToolActions: 24 })
     expect(JSON.stringify(replay)).not.toMatch(/credential|authorization|transcript|SECRET_CHILD_OUTPUT/u)
+    expect(JSON.stringify({ workerEvents: replay.workerEventPayloads, rootEvents: replay.rootEventPayloads }))
+      .not.toMatch(/credential|authorization|transcript|SECRET_CHILD_OUTPUT/u)
   })
 })
