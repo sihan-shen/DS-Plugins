@@ -55,6 +55,10 @@ describe('parseTaskDagV1', () => {
     expect(parsed.nodes[0]?.writePaths).toEqual(['src/a.ts'])
   })
 
+  it('rejects a malformed Unicode rootTaskId', () => {
+    expect(() => parseTaskDagV1({ schemaVersion: 1, rootTaskId: '\ud800', nodes: [node('a')] })).toThrow()
+  })
+
   it.each([
     { schemaVersion: 1, rootTaskId: 'root-1', nodes: [], label: 'empty DAG' },
     { schemaVersion: 1, rootTaskId: 'root-1', nodes: [node('a')], extra: true, label: 'unknown key' },

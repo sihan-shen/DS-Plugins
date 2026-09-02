@@ -11,6 +11,7 @@ import {
   MAX_DAG_NODES,
   MAX_DAG_PATHS,
   MAX_PARALLEL_WORKERS,
+  isWellFormedUnicode,
   parseNodeId,
   parseRepoPathDeclaration,
   utf8ByteLength,
@@ -81,7 +82,7 @@ function required(record: RecordValue, name: string, path: string): unknown {
 }
 
 function boundedIdentifier(value: unknown, path: string): string {
-  if (typeof value !== 'string' || value.trim() === '') fail(path, 'must be a non-empty identifier')
+  if (typeof value !== 'string' || value.trim() === '' || !isWellFormedUnicode(value)) fail(path, 'must be a non-empty identifier')
   if (value.includes('\0')) fail(path, 'must not contain a NUL byte')
   if (utf8ByteLength(value) > MAX_SCHEDULING_IDENTIFIER_BYTES) fail(path, `must not exceed ${MAX_SCHEDULING_IDENTIFIER_BYTES} UTF-8 bytes`)
   return value
