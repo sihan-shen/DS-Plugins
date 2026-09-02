@@ -131,8 +131,14 @@ async function copyActualProfile(root: string, profileName: 'v0.1' | 'v0.3-adapt
       join(profileDir, 'node_modules', '@ds-plugins', 'dsh-orchestrator'),
       process.platform === 'win32' ? 'junction' : 'dir',
     )
-    await cp(join(repositoryRoot, 'packages/dsh-adaptive-scheduler'), join(root, 'packages/dsh-adaptive-scheduler'), { recursive: true })
-    await cp(join(repositoryRoot, 'packages/dsh-scheduling-contracts'), join(root, 'packages/dsh-scheduling-contracts'), { recursive: true })
+    await cp(join(repositoryRoot, 'packages/dsh-adaptive-scheduler'), join(root, 'packages/dsh-adaptive-scheduler'), {
+      recursive: true,
+      filter: (source) => !source.split(/[\\/]/).includes('node_modules'),
+    })
+    await cp(join(repositoryRoot, 'packages/dsh-scheduling-contracts'), join(root, 'packages/dsh-scheduling-contracts'), {
+      recursive: true,
+      filter: (source) => !source.split(/[\\/]/).includes('node_modules'),
+    })
     await symlink(
       join(root, 'packages/dsh-adaptive-scheduler'),
       join(profileDir, 'node_modules', '@ds-plugins', 'dsh-adaptive-scheduler'),
