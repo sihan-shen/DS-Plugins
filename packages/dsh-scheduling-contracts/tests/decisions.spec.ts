@@ -84,8 +84,14 @@ describe('CapabilityRequestV1', () => {
   })
 
   it('accepts the widened parallel worker bound and rejects one over it', () => {
-    expect(parseCapabilityRequestV1({ ...request, constraints: { ...request.constraints, maxWorkers: 8 } }).constraints.maxWorkers).toBe(8)
-    expect(() => parseCapabilityRequestV1({ ...request, constraints: { ...request.constraints, maxWorkers: 9 } })).toThrow()
+    const accepted = { ...request, constraints: { ...request.constraints, maxWorkers: 8 } }
+    const rejected = { ...request, constraints: { ...request.constraints, maxWorkers: 9 } }
+    expect(parseCapabilityRequestV1(accepted).constraints.maxWorkers).toBe(8)
+    expect(() => parseCapabilityRequestV1(rejected)).toThrow()
+    expect(schemaAccepts(accepted, CAPABILITY_REQUEST_V1_JSON_SCHEMA)).toBe(true)
+    expect(schemaAccepts(rejected, CAPABILITY_REQUEST_V1_JSON_SCHEMA)).toBe(false)
+    expect(parserAccepts(accepted, parseCapabilityRequestV1)).toBe(true)
+    expect(parserAccepts(rejected, parseCapabilityRequestV1)).toBe(false)
   })
 })
 
