@@ -1,4 +1,8 @@
-import type { CapabilityProfileV1, RouteDecisionV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import type {
+  CapabilityProfileV1,
+  ParallelVerificationPolicyV1,
+  RouteDecisionV1,
+} from '@ds-plugins/dsh-scheduling-contracts'
 
 /** Caller-argument policy for one deployment-controlled verification program. */
 export type VerificationAllowedArgs = 'none' | 'orchestrator-test-paths'
@@ -9,6 +13,14 @@ export interface VerificationCommand {
   readonly executable: string
   readonly fixedArgs: readonly string[]
   readonly allowedArgs: VerificationAllowedArgs
+}
+
+/** Deployment-controlled policy and tool authority for economical parallel workers. */
+export interface ParallelConfigV1 {
+  readonly maxParallelWorkers: number
+  readonly verification: ParallelVerificationPolicyV1
+  readonly workerToolAllowlist: readonly string[]
+  readonly routeToolFilters: Readonly<Record<string, readonly string[]>>
 }
 
 /** Configuration validated before the orchestrator plugin is loaded. */
@@ -23,7 +35,7 @@ export interface OrchestratorConfig {
     readonly maxTokens: number
   }
   readonly budgets: {
-    readonly maxWorkers: 0 | 1
+    readonly maxWorkers: number
     readonly maxPluginToolActions: number
     readonly toolTimeoutMs: number
   }
@@ -32,6 +44,8 @@ export interface OrchestratorConfig {
     readonly timeoutMs: number
     readonly maxOutputBytes: number
   }
+  /** Optional deployment-controlled parallel execution policy. */
+  readonly parallel?: ParallelConfigV1
   /** Optional deterministic capability-to-route scheduling policy. */
   readonly scheduling?: OrchestratorSchedulingConfig
 }

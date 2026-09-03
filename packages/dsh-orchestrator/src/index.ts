@@ -25,7 +25,7 @@ export type {
   MountedBudgetControllerRegistry,
   PluginToolAction,
 } from './budgets.js'
-export { Config, parseConfig } from './config.js'
+export { Config, parseConfig, routeToolFilterKey } from './config.js'
 export {
   CONTEXT_PROMPT_ORDER,
   CONTEXT_PROMPT_SECTION,
@@ -54,6 +54,8 @@ export {
   createTargetedVerificationTool,
   mountTargetedVerificationTool,
   VerificationService,
+  validateParallelVerificationPolicy,
+  validateVerificationArguments,
   VERIFICATION_CLEANUP_ALLOWANCE_MS,
   VERIFICATION_TERMINATION_GRACE_MS,
 } from './verification.js'
@@ -82,6 +84,7 @@ export type {
   HandoffV1,
   OrchestratorConfig,
   OrchestratorSchedulingConfig,
+  ParallelConfigV1,
   VerificationCommand,
   VerificationEvidenceV1,
   WorkerSpecV1,

@@ -25,7 +25,56 @@ function rejections(): { readonly values: BudgetRejection[]; readonly record: (r
   }
 }
 
+function seededController(
+  seed: { readonly workers: number; readonly actions: number; readonly workerLimit: number; readonly actionLimit: number },
+) {
+  const recorder = rejections()
+  const controller = new BudgetController({
+    maxWorkers: seed.workerLimit,
+    maxPluginToolActions: seed.actionLimit,
+    toolTimeoutMs: 30_000,
+  }, recorder.record)
+  for (let index = 0; index < seed.workers; index += 1) expect(controller.admitWorker()).toEqual({ allowed: true })
+  for (let index = 0; index < seed.actions; index += 1) expect(controller.admitPluginTool('targeted_verify')).toEqual({ allowed: true })
+  return { controller, recorder }
+}
+
 describe('deterministic budget admission', () => {
+  it('commits one action and N workers atomically', () => {
+    const recorder = rejections()
+    const controller = new BudgetController({ maxWorkers: 8, maxPluginToolActions: 4, toolTimeoutMs: 30_000 }, recorder.record)
+
+    expect(controller.admitFanout(3)).toEqual({ allowed: true })
+    expect(controller.snapshot()).toMatchObject({ admittedWorkers: 3, admittedPluginToolActions: 1 })
+  })
+
+  it('rolls back both counters and records only the more-negative rejection, worker on ties', () => {
+    const { controller, recorder } = seededController({ workers: 7, actions: 4, workerLimit: 8, actionLimit: 4 })
+
+    expect(controller.admitFanout(3)).toEqual({ allowed: false, code: 'WORKER_LIMIT', limit: 8, observed: 10 })
+    expect(controller.snapshot()).toMatchObject({ admittedWorkers: 7, admittedPluginToolActions: 4 })
+    expect(recorder.values).toHaveLength(1)
+
+    const tie = seededController({ workers: 6, actions: 4, workerLimit: 8, actionLimit: 4 })
+    expect(tie.controller.admitFanout(3)).toEqual({ allowed: false, code: 'WORKER_LIMIT', limit: 8, observed: 9 })
+    expect(tie.recorder.values).toHaveLength(1)
+
+    const action = seededController({ workers: 5, actions: 4, workerLimit: 8, actionLimit: 4 })
+    expect(action.controller.admitFanout(3)).toEqual({ allowed: false, code: 'PLUGIN_TOOL_LIMIT', limit: 4, observed: 5 })
+    expect(action.controller.snapshot()).toMatchObject({ admittedWorkers: 5, admittedPluginToolActions: 4 })
+    expect(action.recorder.values).toHaveLength(1)
+  })
+
+  it('gives DISPOSED precedence and rejects zero or non-integral fanout without recording', () => {
+    const { controller, recorder } = seededController({ workers: 0, actions: 0, workerLimit: 8, actionLimit: 4 })
+    controller.dispose()
+
+    expect(controller.admitFanout(1)).toMatchObject({ code: 'DISPOSED' })
+    expect(() => controller.admitFanout(0)).toThrow()
+    expect(() => controller.admitFanout(1.5)).toThrow()
+    expect(recorder.values).toHaveLength(1)
+  })
+
   it('exposes an immutable read-only scheduling budget snapshot', () => {
     const recorder = rejections()
     const controller = new BudgetController({ ...budgets, maxPluginToolActions: 24 }, recorder.record)

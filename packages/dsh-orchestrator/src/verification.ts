@@ -1,6 +1,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { SubprocessRuntime } from '@deepseek-ai/dsh-subprocess'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+import { parseParallelVerificationPolicyV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import type { ParallelVerificationPolicyV1 } from '@ds-plugins/dsh-scheduling-contracts'
 import type { BudgetControllerRegistry } from './budgets.js'
 import { appendVerificationFinished } from './events.js'
 import type { OrchestratorConfig, VerificationCommand, VerificationEvidenceV1 } from './types.js'
@@ -88,7 +90,8 @@ function testPath(argument: string): void {
   }
 }
 
-function validatedArgs(command: VerificationCommand, args: readonly string[]): readonly string[] {
+/** Validate caller arguments against one deployment-controlled verification command. */
+export function validateVerificationArguments(command: VerificationCommand, args: readonly string[]): readonly string[] {
   if (!Array.isArray(args)) throw new TypeError('verification arguments must be an array')
   for (const argument of args) {
     if (typeof argument !== 'string') throw new TypeError('verification arguments must be strings')
@@ -102,13 +105,29 @@ function validatedArgs(command: VerificationCommand, args: readonly string[]): r
   return [...args]
 }
 
+/** Validate a parallel policy against the deployment's executable and argument authority. */
+export function validateParallelVerificationPolicy(
+  policyValue: unknown,
+  verification: OrchestratorConfig['verification'],
+): ParallelVerificationPolicyV1 {
+  const policy = parseParallelVerificationPolicyV1(policyValue)
+  for (const request of policy.commands) {
+    const command = verification.commands.find(item => item.name === request.name)
+    if (command === undefined) {
+      throw new TypeError(`unknown parallel verification command: ${JSON.stringify(request.name)}`)
+    }
+    validateVerificationArguments(command, request.args)
+  }
+  return policy
+}
+
 function validatedRequest(
   commands: readonly VerificationCommand[],
   commandName: string,
   args: readonly string[],
 ): ValidatedVerificationRequest {
   const command = commandFor(commands, commandName)
-  return { command, args: validatedArgs(command, args) }
+  return { command, args: validateVerificationArguments(command, args) }
 }
 
 function trustedWorkspaceRoot(value: string): string {

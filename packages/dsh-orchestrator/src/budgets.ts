@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session'
-import { parseBudgetViewV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import { MAX_PARALLEL_WORKERS, parseBudgetViewV1 } from '@ds-plugins/dsh-scheduling-contracts'
 import type { BudgetViewV1 } from '@ds-plugins/dsh-scheduling-contracts'
 import type { OrchestratorConfig } from './types.js'
 
@@ -87,6 +87,26 @@ export class BudgetController {
       return this.reject('PLUGIN_TOOL_LIMIT', this.pluginToolActionLimit, observed)
     }
     this.pluginToolActionCount = observed
+    return { allowed: true }
+  }
+
+  /** Atomically admit one plugin action and a bounded parallel worker fan-out. */
+  admitFanout(workerCount: number): BudgetDecision {
+    if (!Number.isSafeInteger(workerCount) || workerCount < 1 || workerCount > MAX_PARALLEL_WORKERS) {
+      throw new TypeError(`fanout workerCount must be 1..${MAX_PARALLEL_WORKERS}`)
+    }
+    if (this.disposed) return this.reject('DISPOSED', this.workerLimit, this.workerCount + workerCount)
+    const workerObserved = this.workerCount + workerCount
+    const actionObserved = this.pluginToolActionCount + 1
+    const workerSlack = this.workerLimit - workerObserved
+    const actionSlack = this.pluginToolActionLimit - actionObserved
+    if (workerSlack < 0 || actionSlack < 0) {
+      return actionSlack < workerSlack
+        ? this.reject('PLUGIN_TOOL_LIMIT', this.pluginToolActionLimit, actionObserved)
+        : this.reject('WORKER_LIMIT', this.workerLimit, workerObserved)
+    }
+    this.workerCount = workerObserved
+    this.pluginToolActionCount = actionObserved
     return { allowed: true }
   }
 

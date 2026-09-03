@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import * as yaml from 'js-yaml'
-import { parseConfig } from '../src/config.ts'
+import { parseConfig, routeToolFilterKey } from '../src/config.ts'
 
 const validConfig = {
   workspaceRoot: '.',
@@ -44,6 +44,25 @@ const validScheduling = {
   allowPaidFallback: false,
 } as const
 
+const singleWorkerConfig = {
+  ...validConfig,
+  mode: 'single-worker',
+  budgets: { ...validConfig.budgets, maxWorkers: 1 },
+} as const
+
+const parallelConfig = {
+  maxParallelWorkers: 4,
+  verification: {
+    schemaVersion: 1,
+    scope: 'dag',
+    commands: [{ name: 'typecheck', args: [] }],
+  },
+  workerToolAllowlist: ['read_file', 'write_file'],
+  routeToolFilters: {
+    '["provider-disabled","baseline-disabled",null,null,null]': ['read_file'],
+  },
+} as const
+
 function configWith(patch: Record<string, unknown>) {
   return {
     ...validConfig,
@@ -76,6 +95,75 @@ describe('parseConfig', () => {
 
   it('accepts the optional bounded scheduling configuration', () => {
     expect(parseConfig({ ...validConfig, scheduling: validScheduling })).toEqual({ ...validConfig, scheduling: validScheduling })
+  })
+
+  it('accepts parallel only with single-worker mode and cumulative workers up to 16', () => {
+    const parsed = parseConfig({
+      ...singleWorkerConfig,
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 16 },
+      parallel: parallelConfig,
+    })
+
+    expect(parsed.parallel).toEqual(parallelConfig)
+    expect(parsed.budgets.maxWorkers).toBe(16)
+  })
+
+  it('builds the canonical route-tool-filter key with null optional fields', () => {
+    expect(routeToolFilterKey({
+      provider: 'provider-disabled',
+      model: 'baseline-disabled',
+      maxTokens: 32_000,
+    })).toBe('["provider-disabled","baseline-disabled",null,null,null]')
+    expect(routeToolFilterKey({
+      provider: 'provider-disabled',
+      model: 'strong-disabled',
+      maxTokens: 64_000,
+      reasoningEffort: 'high',
+      promptProfile: 'coding-strong-v1',
+      modelFamily: 'deepseek',
+    })).toBe('["provider-disabled","strong-disabled","high","coding-strong-v1","deepseek"]')
+  })
+
+  it.each([
+    {
+      ...singleWorkerConfig,
+      mode: 'direct',
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 0 },
+      parallel: parallelConfig,
+    },
+    {
+      ...singleWorkerConfig,
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 17 },
+      parallel: parallelConfig,
+    },
+    {
+      ...singleWorkerConfig,
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 4 },
+      parallel: { ...parallelConfig, maxParallelWorkers: 5 },
+    },
+    {
+      ...singleWorkerConfig,
+      parallel: { ...parallelConfig, workerToolAllowlist: ['targeted_verify'] },
+    },
+    {
+      ...singleWorkerConfig,
+      parallel: { ...parallelConfig, workerToolAllowlist: 'read_file' },
+    },
+    {
+      ...singleWorkerConfig,
+      parallel: { ...parallelConfig, routeToolFilters: { bad: 'read_file' } },
+    },
+    {
+      ...singleWorkerConfig,
+      parallel: { ...parallelConfig, extra: true },
+    },
+  ])('rejects invalid parallel deployment %#', value => expect(() => parseConfig(value)).toThrow())
+
+  it('preserves old mode rules when parallel is absent', () => {
+    expect(() => parseConfig({
+      ...singleWorkerConfig,
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 2 },
+    })).toThrow(/exactly one/u)
   })
 
   it('rejects unknown scheduling keys and out-of-range capability profiles', () => {

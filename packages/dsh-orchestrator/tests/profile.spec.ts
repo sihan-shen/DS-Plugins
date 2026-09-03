@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import * as yaml from 'js-yaml'
 import { entryListSchema } from '@deepseek-ai/cordis-plugin-include'
+import { parseConfig } from '../src/config.ts'
 
 const communityCandidates = [
   'dsh-lsp-actions',
@@ -111,6 +112,16 @@ describe('DSH v0.3 adaptive profile', () => {
       expect.objectContaining({ id: 'ds-orchestrator' }),
       expect.objectContaining({ id: 'dsh-adaptive-scheduler' }),
     ]))
+    const v03Orchestrator = v03Patch.find(value =>
+      typeof value === 'object' && value !== null && 'id' in value && value.id === 'ds-orchestrator',
+    )
+    if (v03Orchestrator === undefined || typeof v03Orchestrator !== 'object' || v03Orchestrator === null || !('config' in v03Orchestrator)) {
+      throw new TypeError('v0.3 profile patch must configure ds-orchestrator')
+    }
+    expect(parseConfig(v03Orchestrator.config)).toMatchObject({
+      mode: 'single-worker',
+      budgets: { maxWorkers: 1 },
+    })
     expect(readFileSync(resolve(v01Profile, 'package.json'), 'utf8')).toBe(v01ManifestBefore)
     expect(readFileSync(resolve(v01Profile, 'cordis.patch.yml'), 'utf8')).toBe(v01PatchBefore)
   })
