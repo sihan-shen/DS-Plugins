@@ -119,7 +119,7 @@ function pruneRootsAndDescendants(eligible: EligibleNodes, roots: ReadonlySet<st
   for (const nodeId of excluded) eligible.delete(nodeId)
 }
 
-function removeSelfDependencies(eligible: EligibleNodes, issues: DagValidationIssueV1[]): void {
+function selfDependencyRoots(eligible: EligibleNodes, issues: DagValidationIssueV1[]): ReadonlySet<string> {
   const roots = new Set<string>()
   for (const nodeId of [...eligible.keys()].sort(lexicalCompare)) {
     if (eligible.get(nodeId)!.dependsOn.includes(nodeId)) {
@@ -127,14 +127,14 @@ function removeSelfDependencies(eligible: EligibleNodes, issues: DagValidationIs
       issues.push({ code: 'self-dependency', nodeId })
     }
   }
-  pruneRootsAndDescendants(eligible, roots)
+  return roots
 }
 
-function removeMissingRootsAndDescendants(
+function missingDependencyRoots(
   eligible: EligibleNodes,
   declaredIds: ReadonlySet<string>,
   issues: DagValidationIssueV1[],
-): void {
+): ReadonlySet<string> {
   const roots = new Set<string>()
   for (const nodeId of [...eligible.keys()].sort(lexicalCompare)) {
     const node = eligible.get(nodeId)!
@@ -145,7 +145,7 @@ function removeMissingRootsAndDescendants(
       }
     }
   }
-  pruneRootsAndDescendants(eligible, roots)
+  return roots
 }
 
 function tarjanScc(eligible: EligibleNodes): readonly (readonly string[])[] {
@@ -313,9 +313,11 @@ export function validateTaskDagV1(dag: TaskDagV1, limits: DagValidationLimitsV1)
   const parsedLimits = parseDagValidationLimitsV1(limits)
   const issues: DagValidationIssueV1[] = []
   const { declaredIds, duplicateIds, eligible } = uniqueDeclarations(dag.nodes, issues)
+  const selfRoots = selfDependencyRoots(eligible, issues)
+  const missingRoots = missingDependencyRoots(eligible, declaredIds, issues)
   pruneRootsAndDescendants(eligible, duplicateIds)
-  removeSelfDependencies(eligible, issues)
-  removeMissingRootsAndDescendants(eligible, declaredIds, issues)
+  pruneRootsAndDescendants(eligible, selfRoots)
+  pruneRootsAndDescendants(eligible, missingRoots)
   removeCyclesAndDescendants(eligible, tarjanScc(eligible), issues)
   const levels = deterministicLevels(eligible)
   addConcurrentOverlapIssues(levels, eligible, issues)

@@ -143,6 +143,34 @@ describe('validateTaskDagV1', () => {
     expect(result.levelCount).toBe(0)
   })
 
+  it('retains direct missing diagnostics on a node also pruned by a duplicate dependency', () => {
+    const result = validateTaskDagV1(parseTaskDagV1(dag([
+      node('dup'),
+      node('dup'),
+      node('mixed', ['dup', 'ghost']),
+    ])), limits())
+
+    expect(result.issues).toEqual([
+      { code: 'duplicate-node', nodeId: 'dup' },
+      { code: 'missing-dependency', nodeId: 'mixed', dependsOn: 'ghost' },
+    ])
+    expect(result.levels).toEqual([])
+    expect(result.levelCount).toBe(0)
+  })
+
+  it('retains direct missing diagnostics on a node also pruned by self-dependency', () => {
+    const result = validateTaskDagV1(parseTaskDagV1(dag([
+      node('mixed', ['mixed', 'ghost']),
+    ])), limits())
+
+    expect(result.issues).toEqual([
+      { code: 'self-dependency', nodeId: 'mixed' },
+      { code: 'missing-dependency', nodeId: 'mixed', dependsOn: 'ghost' },
+    ])
+    expect(result.levels).toEqual([])
+    expect(result.levelCount).toBe(0)
+  })
+
   it('compares only same-ready-level pairs with ww before wr before rw', () => {
     const result = validateTaskDagV1(parseTaskDagV1(concurrentOverlapDag()), limits())
 
