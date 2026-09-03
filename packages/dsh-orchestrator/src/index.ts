@@ -33,6 +33,7 @@ export {
   mountContextIntegration,
 } from './context.js'
 export { DIRECT_PROMPT_ORDER, DIRECT_PROMPT_SECTION, mountDirectMode } from './direct.js'
+export { compareDagValidationIssues, validateTaskDagV1 } from './dag.js'
 export {
   appendBudgetRejected,
   appendScheduleSelected,

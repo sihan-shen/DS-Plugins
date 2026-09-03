@@ -11,5 +11,7 @@ describe('published orchestrator package entry', () => {
     expect(entry.appendVerificationFinished).toEqual(expect.any(Function))
     expect(entry.appendScheduleSelected).toEqual(expect.any(Function))
     expect(entry.resolveSchedule).toEqual(expect.any(Function))
+    expect(entry.validateTaskDagV1).toEqual(expect.any(Function))
+    expect(entry.compareDagValidationIssues).toEqual(expect.any(Function))
   })
 })
