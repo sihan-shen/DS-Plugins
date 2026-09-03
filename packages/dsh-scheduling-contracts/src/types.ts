@@ -120,6 +120,61 @@ export interface ParallelVerificationPolicyV1 {
   readonly commands: readonly ParallelVerificationCommandV1[]
 }
 
+export type VerificationOutcomeV1 =
+  | 'not-run-no-commands'
+  | 'not-run-no-accepted-nodes'
+  | 'passed'
+  | 'command-failed'
+  | 'admission-rejected'
+
+export type NodeOutcomeReasonV1 =
+  | 'dependency-not-run'
+  | 'zero-worker-constraint'
+  | 'no-route'
+  | 'tool-unauthorized'
+  | 'admission-rejected'
+  | 'level-verification-stopped'
+  | 'cancelled-before-start'
+  | 'cancelled-after-start'
+  | 'start-failed'
+  | 'blocked-result'
+  | 'failed-result'
+  | 'handoff-payload-too-large'
+  | 'completed'
+  | 'violation'
+
+export interface ParallelNodeResultV1 {
+  readonly schemaVersion: 1
+  readonly nodeId: string
+  readonly requestId: string
+  readonly workerRef?: string
+  readonly status: 'completed' | 'blocked' | 'failed' | 'ownership-violation' | 'not-run'
+  readonly reason: NodeOutcomeReasonV1
+}
+
+export interface OwnershipViolationSummaryV1 {
+  readonly nodeId: string
+  readonly count: number
+  readonly digest: string
+  readonly samplePaths: readonly string[]
+}
+
+export interface ParallelAggregateV1 {
+  readonly schemaVersion: 1
+  readonly dagId: string
+  readonly scope: 'level' | 'dag'
+  readonly fanoutId: string
+  readonly levelId?: string
+  readonly levelIndex?: number
+  readonly nodeResults: readonly ParallelNodeResultV1[]
+  readonly aggregateStatus: 'completed' | 'blocked' | 'failed' | 'verification-failed'
+  readonly verificationOutcome: VerificationOutcomeV1
+  readonly verification?: readonly VerificationEvidenceV1[]
+  readonly ownershipViolations: readonly OwnershipViolationSummaryV1[]
+  readonly projectedHandoff: HandoffV1
+  readonly projectedHandoffTruncated?: true
+}
+
 export interface CapabilityRequestV1 {
   readonly schemaVersion: 1
   readonly target: SchedulingTargetV1

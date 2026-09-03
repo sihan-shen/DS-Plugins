@@ -22,6 +22,21 @@ export {
   parseParallelVerificationPolicyV1,
 } from './parallel-verification.js'
 export {
+  MAX_AGGREGATE_PAYLOAD_BYTES,
+  MAX_AGGREGATE_PROJECTED_HANDOFF_BYTES,
+  MAX_AGGREGATE_VERIFICATION_METADATA_SERIALIZED_BYTES,
+  MAX_AGGREGATE_VERIFICATION_OUTPUT_BYTES,
+  MAX_AGGREGATE_VERIFICATION_TOTAL_BYTES,
+  MAX_AGGREGATE_VIOLATION_BYTES,
+  MAX_PARALLEL_STARTED_PAYLOAD_BYTES,
+  MAX_PARALLEL_WORKER_FINISHED_PAYLOAD_BYTES,
+  MAX_PARALLEL_WORKER_REQUESTED_PAYLOAD_BYTES,
+  assertSerializedPayloadLimit,
+  deriveAggregateStatus,
+  parseParallelAggregateV1,
+  serializedPayloadBytes,
+} from './parallel-aggregate.js'
+export {
   MAX_AGGREGATE_PATH_BYTES,
   MAX_DAG_CHANGED_FILES,
   MAX_DAG_DEPS,
@@ -70,8 +85,13 @@ export type {
   DagValidationV1,
   ParallelVerificationCommandV1,
   ParallelVerificationPolicyV1,
+  NodeOutcomeReasonV1,
+  OwnershipViolationSummaryV1,
+  ParallelAggregateV1,
+  ParallelNodeResultV1,
   TaskDagV1,
   TaskNodeV1,
   VerificationEvidenceV1,
+  VerificationOutcomeV1,
 } from './types.js'
 export type { RepoDirectoryPrefix, RepoFilePath, RepoPathDeclaration } from './parallel-paths.js'
