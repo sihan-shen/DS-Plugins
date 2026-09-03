@@ -50,10 +50,10 @@ function isPlainRecord(value: object): boolean {
   return prototype === Object.prototype || prototype === null
 }
 
-function assertJsonValue(value: unknown, path: string, seen = new WeakSet<object>()): void {
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return
+function snapshotJsonValue(value: unknown, path: string, seen = new WeakSet<object>()): unknown {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
   if (typeof value === 'number') {
-    if (Number.isFinite(value)) return
+    if (Number.isFinite(value)) return value
     fail(path, 'must be a JSON value')
   }
   if (typeof value !== 'object') fail(path, 'must be a JSON value')
@@ -61,18 +61,39 @@ function assertJsonValue(value: unknown, path: string, seen = new WeakSet<object
   if (!Array.isArray(value) && !isPlainRecord(value)) fail(path, 'must be a JSON value')
 
   seen.add(value)
-  if (Array.isArray(value)) {
-    for (const key of Reflect.ownKeys(value)) {
-      if (key !== 'length' && (typeof key !== 'string' || !/^\d+$/u.test(key))) fail(path, 'must be a JSON value')
+  try {
+    const descriptors = Object.getOwnPropertyDescriptors(value)
+    if (Array.isArray(value)) {
+      const snapshot: unknown[] = []
+      const length = descriptors.length?.value
+      if (typeof length !== 'number' || !Number.isSafeInteger(length) || length < 0) fail(`${path}.length`, 'must be a valid array length')
+      for (const key of Reflect.ownKeys(descriptors)) {
+        if (key !== 'length' && (typeof key !== 'string' || !/^(?:0|[1-9]\d*)$/u.test(key))) {
+          fail(path, 'must be a JSON value')
+        }
+        if (key !== 'length' && Number(key) >= length) fail(path, 'must be a JSON value')
+      }
+      for (let index = 0; index < length; index += 1) {
+        const descriptor = descriptors[String(index)]
+        if (descriptor === undefined) fail(`${path}[${index}]`, 'must be a JSON value')
+        if (!Object.prototype.hasOwnProperty.call(descriptor, 'value')) fail(`${path}[${index}]`, 'must not be an accessor')
+        snapshot.push(snapshotJsonValue(descriptor.value, `${path}[${index}]`, seen))
+      }
+      return snapshot
     }
-    for (const [index, item] of value.entries()) assertJsonValue(item, `${path}[${index}]`, seen)
-  } else {
-    for (const key of Reflect.ownKeys(value)) {
+
+    const snapshot = Object.create(null) as RecordValue
+    for (const key of Reflect.ownKeys(descriptors)) {
       if (typeof key !== 'string') fail(path, 'must be a JSON value')
-      assertJsonValue((value as RecordValue)[key], `${path}.${key}`, seen)
+      const descriptor = descriptors[key]!
+      if (!descriptor.enumerable) fail(`${path}.${key}`, 'must be JSON-serialized')
+      if (!Object.prototype.hasOwnProperty.call(descriptor, 'value')) fail(`${path}.${key}`, 'must not be an accessor')
+      snapshot[key] = snapshotJsonValue(descriptor.value, `${path}.${key}`, seen)
     }
+    return snapshot
+  } finally {
+    seen.delete(value)
   }
-  seen.delete(value)
 }
 
 function deepFreeze<T>(value: T): T {
@@ -339,9 +360,9 @@ export function deriveAggregateStatus(
 }
 
 export function parseParallelAggregateV1(value: unknown): ParallelAggregateV1 {
-  assertSerializedPayloadLimit(value, MAX_AGGREGATE_PAYLOAD_BYTES, 'parallel aggregate')
-  assertJsonValue(value, 'parallelAggregate')
-  const aggregate = exactRecord(value, 'parallelAggregate', [
+  const snapshot = snapshotJsonValue(value, 'parallelAggregate')
+  assertSerializedPayloadLimit(snapshot, MAX_AGGREGATE_PAYLOAD_BYTES, 'parallel aggregate')
+  const aggregate = exactRecord(snapshot, 'parallelAggregate', [
     'schemaVersion', 'dagId', 'scope', 'fanoutId', 'levelId', 'levelIndex', 'nodeResults', 'aggregateStatus',
     'verificationOutcome', 'verification', 'ownershipViolations', 'projectedHandoff', 'projectedHandoffTruncated',
   ])
@@ -412,7 +433,7 @@ export function parseParallelAggregateV1(value: unknown): ParallelAggregateV1 {
     projectedHandoffTruncated = true
   }
 
-  return deepFreeze({
+  const parsed: ParallelAggregateV1 = deepFreeze({
     schemaVersion: 1,
     dagId,
     scope,
@@ -426,4 +447,11 @@ export function parseParallelAggregateV1(value: unknown): ParallelAggregateV1 {
     projectedHandoff,
     ...(projectedHandoffTruncated === undefined ? {} : { projectedHandoffTruncated }),
   })
+  if (parsed.verification !== undefined) {
+    assertSerializedPayloadLimit(parsed.verification, MAX_AGGREGATE_VERIFICATION_TOTAL_BYTES, 'parallelAggregate.verification')
+  }
+  assertSerializedPayloadLimit(parsed.ownershipViolations, MAX_AGGREGATE_VIOLATION_BYTES, 'parallelAggregate.ownershipViolations')
+  assertSerializedPayloadLimit(parsed.projectedHandoff, MAX_AGGREGATE_PROJECTED_HANDOFF_BYTES, 'parallelAggregate.projectedHandoff')
+  assertSerializedPayloadLimit(parsed, MAX_AGGREGATE_PAYLOAD_BYTES, 'parallel aggregate')
+  return parsed
 }

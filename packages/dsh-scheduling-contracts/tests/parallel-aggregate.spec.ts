@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
   MAX_AGGREGATE_PAYLOAD_BYTES,
+  MAX_AGGREGATE_PROJECTED_HANDOFF_BYTES,
+  MAX_AGGREGATE_VERIFICATION_METADATA_SERIALIZED_BYTES,
+  MAX_AGGREGATE_VERIFICATION_OUTPUT_BYTES,
+  MAX_AGGREGATE_VERIFICATION_TOTAL_BYTES,
+  MAX_AGGREGATE_VIOLATION_BYTES,
   assertSerializedPayloadLimit,
   deriveAggregateStatus,
   parseParallelAggregateV1,
@@ -8,6 +13,7 @@ import {
 } from '../src/index.ts'
 
 const WORKER_REF = `w:${'a'.repeat(32)}`
+const textEncoder = new TextEncoder()
 
 const passedEvidence = {
   schemaVersion: 1,
@@ -94,6 +100,115 @@ function violated(nodeId: string, workerRef = WORKER_REF) {
     status: 'ownership-violation',
     reason: 'violation',
   } as const
+}
+
+function nativeSerializedBytes(value: unknown): number {
+  return textEncoder.encode(JSON.stringify(value)).byteLength
+}
+
+interface VerificationMetadataInput {
+  readonly schemaVersion: 1
+  readonly commandName: string
+  readonly args: readonly string[]
+  readonly exitCode: number | null
+  readonly status: 'passed' | 'failed' | 'timed-out' | 'spawn-error'
+  readonly durationMs: number
+}
+
+function verificationMetadata(evidence: VerificationMetadataInput) {
+  return {
+    schemaVersion: evidence.schemaVersion,
+    commandName: evidence.commandName,
+    args: evidence.args,
+    exitCode: evidence.exitCode,
+    status: evidence.status,
+    durationMs: evidence.durationMs,
+  }
+}
+
+function evidenceWithMetadataBytes(target: number) {
+  const args = Array.from({ length: 8 }, () => '')
+  const evidence = { ...passedEvidence, commandName: 'm', args }
+  let remaining = target - nativeSerializedBytes(verificationMetadata(evidence))
+
+  for (let index = 0; index < args.length && remaining >= 2; index += 1) {
+    const escapedBytes = Math.min(256, Math.floor(remaining / 2))
+    args[index] = '\n'.repeat(escapedBytes)
+    remaining -= escapedBytes * 2
+  }
+  if (remaining === 1) {
+    const index = args.findIndex(argument => argument.length < 256)
+    if (index < 0) throw new Error('metadata fixture has no one-byte capacity')
+    args[index] += 'x'
+    remaining -= 1
+  }
+  if (remaining !== 0 || nativeSerializedBytes(verificationMetadata(evidence)) !== target) {
+    throw new Error(`could not construct ${target}-byte metadata fixture`)
+  }
+  return evidence
+}
+
+function verificationSectionWithBytes(target: number) {
+  const verification = Array.from({ length: 4 }, (_, index) => ({
+    ...passedEvidence,
+    commandName: `check-${index}`,
+    stdout: '',
+  }))
+  let remaining = target - nativeSerializedBytes(verification)
+
+  for (const evidence of verification) {
+    const escapedBytes = Math.min(MAX_AGGREGATE_VERIFICATION_OUTPUT_BYTES, Math.floor(remaining / 2))
+    evidence.stdout = '\n'.repeat(escapedBytes)
+    remaining -= escapedBytes * 2
+  }
+  if (remaining === 1) {
+    const evidence = verification.find(item => item.stdout.length < MAX_AGGREGATE_VERIFICATION_OUTPUT_BYTES)
+    if (evidence === undefined) throw new Error('verification fixture has no one-byte capacity')
+    evidence.stdout += 'x'
+    remaining -= 1
+  }
+  if (remaining !== 0 || nativeSerializedBytes(verification) !== target) {
+    throw new Error(`could not construct ${target}-byte verification fixture`)
+  }
+  return verification
+}
+
+function ownershipSectionWithBytes(target: number) {
+  const ownershipViolations = Array.from({ length: 16 }, (_, nodeIndex) => ({
+    nodeId: `n${nodeIndex.toString().padStart(2, '0')}`,
+    count: 128,
+    digest: nodeIndex.toString(16).padStart(64, '0'),
+    samplePaths: Array.from({ length: 16 }, (_, pathIndex) =>
+      `n${nodeIndex.toString().padStart(2, '0')}/p${pathIndex.toString().padStart(2, '0')}`),
+  }))
+  let remaining = target - nativeSerializedBytes(ownershipViolations)
+
+  for (const summary of ownershipViolations) {
+    for (let index = 0; index < summary.samplePaths.length && remaining > 0; index += 1) {
+      const capacity = 1_024 - textEncoder.encode(summary.samplePaths[index]!).byteLength
+      const added = Math.min(capacity, remaining)
+      summary.samplePaths[index] += 'x'.repeat(added)
+      remaining -= added
+    }
+  }
+  if (remaining !== 0 || nativeSerializedBytes(ownershipViolations) !== target) {
+    throw new Error(`could not construct ${target}-byte ownership fixture`)
+  }
+  const nodeResults = ownershipViolations.map((summary, index) =>
+    violated(summary.nodeId, `w:${index.toString(16).padStart(32, '0')}`))
+  return { nodeResults, ownershipViolations }
+}
+
+function projectedHandoffWithBytes(target: number) {
+  const handoff = {
+    ...projectedHandoff(),
+    summary: 'x'.repeat(16_384),
+    decisions: [] as string[],
+  }
+  const remaining = target - nativeSerializedBytes(handoff)
+  handoff.decisions.push('x'.repeat(remaining - 2))
+  if (nativeSerializedBytes(handoff) !== target) throw new Error(`could not construct ${target}-byte Handoff fixture`)
+  return handoff
 }
 
 describe('parseParallelAggregateV1', () => {
@@ -237,6 +352,79 @@ describe('parseParallelAggregateV1', () => {
     expect(() => parseParallelAggregateV1(aggregate({ projectedHandoffTruncated: false }))).toThrow()
     expect(() => parseParallelAggregateV1(aggregate({ nodeResults: [completed('\ud800')] }))).toThrow()
   })
+
+  it('rejects accessor-bearing evidence before a later value can exceed measured budgets', () => {
+    const verification = Array.from({ length: 4 }, (_, index) => {
+      let reads = 0
+      return {
+        ...passedEvidence,
+        commandName: `check-${index}`,
+        get stdout() {
+          reads += 1
+          return reads <= 4 ? '' : '\n'.repeat(MAX_AGGREGATE_VERIFICATION_OUTPUT_BYTES)
+        },
+      }
+    })
+
+    expect(() => parseParallelAggregateV1(aggregate({
+      verificationOutcome: 'passed',
+      verification,
+    }))).toThrow(/accessor/u)
+  })
+
+  it('enforces the verification metadata exact and one-over serialized boundary with escaped content', () => {
+    const exact = evidenceWithMetadataBytes(MAX_AGGREGATE_VERIFICATION_METADATA_SERIALIZED_BYTES)
+    const over = evidenceWithMetadataBytes(MAX_AGGREGATE_VERIFICATION_METADATA_SERIALIZED_BYTES + 1)
+
+    expect(nativeSerializedBytes(verificationMetadata(exact))).toBe(MAX_AGGREGATE_VERIFICATION_METADATA_SERIALIZED_BYTES)
+    expect(parseParallelAggregateV1(aggregate({ verificationOutcome: 'passed', verification: [exact] }))).toBeDefined()
+    expect(() => parseParallelAggregateV1(aggregate({ verificationOutcome: 'passed', verification: [over] }))).toThrow(/metadata/u)
+  })
+
+  it('enforces the per-command output exact and one-over UTF-8 byte boundary', () => {
+    const exactOutput = `${'界'.repeat(2_730)}aa`
+    const exact = { ...passedEvidence, stdout: exactOutput }
+    const over = { ...passedEvidence, stdout: `${exactOutput}b` }
+
+    expect(textEncoder.encode(exactOutput).byteLength).toBe(MAX_AGGREGATE_VERIFICATION_OUTPUT_BYTES)
+    expect(parseParallelAggregateV1(aggregate({ verificationOutcome: 'passed', verification: [exact] }))).toBeDefined()
+    expect(() => parseParallelAggregateV1(aggregate({ verificationOutcome: 'passed', verification: [over] }))).toThrow(/output/u)
+  })
+
+  it('enforces the total verification section exact and one-over serialized boundary with escaped output', () => {
+    const exact = verificationSectionWithBytes(MAX_AGGREGATE_VERIFICATION_TOTAL_BYTES)
+    const over = verificationSectionWithBytes(MAX_AGGREGATE_VERIFICATION_TOTAL_BYTES + 1)
+
+    expect(nativeSerializedBytes(exact)).toBe(MAX_AGGREGATE_VERIFICATION_TOTAL_BYTES)
+    expect(parseParallelAggregateV1(aggregate({ verificationOutcome: 'passed', verification: exact }))).toBeDefined()
+    expect(() => parseParallelAggregateV1(aggregate({ verificationOutcome: 'passed', verification: over }))).toThrow(/verification/u)
+  })
+
+  it('enforces the ownership section exact and one-over serialized boundary', () => {
+    const exact = ownershipSectionWithBytes(MAX_AGGREGATE_VIOLATION_BYTES)
+    const over = ownershipSectionWithBytes(MAX_AGGREGATE_VIOLATION_BYTES + 1)
+
+    expect(nativeSerializedBytes(exact.ownershipViolations)).toBe(MAX_AGGREGATE_VIOLATION_BYTES)
+    expect(parseParallelAggregateV1(aggregate({
+      ...exact,
+      aggregateStatus: 'blocked',
+      projectedHandoff: projectedHandoff('blocked'),
+    }))).toBeDefined()
+    expect(() => parseParallelAggregateV1(aggregate({
+      ...over,
+      aggregateStatus: 'blocked',
+      projectedHandoff: projectedHandoff('blocked'),
+    }))).toThrow(/ownershipViolations/u)
+  })
+
+  it('enforces the projected Handoff exact and one-over serialized boundary', () => {
+    const exact = projectedHandoffWithBytes(MAX_AGGREGATE_PROJECTED_HANDOFF_BYTES)
+    const over = projectedHandoffWithBytes(MAX_AGGREGATE_PROJECTED_HANDOFF_BYTES + 1)
+
+    expect(nativeSerializedBytes(exact)).toBe(MAX_AGGREGATE_PROJECTED_HANDOFF_BYTES)
+    expect(parseParallelAggregateV1(aggregate({ projectedHandoff: exact }))).toBeDefined()
+    expect(() => parseParallelAggregateV1(aggregate({ projectedHandoff: over }))).toThrow(/projectedHandoff/u)
+  })
 })
 
 describe('aggregate status and payload measurement', () => {
@@ -244,6 +432,11 @@ describe('aggregate status and payload measurement', () => {
     expect(serializedPayloadBytes('x'.repeat(131_070))).toBe(MAX_AGGREGATE_PAYLOAD_BYTES)
     expect(() => assertSerializedPayloadLimit('x'.repeat(131_070), MAX_AGGREGATE_PAYLOAD_BYTES, 'aggregate')).not.toThrow()
     expect(() => assertSerializedPayloadLimit('x'.repeat(131_071), MAX_AGGREGATE_PAYLOAD_BYTES, 'aggregate')).toThrow(/aggregate/u)
+  })
+
+  it('measures JSON escaping and multibyte UTF-8 rather than string length', () => {
+    expect(serializedPayloadBytes('\n')).toBe(4)
+    expect(serializedPayloadBytes('界')).toBe(5)
   })
 
   it('derives aggregate status in normative precedence order', () => {
