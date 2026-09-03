@@ -1,4 +1,5 @@
 import {
+  MAX_DAG_NODES,
   MAX_PARALLEL_WORKERS,
   MAX_SCHEDULING_ITEMS,
   MAX_SCHEDULING_LATENCY_MS,
@@ -29,9 +30,6 @@ export const MAX_HANDOFF_ITEMS = 128
 /** Maximum UTF-8 payload accepted from one trusted context-compiler result. */
 export const MAX_CONTEXT_BLOCK_BYTES = 65_536
 
-/** Maximum cumulative workers admitted by one parallel deployment. */
-export const MAX_CUMULATIVE_WORKERS = 16
-
 type RecordValue = Record<string, unknown>
 
 function fail(path: string, message: string): never {
@@ -59,6 +57,14 @@ function nonEmptyString(value: unknown, path: string): string {
 function positiveInteger(value: unknown, path: string, maximum?: number): number {
   if (!Number.isInteger(value) || typeof value !== 'number' || value <= 0) {
     fail(path, 'must be a positive integer')
+  }
+  if (maximum !== undefined && value > maximum) fail(path, `must not exceed ${maximum}`)
+  return value
+}
+
+function nonNegativeInteger(value: unknown, path: string, maximum?: number): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    fail(path, 'must be a non-negative integer')
   }
   if (maximum !== undefined && value > maximum) fail(path, `must not exceed ${maximum}`)
   return value
@@ -98,7 +104,7 @@ function routeToolFilterKeyValue(value: string, path: string): string {
 function parallelConfig(value: unknown, verification: OrchestratorConfig['verification'], maxWorkers: number): ParallelConfigV1 {
   const parallel = record(value, 'parallel')
   onlyKeys(parallel, 'parallel', ['maxParallelWorkers', 'verification', 'workerToolAllowlist', 'routeToolFilters'])
-  const maxParallelWorkers = positiveInteger(parallel.maxParallelWorkers, 'parallel.maxParallelWorkers', MAX_PARALLEL_WORKERS)
+  const maxParallelWorkers = nonNegativeInteger(parallel.maxParallelWorkers, 'parallel.maxParallelWorkers', MAX_PARALLEL_WORKERS)
   if (maxParallelWorkers > maxWorkers) fail('parallel.maxParallelWorkers', 'must not exceed budgets.maxWorkers')
   const workerToolAllowlist = stringList(parallel.workerToolAllowlist, 'parallel.workerToolAllowlist')
   if (typeof parallel.routeToolFilters !== 'object' || parallel.routeToolFilters === null || Array.isArray(parallel.routeToolFilters)) {
@@ -111,10 +117,15 @@ function parallelConfig(value: unknown, verification: OrchestratorConfig['verifi
     if (parsedTools.some(tool => !workerToolAllowlist.includes(tool))) {
       fail(`parallel.routeToolFilters.${key}`, 'must only contain workerToolAllowlist tools')
     }
-    routeToolFilters[canonicalKey] = parsedTools
+    routeToolFilters[canonicalKey] = Object.freeze(parsedTools)
   }
   const parsedVerification = validateParallelVerificationPolicy(parallel.verification, verification)
-  return { maxParallelWorkers, verification: parsedVerification, workerToolAllowlist, routeToolFilters }
+  return {
+    maxParallelWorkers,
+    verification: parsedVerification,
+    workerToolAllowlist: Object.freeze(workerToolAllowlist),
+    routeToolFilters: Object.freeze(routeToolFilters),
+  }
 }
 
 /** Canonical key for a route-specific parallel worker tool filter. */
@@ -224,8 +235,8 @@ export function parseConfig(value: unknown): OrchestratorConfig {
   const hasParallel = config.parallel !== undefined
   if (hasParallel) {
     if (mode !== 'single-worker') fail('parallel', 'requires mode "single-worker"')
-    if (!Number.isInteger(maxWorkers) || typeof maxWorkers !== 'number' || maxWorkers < 1 || maxWorkers > MAX_CUMULATIVE_WORKERS) {
-      fail('budgets.maxWorkers', `must be an integer from 1 to ${MAX_CUMULATIVE_WORKERS} when parallel is configured`)
+    if (!Number.isInteger(maxWorkers) || typeof maxWorkers !== 'number' || maxWorkers < 1 || maxWorkers > MAX_DAG_NODES) {
+      fail('budgets.maxWorkers', `must be an integer from 1 to ${MAX_DAG_NODES} when parallel is configured`)
     }
   } else {
     if (mode === 'direct' && maxWorkers !== 0) fail('mode "direct"', 'requires budgets.maxWorkers to be 0')

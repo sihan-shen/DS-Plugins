@@ -75,6 +75,15 @@ describe('deterministic budget admission', () => {
     expect(recorder.values).toHaveLength(1)
   })
 
+  it('rejects fanout widths above the contracts ceiling without recording or changing counters', () => {
+    const recorder = rejections()
+    const controller = new BudgetController({ maxWorkers: 8, maxPluginToolActions: 4, toolTimeoutMs: 30_000 }, recorder.record)
+
+    expect(() => controller.admitFanout(9)).toThrow(/1\.\.8/u)
+    expect(controller.snapshot()).toMatchObject({ admittedWorkers: 0, admittedPluginToolActions: 0 })
+    expect(recorder.values).toEqual([])
+  })
+
   it('exposes an immutable read-only scheduling budget snapshot', () => {
     const recorder = rejections()
     const controller = new BudgetController({ ...budgets, maxPluginToolActions: 24 }, recorder.record)

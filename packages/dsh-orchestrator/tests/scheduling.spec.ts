@@ -48,6 +48,19 @@ const config: OrchestratorConfig = {
   scheduling,
 }
 
+function parallelWorkerConfig(maxWorkers: 8 | 16): OrchestratorConfig {
+  return {
+    ...config,
+    budgets: { ...config.budgets, maxWorkers },
+    parallel: {
+      maxParallelWorkers: Math.min(8, maxWorkers),
+      verification: { schemaVersion: 1, scope: 'dag', commands: [] },
+      workerToolAllowlist: ['read_file', 'write_file'],
+      routeToolFilters: {},
+    },
+  }
+}
+
 const workerInput: ResolveScheduleInput = {
   target: 'worker',
   taskId: 'session-1',
@@ -86,6 +99,12 @@ const validSelectedEvent = {
 } as const
 
 describe('orchestrator scheduling adapter', () => {
+  it.each([8, 16])('keeps the legacy worker capability width at one under a parallel cumulative budget of %i', maxWorkers => {
+    const request = buildCapabilityRequest(parallelWorkerConfig(maxWorkers), workerInput)
+    expect(request).toMatchObject({ target: 'worker' })
+    expect(request.constraints.maxWorkers).toBe(1)
+  })
+
   it('projects a bounded capability request from the target and deployment policy', () => {
     expect(buildCapabilityRequest(config, workerInput)).toEqual({
       schemaVersion: 1,

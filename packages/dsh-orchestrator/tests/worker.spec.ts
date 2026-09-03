@@ -490,6 +490,42 @@ describe('one-shot worker runtime', () => {
 })
 
 describe('delegate_worker tool', () => {
+  it.each([8, 16])('admits and runs one legacy delegation under a parallel cumulative budget of %i', async maxWorkers => {
+    const parallelConfig: OrchestratorConfig = {
+      ...config,
+      budgets: { ...config.budgets, maxWorkers },
+      parallel: {
+        maxParallelWorkers: Math.min(8, maxWorkers),
+        verification: { schemaVersion: 1, scope: 'dag', commands: [] },
+        workerToolAllowlist: ['read_file', 'write_file'],
+        routeToolFilters: {},
+      },
+    }
+    const { parent } = parentFor(rootSession(`worker-parallel-root-${maxWorkers}`))
+    const run = publishedRun(Promise.resolve({ stopReason: 'completed', structured: validHandoff, output: [] }))
+    const subagents = new FakeSubagents(async () => run.run)
+    const controller = new BudgetController(parallelConfig.budgets, () => undefined)
+    const tool = createDelegateWorkerTool({
+      config: parallelConfig,
+      subagents,
+      budgetRegistry: { forRootSession: () => controller },
+      schedulerResolver: noSchedulerResolver,
+    })
+
+    await expect(tool.execute(
+      { task: 'Bounded task.', allowedTools: ['read_file'] },
+      { signal: new AbortController().signal, agent: parent, deferContext: () => undefined } as never,
+    )).resolves.toEqual(validHandoff)
+
+    expect(subagents.starts).toBe(1)
+    expect(controller.snapshot()).toMatchObject({
+      maxWorkers,
+      admittedWorkers: 1,
+      admittedPluginToolActions: 1,
+    })
+    expect(run.dispose).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps root sticky and cooldown state when its worker invocation completes', async () => {
     const { parent } = parentFor(rootSession('shared-root-worker-scope'))
     const rootId = String(parent.session.id)

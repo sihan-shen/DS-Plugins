@@ -97,7 +97,9 @@ export function buildCapabilityRequest(config: OrchestratorConfig, input: Resolv
     objective: input.objective,
     profile,
     constraints: {
-      maxWorkers: input.target === 'worker' ? config.budgets.maxWorkers : 0,
+      // The model-facing delegate remains one-shot; the cumulative parallel budget
+      // belongs to the root BudgetController, never to a per-worker capability request.
+      maxWorkers: input.target === 'worker' ? 1 : 0,
       maxOutputTokens: config.worker.maxTokens,
       maxLatencyMs: scheduling?.maxLatencyMs ?? MAX_SCHEDULING_LATENCY_MS,
       allowPaidFallback: scheduling?.allowPaidFallback ?? false,
