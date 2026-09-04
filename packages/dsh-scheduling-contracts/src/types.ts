@@ -25,6 +25,16 @@ export type JsonSchema = {
 
 export type SchedulingTargetV1 = 'root' | 'worker'
 
+/** Durable event branch expected by a contextual replay/parser consumer. */
+export type ExpectedEventBranch = 'legacy' | 'parallel'
+
+/** Correlation fields shared by parallel worker and worker-target schedule events. */
+export interface CorrelationTripleV1 {
+  readonly fanoutId: string
+  readonly nodeId: string
+  readonly requestId: string
+}
+
 export interface VerificationEvidenceV1 {
   readonly schemaVersion: 1
   readonly commandName: string
@@ -251,6 +261,10 @@ export interface ScheduleSelectedV1 {
   readonly promptProfile?: string
   readonly modelFamily?: string
   readonly policyVersion?: string
+  /** Present together only for a correlated parallel worker selection. */
+  readonly fanoutId?: string
+  readonly nodeId?: string
+  readonly requestId?: string
 }
 
 export interface AdaptiveSchedulerService {

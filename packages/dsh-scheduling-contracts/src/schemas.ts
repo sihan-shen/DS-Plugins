@@ -348,6 +348,30 @@ export const SCHEDULE_SELECTED_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
     promptProfile: boundedIdentifier,
     modelFamily: boundedIdentifier,
     policyVersion: boundedIdentifier,
+    fanoutId: boundedIdentifier,
+    nodeId: { type: 'string', minLength: 1, maxLength: 32, pattern: '^[^\\u0000-\\u001F\\u007F\\u003A\\u0022\\\\]+$' },
+    requestId: boundedIdentifier,
   },
   required: ['schemaVersion', 'target', 'source', 'provider', 'model', 'maxTokens'],
+  allOf: [
+    {
+      if: {
+        properties: { target: { const: 'root' } },
+        required: ['target'],
+      },
+      then: { not: { required: ['fanoutId'] } },
+    },
+    {
+      if: { required: ['fanoutId'] },
+      then: { required: ['fanoutId', 'nodeId', 'requestId'] },
+    },
+    {
+      if: { required: ['nodeId'] },
+      then: { required: ['fanoutId', 'nodeId', 'requestId'] },
+    },
+    {
+      if: { required: ['requestId'] },
+      then: { required: ['fanoutId', 'nodeId', 'requestId'] },
+    },
+  ],
 })

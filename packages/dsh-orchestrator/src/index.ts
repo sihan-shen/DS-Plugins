@@ -42,6 +42,15 @@ export {
   appendWorkerFinished,
   appendWorkerRequested,
 } from './events.js'
+export {
+  appendParallelFinished,
+  appendParallelStarted,
+  appendParallelWorkerFinished,
+  appendParallelWorkerRequested,
+  parseParallelStartedV1,
+  parseWorkerFinishedV1,
+  parseWorkerRequestedV1,
+} from './parallel-events.js'
 export type {
   BudgetRejectedInput,
   BudgetRejectedV1,
@@ -49,6 +58,18 @@ export type {
   RunStartedV1,
   WorkerFinishedV1,
 } from './events.js'
+export type {
+  CorrelationTripleV1,
+  ExpectedEventBranch,
+  LegacyWorkerFinishedV1,
+  LegacyWorkerRequestedV1,
+  ParallelStartedV1,
+  ParallelWorkerFinishedV1,
+  ParallelWorkerRequestedV1,
+  PlannedParallelRequestV1,
+  WorkerFinishedEventV1,
+  WorkerRequestedV1,
+} from './parallel-events.js'
 export { failedHandoff, normalizeWorkerOutput, parseHandoff } from './handoff.js'
 export {
   createTargetedVerificationTool,

@@ -131,6 +131,16 @@ describe('durable orchestrator events', () => {
       },
       { data: verification },
     ])
+    expect(session.events[1]?.data).toEqual(workerSpec)
+    expect(session.events[2]?.data).toEqual({
+      schemaVersion: 1,
+      childSessionId: 'child-session',
+      handoff,
+    })
+    expect(session.events[1]?.data).not.toHaveProperty('fanoutId')
+    expect(session.events[1]?.data).not.toHaveProperty('workerRef')
+    expect(session.events[2]?.data).not.toHaveProperty('fanoutId')
+    expect(session.events[2]?.data).not.toHaveProperty('workerRef')
   })
 
   it('records JSON-safe snapshots without sensitive payload fields', () => {
@@ -185,6 +195,8 @@ describe('durable orchestrator events', () => {
     })
     expect(session.events[4]?.data).toMatchObject({ args: ['typecheck'] })
     expect(JSON.parse(JSON.stringify(session.events))).toEqual(session.events)
+    expectDeepFrozen(session.events[1]?.data)
+    expectDeepFrozen(session.events[2]?.data)
 
     const keys = payloadKeys(session.events.map(event => event.data))
     expect(keys).not.toContain('authorization')
@@ -225,3 +237,9 @@ describe('durable orchestrator events', () => {
     disposeSecond()
   })
 })
+
+function expectDeepFrozen(value: unknown): void {
+  if (typeof value !== 'object' || value === null) return
+  expect(Object.isFrozen(value)).toBe(true)
+  for (const child of Object.values(value)) expectDeepFrozen(child)
+}

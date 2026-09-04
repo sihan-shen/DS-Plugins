@@ -83,6 +83,8 @@ export type {
   DagValidationIssueV1,
   DagValidationLimitsV1,
   DagValidationV1,
+  CorrelationTripleV1,
+  ExpectedEventBranch,
   ParallelVerificationCommandV1,
   ParallelVerificationPolicyV1,
   NodeOutcomeReasonV1,
