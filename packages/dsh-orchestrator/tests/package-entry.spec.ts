@@ -26,5 +26,7 @@ describe('published orchestrator package entry', () => {
     expect(entry.projectAggregateVerification).toEqual(expect.any(Function))
     expect(entry.parallelWorkerSpec).toEqual(expect.any(Function))
     expect(entry.runParallelWorker).toEqual(expect.any(Function))
+    expect(entry.allocateDagId).toEqual(expect.any(Function))
+    expect(entry.createParallelExecutionRuntime).toEqual(expect.any(Function))
   })
 })

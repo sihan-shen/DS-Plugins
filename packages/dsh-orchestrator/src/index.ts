@@ -146,6 +146,17 @@ export {
 } from './parallel-scheduling.js'
 export { parallelWorkerSpec, runParallelWorker } from './parallel-worker.js'
 export type { ParallelWorkerRunInput, ParallelWorkerTerminalV1 } from './parallel-worker.js'
+export {
+  allocateDagId,
+  createParallelExecutionRuntime,
+  ParallelRunValidationError,
+} from './parallel.js'
+export type {
+  ParallelExecutionService,
+  ParallelRunRequestV1,
+  ParallelRunResultV1,
+  ParallelRuntimeOptions,
+} from './parallel.js'
 export type {
   ResolveScheduleInput,
   ResolvedScheduleV1,
