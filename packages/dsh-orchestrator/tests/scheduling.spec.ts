@@ -12,6 +12,7 @@ import {
   resolveSchedule,
   restoreScheduleSelected,
   scheduleSelectedFrom,
+  validateScheduleDecisionForConfig,
   type ResolveScheduleInput,
 } from '../src/scheduling.ts'
 import type { OrchestratorConfig } from '../src/types.ts'
@@ -137,6 +138,69 @@ describe('orchestrator scheduling adapter', () => {
       decision: validDecision,
       scheduler,
     })
+  })
+
+  it('hard-validates the target mode and workerCount pair', () => {
+    const rootDecision = {
+      ...validDecision,
+      mode: 'direct' as const,
+      workerCount: 0 as const,
+    }
+
+    expect(validateScheduleDecisionForConfig(validDecision, config, 'worker')).toEqual(validDecision)
+    expect(validateScheduleDecisionForConfig(rootDecision, config, 'root')).toEqual(rootDecision)
+    expect(() => validateScheduleDecisionForConfig(validDecision, config, 'root')).toThrow(/target shape/u)
+    expect(() => validateScheduleDecisionForConfig(rootDecision, config, 'worker')).toThrow(/target shape/u)
+  })
+
+  it('hard-rejects unconfigured routes and token ceilings', () => {
+    expect(() => validateScheduleDecisionForConfig({
+      ...validDecision,
+      route: { ...routes[0], provider: 'not-configured' },
+    }, config, 'worker')).toThrow(/route is not configured/u)
+
+    expect(() => validateScheduleDecisionForConfig({
+      ...validDecision,
+      route: { ...routes[0], maxTokens: routes[0].maxTokens + 1 },
+    }, config, 'worker')).toThrow(/route is not configured/u)
+
+    const workerCeilingConfig: OrchestratorConfig = {
+      ...config,
+      worker: { ...config.worker, maxTokens: 32_000 },
+      scheduling: {
+        ...scheduling,
+        allowedRoutes: [{ provider: 'provider-disabled', model: 'wide-disabled', maxTokens: 128_000 }],
+      },
+    }
+    expect(() => validateScheduleDecisionForConfig({
+      ...validDecision,
+      route: { provider: 'provider-disabled', model: 'wide-disabled', maxTokens: 32_001 },
+    }, workerCeilingConfig, 'worker')).toThrow(/route is not configured/u)
+  })
+
+  it.each([
+    ['reasoningEffort', 'low'],
+    ['promptProfile', 'review-v1'],
+    ['modelFamily', 'other-family'],
+  ] as const)('hard-rejects configured routes with mismatched %s metadata', (field, value) => {
+    const metadataConfig: OrchestratorConfig = {
+      ...config,
+      scheduling: { ...scheduling, allowedRoutes: [routes[3]] },
+    }
+    const metadataDecision = { ...validDecision, route: routes[3] }
+
+    expect(validateScheduleDecisionForConfig(metadataDecision, metadataConfig, 'worker')).toEqual(metadataDecision)
+    expect(() => validateScheduleDecisionForConfig({
+      ...metadataDecision,
+      route: { ...routes[3], [field]: value },
+    }, metadataConfig, 'worker')).toThrow(/route is not configured/u)
+  })
+
+  it('hard-rejects route metadata that the configured route omits', () => {
+    expect(() => validateScheduleDecisionForConfig({
+      ...validDecision,
+      route: { ...routes[0], reasoningEffort: 'high' },
+    }, config, 'worker')).toThrow(/route is not configured/u)
   })
 
   it('tracks an optional adaptive scheduler service without making it required', () => {

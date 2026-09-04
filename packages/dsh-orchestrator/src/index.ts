@@ -95,15 +95,27 @@ export {
   mountAdaptiveSchedulerResolver,
   mountRootScheduling,
   resolveSchedule,
+  resolveScheduleFromRequest,
   restoreScheduleSelected,
   scheduleSelectedFrom,
   SchedulingValidationError,
+  validateScheduleDecisionForConfig,
 } from './scheduling.js'
+export {
+  buildParallelCapabilityRequest,
+  resolveParallelNodeSchedule,
+} from './parallel-scheduling.js'
 export type {
   ResolveScheduleInput,
   ResolvedScheduleV1,
   SchedulerResolver,
 } from './scheduling.js'
+export type {
+  ExecutableParallelNodeV1,
+  ParallelNodeClassificationV1,
+  ParallelScheduleContextV1,
+  RejectedParallelNodeV1,
+} from './parallel-scheduling.js'
 
 /** Stable Cordis plugin name for the DSH v0.1 orchestration bundle. */
 export const name = 'ds-orchestrator'
