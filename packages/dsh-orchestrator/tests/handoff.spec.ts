@@ -38,6 +38,19 @@ describe('parseHandoff', () => {
     })
   })
 
+  it('retains legacy slash, dot-segment, and 1025-byte path normalization behavior', () => {
+    const legacyLongPath = `src/${'x'.repeat(1_021)}`
+
+    expect(new TextEncoder().encode(legacyLongPath)).toHaveLength(1_025)
+    expect(parseHandoff(handoffWith({
+      changedFiles: ['src/./nested//file.ts', 'src\\nested\\windows.ts', legacyLongPath],
+    }), workspaceRoot).changedFiles).toEqual([
+      'src/nested/file.ts',
+      'src/nested/windows.ts',
+      legacyLongPath,
+    ])
+  })
+
   it.each([
     ['schema version', handoffWith({ schemaVersion: 2 }), /schemaVersion/],
     ['status', handoffWith({ status: 'unknown' }), /status/],
@@ -69,6 +82,25 @@ describe('worker output normalization', () => {
     expect(handoff.status).toBe('failed')
     expect(JSON.stringify(handoff)).not.toContain(raw)
   })
+
+  it.each(['unknown', 'sensitive', 'transcript', 'provider', 'credential', 'authorization'])
+    ('rejects and scrubs the %s worker-output field', field => {
+      const marker = `SECRET_${field.toUpperCase()}_MARKER`
+      const handoff = normalizeWorkerOutput({ ...validHandoff, [field]: marker }, workspaceRoot)
+      const serialized = JSON.stringify(handoff)
+
+      expect(handoff).toEqual({
+        schemaVersion: 1,
+        status: 'failed',
+        summary: 'Worker output failed HandoffV1 validation.',
+        changedFiles: [],
+        decisions: [],
+        verification: [],
+        blockers: [],
+      })
+      expect(serialized).not.toContain(marker)
+      expect(serialized).not.toContain(field)
+    })
 
   it('returns a bounded failed handoff for a validation message', () => {
     expect(failedHandoff('Worker output was invalid.')).toEqual({

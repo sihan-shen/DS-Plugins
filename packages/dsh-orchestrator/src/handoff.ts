@@ -127,6 +127,47 @@ function verificationEvidence(value: unknown, index: number): VerificationEviden
   return { commandName, args, durationMs, exitCode, schemaVersion: 1, status, stderr, stdout, truncated: evidence.truncated }
 }
 
+/**
+ * Build a Handoff from fields that have already passed the Handoff boundary.
+ * The result stays mutable for legacy callers; parallel callers deep-freeze
+ * their detached projection after supplying authoritative file paths.
+ */
+export function createHandoff(
+  status: HandoffV1['status'],
+  summary: string,
+  changedFiles: readonly string[],
+  decisions: readonly string[],
+  verification: readonly VerificationEvidenceV1[],
+  blockers: readonly string[],
+): HandoffV1 {
+  if (
+    status === 'completed'
+    && verification.some(evidence => evidence.status !== 'passed')
+    && !summary.includes('[verification: failed]')
+  ) {
+    fail('summary', 'must include [verification: failed] when completed work has unsuccessful verification')
+  }
+  return {
+    schemaVersion: 1,
+    status,
+    summary,
+    changedFiles: [...changedFiles],
+    decisions: [...decisions],
+    verification: verification.map(evidence => ({
+      schemaVersion: 1,
+      commandName: evidence.commandName,
+      args: [...evidence.args],
+      exitCode: evidence.exitCode,
+      status: evidence.status,
+      stdout: evidence.stdout,
+      stderr: evidence.stderr,
+      truncated: evidence.truncated,
+      durationMs: evidence.durationMs,
+    })),
+    blockers: [...blockers],
+  }
+}
+
 function boundedFailureSummary(message: string): string {
   const safeMessage = message.replaceAll('\0', '\uFFFD')
   let result = ''
@@ -174,15 +215,14 @@ export function parseHandoff(value: unknown, workspaceRoot: string): HandoffV1 {
   ) {
     fail('summary', 'must include [verification: failed] when completed work has unsuccessful verification')
   }
-  return {
-    schemaVersion: 1,
+  return createHandoff(
     status,
     summary,
-    changedFiles: changedFiles(handoff.changedFiles, root),
-    decisions: stringArray(handoff.decisions, 'decisions'),
+    changedFiles(handoff.changedFiles, root),
+    stringArray(handoff.decisions, 'decisions'),
     verification,
-    blockers: stringArray(handoff.blockers, 'blockers'),
-  }
+    stringArray(handoff.blockers, 'blockers'),
+  )
 }
 
 /**

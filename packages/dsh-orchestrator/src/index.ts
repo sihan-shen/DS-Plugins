@@ -72,6 +72,24 @@ export type {
 } from './parallel-events.js'
 export { failedHandoff, normalizeWorkerOutput, parseHandoff } from './handoff.js'
 export {
+  boundOwnershipViolationSection,
+  buildParallelAggregate,
+  projectAggregateHandoff,
+  projectAggregateVerification,
+} from './aggregate.js'
+export type { BuildParallelAggregateInput } from './aggregate.js'
+export {
+  checkOwnership,
+  classifyOwnershipToken,
+  constructParallelHandoff,
+  parseParallelHandoffEnvelopeRaw,
+} from './parallel-handoff.js'
+export type {
+  OwnershipCheckV1,
+  OwnershipViolationTokenV1,
+  RawParallelHandoffEnvelopeV1,
+} from './parallel-handoff.js'
+export {
   createTargetedVerificationTool,
   mountTargetedVerificationTool,
   VerificationService,
@@ -126,6 +144,8 @@ export {
   buildParallelCapabilityRequest,
   resolveParallelNodeSchedule,
 } from './parallel-scheduling.js'
+export { parallelWorkerSpec, runParallelWorker } from './parallel-worker.js'
+export type { ParallelWorkerRunInput, ParallelWorkerTerminalV1 } from './parallel-worker.js'
 export type {
   ResolveScheduleInput,
   ResolvedScheduleV1,

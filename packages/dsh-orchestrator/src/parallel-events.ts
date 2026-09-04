@@ -13,6 +13,7 @@ import {
   MAX_SCHEDULING_ITEMS,
   MAX_SCHEDULING_STRING_BYTES,
   assertSerializedPayloadLimit,
+  isWellFormedUnicode,
   parseNodeId,
   parseParallelAggregateV1,
   parseScheduleFeedbackV1,
@@ -164,6 +165,7 @@ function boundedIdentifier(value: unknown, path: string): string {
 
 function boundedDerivedIdentifier(value: unknown, path: string, maximum: number): string {
   const parsed = boundedIdentifier(value, path)
+  if (!isWellFormedUnicode(parsed)) fail(path, 'must contain well-formed Unicode')
   if (textEncoder.encode(parsed).byteLength > maximum) fail(path, `must not exceed ${maximum} UTF-8 bytes`)
   return parsed
 }
@@ -325,6 +327,7 @@ function parsePlannedRequest(value: unknown, index: number): PlannedParallelRequ
 /** Parse a strict legacy or correlated worker-requested event projection. */
 export function parseWorkerRequestedV1(value: unknown, expectedBranch: 'legacy'): LegacyWorkerRequestedV1
 export function parseWorkerRequestedV1(value: unknown, expectedBranch: 'parallel'): ParallelWorkerRequestedV1
+export function parseWorkerRequestedV1(value: unknown, expectedBranch?: ExpectedEventBranch): LegacyWorkerRequestedV1 | ParallelWorkerRequestedV1
 export function parseWorkerRequestedV1(
   value: unknown,
   expectedBranch?: ExpectedEventBranch,
@@ -337,6 +340,7 @@ export function parseWorkerRequestedV1(
 /** Parse a strict legacy or correlated worker-finished event projection. */
 export function parseWorkerFinishedV1(value: unknown, expectedBranch: 'legacy'): LegacyWorkerFinishedV1
 export function parseWorkerFinishedV1(value: unknown, expectedBranch: 'parallel'): ParallelWorkerFinishedV1
+export function parseWorkerFinishedV1(value: unknown, expectedBranch?: ExpectedEventBranch): LegacyWorkerFinishedV1 | ParallelWorkerFinishedV1
 export function parseWorkerFinishedV1(
   value: unknown,
   expectedBranch?: ExpectedEventBranch,
@@ -368,7 +372,7 @@ export function parseParallelStartedV1(value: unknown): ParallelStartedV1 {
 
   const parsed = deepFreeze({
     schemaVersion: 1 as const,
-    dagId: boundedIdentifier(required(input, 'dagId', 'parallelStarted'), 'parallelStarted.dagId'),
+    dagId: boundedDerivedIdentifier(required(input, 'dagId', 'parallelStarted'), 'parallelStarted.dagId', MAX_SCHEDULING_IDENTIFIER_BYTES),
     requests,
   })
   assertEventPayloadLimit(parsed, MAX_PARALLEL_STARTED_PAYLOAD_BYTES, 'parallel-started')

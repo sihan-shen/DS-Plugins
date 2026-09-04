@@ -20,6 +20,7 @@ import {
   type ParallelStartedV1,
   type ParallelWorkerFinishedV1,
   type ParallelWorkerRequestedV1,
+  type ExpectedEventBranch,
 } from '../src/parallel-events.ts'
 import { appendWorkerRequested } from '../src/events.ts'
 import type { HandoffV1, WorkerSpecV1 } from '../src/types.ts'
@@ -239,6 +240,28 @@ describe('strict worker event unions', () => {
     expect(() => parseWorkerFinishedV1(parallelWorkerFinished, 'legacy')).toThrow(/legacy/u)
   })
 
+  it('accepts an ExpectedEventBranch variable while retaining branch-specific overloads', () => {
+    const parseRequestedAtBranch = (expectedBranch: ExpectedEventBranch) => parseWorkerRequestedV1(
+      expectedBranch === 'legacy' ? workerSpec : parallelWorkerRequest,
+      expectedBranch,
+    )
+    const parseFinishedAtBranch = (expectedBranch: ExpectedEventBranch) => parseWorkerFinishedV1(
+      expectedBranch === 'legacy'
+        ? { schemaVersion: 1, childSessionId: 'child-session', handoff }
+        : parallelWorkerFinished,
+      expectedBranch,
+    )
+
+    expect(parseRequestedAtBranch('legacy')).toEqual(workerSpec)
+    expect(parseRequestedAtBranch('parallel')).toEqual(parallelWorkerRequest)
+    expect(parseFinishedAtBranch('legacy')).toEqual({
+      schemaVersion: 1,
+      childSessionId: 'child-session',
+      handoff,
+    })
+    expect(parseFinishedAtBranch('parallel')).toEqual(parallelWorkerFinished)
+  })
+
   it.each([
     { fanoutId: triple.fanoutId },
     { nodeId: triple.nodeId },
@@ -281,6 +304,33 @@ describe('strict worker event unions', () => {
     `w:${'a'.repeat(33)}`,
   ])('rejects invalid parallel workerRef %s', workerRef => {
     expect(() => parseWorkerFinishedV1({ ...parallelWorkerFinished, workerRef }, 'parallel')).toThrow(/workerRef/u)
+  })
+
+  it('rejects malformed Unicode in derived parallel identifiers while preserving legacy childSessionId compatibility', () => {
+    const malformed = '\uD800'
+
+    expect(() => parseWorkerRequestedV1({
+      ...parallelWorkerRequest,
+      fanoutId: `${triple.fanoutId}${malformed}`,
+    }, 'parallel')).toThrow(/fanoutId/u)
+    expect(() => parseWorkerFinishedV1({
+      ...parallelWorkerFinished,
+      requestId: `${triple.requestId}${malformed}`,
+    }, 'parallel')).toThrow(/requestId/u)
+    expect(() => parseParallelStartedV1({
+      ...parallelStarted,
+      dagId: `${parallelStarted.dagId}${malformed}`,
+    })).toThrow(/dagId/u)
+
+    expect(parseWorkerFinishedV1({
+      schemaVersion: 1,
+      childSessionId: `legacy-child${malformed}`,
+      handoff,
+    }, 'legacy')).toEqual({
+      schemaVersion: 1,
+      childSessionId: `legacy-child${malformed}`,
+      handoff,
+    })
   })
 })
 

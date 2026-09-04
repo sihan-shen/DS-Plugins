@@ -157,7 +157,8 @@ export function workerSpec(input: DelegateWorkerInput, resolvedRoute: RouteDecis
   }
 }
 
-function startRequest(spec: WorkerSpecV1, parent: Agent, signal: AbortSignal): SubagentStartRequest {
+/** Build the one-shot child request shared by legacy and parallel workers. */
+export function workerStartRequest(spec: WorkerSpecV1, parent: Agent, signal: AbortSignal): SubagentStartRequest {
   const agentOptions: AgentOptions = {
     provider: spec.provider,
     model: spec.model,
@@ -246,7 +247,7 @@ export async function runWorker(options: RunWorkerOptions): Promise<HandoffV1> {
 
   let run: SubagentRun | undefined
   try {
-    run = await options.subagents.start('spawn', startRequest(spec, options.parent, options.signal))
+    run = await options.subagents.start('spawn', workerStartRequest(spec, options.parent, options.signal))
   } catch {
     return failedStart(options.signal)
   }
