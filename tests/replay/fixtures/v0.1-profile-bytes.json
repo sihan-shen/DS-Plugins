@@ -1,0 +1,10 @@
+{
+  "profiles/v0.1/package.json": {
+    "bytes": 533,
+    "sha256": "d47567697ffc358448f960b0cd25003f36d865ec3e097fbba912e881f9f6ecaa"
+  },
+  "profiles/v0.1/cordis.patch.yml": {
+    "bytes": 591,
+    "sha256": "b296a6bcb50fbf3afdafda0400405a59b6352ab85b144afdc1b7cc6f096aa92a"
+  }
+}

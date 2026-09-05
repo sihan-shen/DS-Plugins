@@ -20,6 +20,16 @@ describe('BudgetViewV1', () => {
     expect(() => parseBudgetViewV1({ maxWorkers: 1, admittedWorkers: 0, maxPluginToolActions: 1, admittedPluginToolActions: 0, remainingWorkers: 0, remainingPluginToolActions: 1 })).toThrow()
     expect(() => parseBudgetViewV1({ maxWorkers: 1, admittedWorkers: 0, maxPluginToolActions: 1, admittedPluginToolActions: 0, remainingWorkers: 1, remainingPluginToolActions: 1, admitWorker() {} })).toThrow()
   })
+  it('accepts cumulative worker counters through the DAG bound and rejects one over it', () => {
+    const accepted = { maxWorkers: 16, admittedWorkers: 8, maxPluginToolActions: 24, admittedPluginToolActions: 1, remainingWorkers: 8, remainingPluginToolActions: 23 }
+    const rejected = { maxWorkers: 17, admittedWorkers: 0, maxPluginToolActions: 24, admittedPluginToolActions: 0, remainingWorkers: 17, remainingPluginToolActions: 24 }
+    expect(parseBudgetViewV1(accepted).remainingWorkers).toBe(8)
+    expect(() => parseBudgetViewV1(rejected)).toThrow()
+    expect(schemaAccepts(accepted, BUDGET_VIEW_V1_JSON_SCHEMA)).toBe(true)
+    expect(schemaAccepts(rejected, BUDGET_VIEW_V1_JSON_SCHEMA)).toBe(false)
+    expect(parserAccepts(accepted, parseBudgetViewV1)).toBe(true)
+    expect(parserAccepts(rejected, parseBudgetViewV1)).toBe(false)
+  })
 })
 
 describe('ScheduleFeedbackV1 and ScheduleSelectedV1', () => {
@@ -34,6 +44,52 @@ describe('ScheduleFeedbackV1 and ScheduleSelectedV1', () => {
     const selected = parseScheduleSelectedV1({ schemaVersion: 1, target: 'worker', source: 'scheduler', provider: 'provider-disabled', model: 'baseline-disabled', maxTokens: 32000, policyVersion: 'v0.3.0' })
     expect(selected).toEqual({ schemaVersion: 1, target: 'worker', source: 'scheduler', provider: 'provider-disabled', model: 'baseline-disabled', maxTokens: 32000, policyVersion: 'v0.3.0' })
     expect(() => parseScheduleSelectedV1({ ...selected, credential: 'SECRET' })).toThrow()
+  })
+
+  it('contextually discriminates legacy and fully correlated worker selections', () => {
+    const legacy = { schemaVersion: 1, target: 'worker', source: 'scheduler', provider: 'provider-disabled', model: 'baseline-disabled', maxTokens: 32000, policyVersion: 'v0.3.0' } as const
+    const correlation = { fanoutId: 'root:dag:1:aggregate', nodeId: 'worker-a', requestId: 'root:dag:1:node:worker-a' } as const
+    const parallel = { ...legacy, ...correlation }
+
+    expect(parseScheduleSelectedV1(legacy)).toEqual(legacy)
+    expect(parseScheduleSelectedV1(parallel)).toEqual(parallel)
+    expect(parseScheduleSelectedV1(legacy, 'legacy')).toEqual(legacy)
+    expect(parseScheduleSelectedV1(parallel, 'parallel')).toEqual(parallel)
+    expect(() => parseScheduleSelectedV1(legacy, 'parallel')).toThrow(/parallel/u)
+    expect(() => parseScheduleSelectedV1(parallel, 'legacy')).toThrow(/legacy/u)
+    expectDeepFrozen(parseScheduleSelectedV1(parallel, 'parallel'))
+  })
+
+  it.each([
+    { fanoutId: 'root:dag:1:aggregate' },
+    { nodeId: 'worker-a' },
+    { requestId: 'root:dag:1:node:worker-a' },
+    { fanoutId: 'root:dag:1:aggregate', nodeId: 'worker-a' },
+    { fanoutId: 'root:dag:1:aggregate', requestId: 'root:dag:1:node:worker-a' },
+    { nodeId: 'worker-a', requestId: 'root:dag:1:node:worker-a' },
+  ])('rejects a partial worker schedule correlation triple %#', partialCorrelation => {
+    expect(() => parseScheduleSelectedV1({
+      schemaVersion: 1,
+      target: 'worker',
+      source: 'scheduler',
+      provider: 'provider-disabled',
+      model: 'baseline-disabled',
+      maxTokens: 32000,
+      ...partialCorrelation,
+    })).toThrow(/correlation|triple|branch/u)
+  })
+
+  it('forbids a correlation triple on root selections and accepts it only on workers', () => {
+    const correlation = { fanoutId: 'root:dag:1:aggregate', nodeId: 'worker-a', requestId: 'root:dag:1:node:worker-a' } as const
+    const route = { schemaVersion: 1, source: 'scheduler', provider: 'provider-disabled', model: 'baseline-disabled', maxTokens: 32000 } as const
+    const root = { ...route, target: 'root', ...correlation } as const
+    const worker = { ...route, target: 'worker', ...correlation } as const
+
+    expect(() => parseScheduleSelectedV1(root)).toThrow(/root/u)
+    expect(() => parseScheduleSelectedV1(root, 'parallel')).toThrow(/root/u)
+    expect(parseScheduleSelectedV1(worker, 'parallel')).toEqual(worker)
+    expect(schemaAccepts(root, SCHEDULE_SELECTED_V1_JSON_SCHEMA)).toBe(false)
+    expect(schemaAccepts(worker, SCHEDULE_SELECTED_V1_JSON_SCHEMA)).toBe(true)
   })
 
   it('detaches and freezes nested handoff feedback', () => {

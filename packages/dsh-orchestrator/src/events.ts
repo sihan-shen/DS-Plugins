@@ -1,6 +1,17 @@
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import { parseScheduleSelectedV1 } from '@ds-plugins/dsh-scheduling-contracts'
-import type { ScheduleSelectedV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import type { ParallelAggregateV1, ScheduleSelectedV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import {
+  parseWorkerFinishedV1,
+  parseWorkerRequestedV1,
+} from './parallel-events.js'
+import type {
+  LegacyWorkerFinishedV1,
+  LegacyWorkerRequestedV1,
+  ParallelStartedV1,
+  ParallelWorkerFinishedV1,
+  ParallelWorkerRequestedV1,
+} from './parallel-events.js'
 import type { HandoffV1, VerificationEvidenceV1, WorkerSpecV1 } from './types.js'
 
 /** Durable record of the resolved run configuration. */
@@ -11,12 +22,8 @@ export interface RunStartedV1 {
   readonly model: string
 }
 
-/** Durable record that binds a completed child session to its validated handoff. */
-export interface WorkerFinishedV1 {
-  readonly schemaVersion: 1
-  readonly childSessionId: SessionId
-  readonly handoff: HandoffV1
-}
+/** Durable legacy record that binds a completed child session to its validated handoff. */
+export type WorkerFinishedV1 = LegacyWorkerFinishedV1
 
 /** Stable reason and counters for one deterministic admission rejection. */
 export interface BudgetRejectedV1 {
@@ -45,15 +52,19 @@ declare module '@deepseek-ai/dsh-session/types' {
     /** Required replay record of the selected run mode and resolved model route. */
     'dsh-plugin/run-started': RunStartedV1
     /** Required replay record of the bounded worker request. */
-    'dsh-plugin/worker-requested': WorkerSpecV1
+    'dsh-plugin/worker-requested': LegacyWorkerRequestedV1 | ParallelWorkerRequestedV1
     /** Required replay record of the child-session result visible to its parent. */
-    'dsh-plugin/worker-finished': WorkerFinishedV1
+    'dsh-plugin/worker-finished': LegacyWorkerFinishedV1 | ParallelWorkerFinishedV1
     /** Required replay record of a deterministic resource-admission rejection. */
     'dsh-plugin/budget-rejected': BudgetRejectedV1
     /** Required replay record of one targeted verification result. */
     'dsh-plugin/verification-finished': VerificationEvidenceV1
     /** Durable record of the selected bounded scheduler route. */
     'dsh-plugin/schedule-selected': ScheduleSelectedV1
+    /** Durable manifest anchoring one parallel DAG's planned requests. */
+    'dsh-plugin/parallel-started': ParallelStartedV1
+    /** Durable level or cumulative result of one parallel DAG. */
+    'dsh-plugin/parallel-finished': ParallelAggregateV1
   }
 }
 
@@ -118,7 +129,7 @@ export function appendRunStarted(session: Session, input: RunStartedInput): numb
  * @returns The appended event sequence number.
  */
 export function appendWorkerRequested(session: Session, worker: WorkerSpecV1): number {
-  return session.append('dsh-plugin/worker-requested', snapshotWorkerSpec(worker)).seq
+  return session.append('dsh-plugin/worker-requested', parseWorkerRequestedV1(snapshotWorkerSpec(worker), 'legacy')).seq
 }
 
 /**
@@ -129,11 +140,11 @@ export function appendWorkerRequested(session: Session, worker: WorkerSpecV1): n
  * @returns The appended event sequence number.
  */
 export function appendWorkerFinished(session: Session, childSessionId: SessionId, handoff: HandoffV1): number {
-  return session.append('dsh-plugin/worker-finished', {
+  return session.append('dsh-plugin/worker-finished', parseWorkerFinishedV1({
     schemaVersion: 1,
     childSessionId,
     handoff: snapshotHandoff(handoff),
-  }).seq
+  }, 'legacy')).seq
 }
 
 /**

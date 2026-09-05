@@ -3,6 +3,8 @@ import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import {
   createTargetedVerificationTool,
   VERIFICATION_CLEANUP_ALLOWANCE_MS,
+  validateParallelVerificationPolicy,
+  validateVerificationArguments,
   VerificationService,
 } from '../src/verification.ts'
 import { apply } from '../src/index.ts'
@@ -88,6 +90,31 @@ function service(subprocess: FakeSubprocess, finished: unknown[] = []) {
 }
 
 describe('targeted verification service', () => {
+  it('exports the configured command argument validator', () => {
+    const command = verification.commands[1]
+    expect(validateVerificationArguments(command, ['packages/dsh-orchestrator/tests/ok.spec.ts']))
+      .toEqual(['packages/dsh-orchestrator/tests/ok.spec.ts'])
+    expect(() => validateVerificationArguments(verification.commands[0], ['--all']))
+      .toThrow(/accepts no caller arguments/u)
+  })
+
+  it('validates parallel verification policies against deployment commands and arguments', () => {
+    const policy = {
+      schemaVersion: 1 as const,
+      scope: 'dag' as const,
+      commands: [{ name: 'typecheck', args: [] }],
+    }
+    expect(validateParallelVerificationPolicy(policy, verification)).toEqual(policy)
+    expect(() => validateParallelVerificationPolicy({
+      ...policy,
+      commands: [{ name: 'shell', args: [] }],
+    }, verification)).toThrow(/unknown parallel verification command/u)
+    expect(() => validateParallelVerificationPolicy({
+      ...policy,
+      commands: [{ name: 'typecheck', args: ['--all'] }],
+    }, verification)).toThrow(/accepts no caller arguments/u)
+  })
+
   it('runs a configured command directly and records a passed evidence event', async () => {
     const subprocess = new FakeSubprocess(() => handle(Promise.resolve({ exitCode: 0, signal: null }), {
       stdout: 'all checks passed\n',

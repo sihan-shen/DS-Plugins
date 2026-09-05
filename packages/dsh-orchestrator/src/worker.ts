@@ -3,16 +3,20 @@ import type { Agent, AgentOptions } from '@deepseek-ai/dsh-agent'
 import { boundContextSummary, createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentRun, SubagentRuntime, SubagentStartRequest } from '@deepseek-ai/dsh-subagent'
+import type {} from '@deepseek-ai/dsh-subprocess'
 import type { ObjectJsonSchema, ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { ScheduleFeedbackV1, RouteDecisionV1 } from '@ds-plugins/dsh-scheduling-contracts'
 import { parseScheduleFeedbackV1 } from '@ds-plugins/dsh-scheduling-contracts'
 import type { BudgetControllerRegistry, BudgetRejected } from './budgets.js'
 import { MAX_HANDOFF_ITEMS, MAX_HANDOFF_STRING_BYTES } from './config.js'
 import { mountContextIntegration } from './context.js'
-import { appendRunStarted, appendScheduleSelected, appendWorkerFinished, appendWorkerRequested } from './events.js'
+import { appendRunStarted, appendScheduleSelected, appendVerificationFinished, appendWorkerFinished, appendWorkerRequested } from './events.js'
 import { failedHandoff, normalizeWorkerOutput } from './handoff.js'
+import { appendParallelFinished } from './parallel-events.js'
+import { mountParallelExecutionService } from './parallel.js'
 import { resolveSchedule, scheduleSelectedFrom, type ResolvedScheduleV1, type SchedulerResolver } from './scheduling.js'
 import { parseRequestRoute, type HandoffV1, type OrchestratorConfig, type WorkerSpecV1 } from './types.js'
+import { VerificationService } from './verification.js'
 
 /** Exact structured result contract requested from every v0.1 child worker. */
 export const HANDOFF_V1_JSON_SCHEMA: ObjectJsonSchema = {
@@ -157,7 +161,8 @@ export function workerSpec(input: DelegateWorkerInput, resolvedRoute: RouteDecis
   }
 }
 
-function startRequest(spec: WorkerSpecV1, parent: Agent, signal: AbortSignal): SubagentStartRequest {
+/** Build the one-shot child request shared by legacy and parallel workers. */
+export function workerStartRequest(spec: WorkerSpecV1, parent: Agent, signal: AbortSignal): SubagentStartRequest {
   const agentOptions: AgentOptions = {
     provider: spec.provider,
     model: spec.model,
@@ -246,7 +251,7 @@ export async function runWorker(options: RunWorkerOptions): Promise<HandoffV1> {
 
   let run: SubagentRun | undefined
   try {
-    run = await options.subagents.start('spawn', startRequest(spec, options.parent, options.signal))
+    run = await options.subagents.start('spawn', workerStartRequest(spec, options.parent, options.signal))
   } catch {
     return failedStart(options.signal)
   }
@@ -374,34 +379,52 @@ export function mountSingleWorkerMode(
       return true
     }
     const injection = ctx.inject(['subagents'], workerCtx => {
-      if (!settle(resolve)) return
-    workerCtx.effect(() => {
-      const pending = new Map<SessionId, Session>()
-      let active = true
-      const disposeTool = workerCtx.tools.register(createDelegateWorkerTool({ config, subagents: workerCtx.subagents, budgetRegistry, schedulerResolver }))
-      const disposeEvents = workerCtx.on('session/event', (session, event) => {
-        if (event.type !== 'request/header' || session.header.parentSession !== undefined) return
-        // The durable run record is derived only from this actual request snapshot.
-        const route = parseRequestRoute(event.data.header)
-        if (route === undefined) return
-        if (session.events.some(entry => entry.type === 'dsh-plugin/run-started') || pending.has(session.id)) return
-        pending.set(session.id, session)
-        queueMicrotask(() => {
-          if (!active || pending.get(session.id) !== session) return
-          pending.delete(session.id)
-          appendRunStarted(session, { mode: 'single-worker', provider: route.provider, model: route.model })
+      settle(resolve)
+      workerCtx.effect(() => {
+        const pending = new Map<SessionId, Session>()
+        let active = true
+        const disposeTool = workerCtx.tools.register(createDelegateWorkerTool({ config, subagents: workerCtx.subagents, budgetRegistry, schedulerResolver }))
+        const parallelContext = ctx.extend({ fiber: workerCtx.fiber })
+        const parallel = config.parallel === undefined
+          ? undefined
+          : mountParallelExecutionService(parallelContext, {
+            config,
+            budgetRegistry,
+            schedulerResolver,
+            subagents: workerCtx.subagents,
+            appendAggregate: appendParallelFinished,
+            verificationServiceFor: session => new VerificationService({
+              workspaceRoot: config.workspaceRoot,
+              verification: config.verification,
+              subprocess: workerCtx.subprocess,
+              appendEvidence: evidence => appendVerificationFinished(session, evidence),
+            }),
+          })
+        const disposeEvents = workerCtx.on('session/event', (session, event) => {
+          if (event.type !== 'request/header' || session.header.parentSession !== undefined) return
+          // The durable run record is derived only from this actual request snapshot.
+          const route = parseRequestRoute(event.data.header)
+          if (route === undefined) return
+          if (session.events.some(entry => entry.type === 'dsh-plugin/run-started') || pending.has(session.id)) return
+          pending.set(session.id, session)
+          queueMicrotask(() => {
+            if (!active || pending.get(session.id) !== session) return
+            pending.delete(session.id)
+            appendRunStarted(session, { mode: 'single-worker', provider: route.provider, model: route.model })
+          })
         })
-      })
-      const disposeSessions = workerCtx.on('session/disposed', session => {
-        if (pending.get(session.id) === session) pending.delete(session.id)
-      })
-      return () => {
-        active = false
-        disposeTool()
-        disposeEvents()
-        disposeSessions()
-        pending.clear()
-      }
+        const disposeSessions = workerCtx.on('session/disposed', session => {
+          if (pending.get(session.id) === session) pending.delete(session.id)
+        })
+        return async () => {
+          const drainingParallel = parallel?.dispose()
+          active = false
+          disposeTool()
+          disposeEvents()
+          disposeSessions()
+          pending.clear()
+          await drainingParallel
+        }
       }, 'ds-orchestrator: single worker mode')
     })
     let injectionDispose: Promise<void> | undefined

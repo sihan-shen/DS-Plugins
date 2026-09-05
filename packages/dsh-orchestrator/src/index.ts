@@ -25,7 +25,7 @@ export type {
   MountedBudgetControllerRegistry,
   PluginToolAction,
 } from './budgets.js'
-export { Config, parseConfig } from './config.js'
+export { Config, parseConfig, routeToolFilterKey } from './config.js'
 export {
   CONTEXT_PROMPT_ORDER,
   CONTEXT_PROMPT_SECTION,
@@ -33,6 +33,7 @@ export {
   mountContextIntegration,
 } from './context.js'
 export { DIRECT_PROMPT_ORDER, DIRECT_PROMPT_SECTION, mountDirectMode } from './direct.js'
+export { compareDagValidationIssues, validateTaskDagV1 } from './dag.js'
 export {
   appendBudgetRejected,
   appendScheduleSelected,
@@ -41,6 +42,15 @@ export {
   appendWorkerFinished,
   appendWorkerRequested,
 } from './events.js'
+export {
+  appendParallelFinished,
+  appendParallelStarted,
+  appendParallelWorkerFinished,
+  appendParallelWorkerRequested,
+  parseParallelStartedV1,
+  parseWorkerFinishedV1,
+  parseWorkerRequestedV1,
+} from './parallel-events.js'
 export type {
   BudgetRejectedInput,
   BudgetRejectedV1,
@@ -48,11 +58,43 @@ export type {
   RunStartedV1,
   WorkerFinishedV1,
 } from './events.js'
+export type {
+  CorrelationTripleV1,
+  ExpectedEventBranch,
+  LegacyWorkerFinishedV1,
+  LegacyWorkerRequestedV1,
+  ParallelStartedV1,
+  ParallelWorkerFinishedV1,
+  ParallelWorkerRequestedV1,
+  PlannedParallelRequestV1,
+  WorkerFinishedEventV1,
+  WorkerRequestedV1,
+} from './parallel-events.js'
 export { failedHandoff, normalizeWorkerOutput, parseHandoff } from './handoff.js'
+export {
+  boundOwnershipViolationSection,
+  buildParallelAggregate,
+  projectAggregateHandoff,
+  projectAggregateVerification,
+} from './aggregate.js'
+export type { BuildParallelAggregateInput } from './aggregate.js'
+export {
+  checkOwnership,
+  classifyOwnershipToken,
+  constructParallelHandoff,
+  parseParallelHandoffEnvelopeRaw,
+} from './parallel-handoff.js'
+export type {
+  OwnershipCheckV1,
+  OwnershipViolationTokenV1,
+  RawParallelHandoffEnvelopeV1,
+} from './parallel-handoff.js'
 export {
   createTargetedVerificationTool,
   mountTargetedVerificationTool,
   VerificationService,
+  validateParallelVerificationPolicy,
+  validateVerificationArguments,
   VERIFICATION_CLEANUP_ALLOWANCE_MS,
   VERIFICATION_TERMINATION_GRACE_MS,
 } from './verification.js'
@@ -81,6 +123,7 @@ export type {
   HandoffV1,
   OrchestratorConfig,
   OrchestratorSchedulingConfig,
+  ParallelConfigV1,
   VerificationCommand,
   VerificationEvidenceV1,
   WorkerSpecV1,
@@ -91,15 +134,51 @@ export {
   mountAdaptiveSchedulerResolver,
   mountRootScheduling,
   resolveSchedule,
+  resolveScheduleFromRequest,
   restoreScheduleSelected,
   scheduleSelectedFrom,
   SchedulingValidationError,
+  validateScheduleDecisionForConfig,
 } from './scheduling.js'
+export {
+  buildParallelCapabilityRequest,
+  resolveParallelNodeSchedule,
+} from './parallel-scheduling.js'
+export { parallelWorkerSpec, runParallelWorker } from './parallel-worker.js'
+export type { ParallelWorkerRunInput, ParallelWorkerTerminalV1 } from './parallel-worker.js'
+export {
+  allocateDagId,
+  createParallelExecutionRuntime,
+  mountParallelExecutionService,
+  ParallelGenerationDisposedError,
+  ParallelRunValidationError,
+} from './parallel.js'
+export type {
+  MountedParallelExecutionService,
+  ParallelExecutionService,
+  ParallelRunRequestV1,
+  ParallelRunResultV1,
+  ParallelRuntimeOptions,
+} from './parallel.js'
+export {
+  foldFinalLevelVerification,
+  runParallelVerification,
+} from './parallel-verification.js'
+export type {
+  ParallelVerificationResultV1,
+  ParallelVerificationRunnerOptions,
+} from './parallel-verification.js'
 export type {
   ResolveScheduleInput,
   ResolvedScheduleV1,
   SchedulerResolver,
 } from './scheduling.js'
+export type {
+  ExecutableParallelNodeV1,
+  ParallelNodeClassificationV1,
+  ParallelScheduleContextV1,
+  RejectedParallelNodeV1,
+} from './parallel-scheduling.js'
 
 /** Stable Cordis plugin name for the DSH v0.1 orchestration bundle. */
 export const name = 'ds-orchestrator'

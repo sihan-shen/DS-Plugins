@@ -1,6 +1,3 @@
-# direnv cache and links
-/.direnv/
-
 # Repository-local DeepSeek Harness state
 /.dsh/
 

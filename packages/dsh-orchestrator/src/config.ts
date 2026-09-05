@@ -1,5 +1,13 @@
-import { MAX_SCHEDULING_ITEMS, MAX_SCHEDULING_LATENCY_MS, parseRouteDecisionV1 } from '@ds-plugins/dsh-scheduling-contracts'
-import type { OrchestratorConfig, VerificationAllowedArgs, VerificationCommand } from './types.js'
+import {
+  MAX_DAG_NODES,
+  MAX_PARALLEL_WORKERS,
+  MAX_SCHEDULING_ITEMS,
+  MAX_SCHEDULING_LATENCY_MS,
+  parseRouteDecisionV1,
+} from '@ds-plugins/dsh-scheduling-contracts'
+import type { RouteDecisionV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import { validateParallelVerificationPolicy } from './verification.js'
+import type { OrchestratorConfig, ParallelConfigV1, VerificationAllowedArgs, VerificationCommand } from './types.js'
 
 /** Maximum number of plugin-owned tool actions admitted in one run. */
 export const MAX_PLUGIN_TOOL_ACTIONS = 32
@@ -52,6 +60,83 @@ function positiveInteger(value: unknown, path: string, maximum?: number): number
   }
   if (maximum !== undefined && value > maximum) fail(path, `must not exceed ${maximum}`)
   return value
+}
+
+function nonNegativeInteger(value: unknown, path: string, maximum?: number): number {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+    fail(path, 'must be a non-negative integer')
+  }
+  if (maximum !== undefined && value > maximum) fail(path, `must not exceed ${maximum}`)
+  return value
+}
+
+function stringList(value: unknown, path: string): readonly string[] {
+  if (!Array.isArray(value)) fail(path, 'must be an array of strings')
+  if (value.length > MAX_SCHEDULING_ITEMS) fail(path, `must not contain more than ${MAX_SCHEDULING_ITEMS} items`)
+  const result = value.map((item, index) => nonEmptyString(item, `${path}[${index}]`))
+  if (result.includes('targeted_verify')) {
+    fail(path, 'must not include targeted_verify')
+  }
+  if (new Set(result).size !== result.length) fail(path, 'must not contain duplicate tools')
+  return result
+}
+
+function routeToolFilterKeyValue(value: string, path: string): string {
+  let tuple: unknown
+  try {
+    tuple = JSON.parse(value)
+  } catch {
+    fail(path, 'must be a canonical route-tool-filter key')
+  }
+  if (!Array.isArray(tuple) || tuple.length !== 5) fail(path, 'must be a canonical route-tool-filter key')
+  if (typeof tuple[0] !== 'string' || tuple[0].trim() === '' || typeof tuple[1] !== 'string' || tuple[1].trim() === '') {
+    fail(path, 'must be a canonical route-tool-filter key')
+  }
+  for (const item of tuple.slice(2)) {
+    if (item !== null && (typeof item !== 'string' || item.trim() === '')) {
+      fail(path, 'must be a canonical route-tool-filter key')
+    }
+  }
+  if (JSON.stringify(tuple) !== value) fail(path, 'must be a canonical route-tool-filter key')
+  return value
+}
+
+function parallelConfig(value: unknown, verification: OrchestratorConfig['verification'], maxWorkers: number): ParallelConfigV1 {
+  const parallel = record(value, 'parallel')
+  onlyKeys(parallel, 'parallel', ['maxParallelWorkers', 'verification', 'workerToolAllowlist', 'routeToolFilters'])
+  const maxParallelWorkers = nonNegativeInteger(parallel.maxParallelWorkers, 'parallel.maxParallelWorkers', MAX_PARALLEL_WORKERS)
+  if (maxParallelWorkers > maxWorkers) fail('parallel.maxParallelWorkers', 'must not exceed budgets.maxWorkers')
+  const workerToolAllowlist = stringList(parallel.workerToolAllowlist, 'parallel.workerToolAllowlist')
+  if (typeof parallel.routeToolFilters !== 'object' || parallel.routeToolFilters === null || Array.isArray(parallel.routeToolFilters)) {
+    fail('parallel.routeToolFilters', 'must be an object of route keys to tool arrays')
+  }
+  const routeToolFilters: Record<string, readonly string[]> = {}
+  for (const [key, tools] of Object.entries(parallel.routeToolFilters as Record<string, unknown>)) {
+    const canonicalKey = routeToolFilterKeyValue(key, `parallel.routeToolFilters.${key}`)
+    const parsedTools = stringList(tools, `parallel.routeToolFilters.${key}`)
+    if (parsedTools.some(tool => !workerToolAllowlist.includes(tool))) {
+      fail(`parallel.routeToolFilters.${key}`, 'must only contain workerToolAllowlist tools')
+    }
+    routeToolFilters[canonicalKey] = Object.freeze(parsedTools)
+  }
+  const parsedVerification = validateParallelVerificationPolicy(parallel.verification, verification)
+  return {
+    maxParallelWorkers,
+    verification: parsedVerification,
+    workerToolAllowlist: Object.freeze(workerToolAllowlist),
+    routeToolFilters: Object.freeze(routeToolFilters),
+  }
+}
+
+/** Canonical key for a route-specific parallel worker tool filter. */
+export function routeToolFilterKey(route: RouteDecisionV1): string {
+  return JSON.stringify([
+    route.provider,
+    route.model,
+    route.reasoningEffort ?? null,
+    route.promptProfile ?? null,
+    route.modelFamily ?? null,
+  ])
 }
 
 function verificationCommand(value: unknown, index: number): VerificationCommand {
@@ -127,7 +212,7 @@ function schedulingConfig(value: unknown): NonNullable<OrchestratorConfig['sched
  */
 export function parseConfig(value: unknown): OrchestratorConfig {
   const config = record(value, 'config')
-  onlyKeys(config, 'config', ['workspaceRoot', 'mode', 'worker', 'budgets', 'verification', 'scheduling'])
+  onlyKeys(config, 'config', ['workspaceRoot', 'mode', 'worker', 'budgets', 'verification', 'scheduling', 'parallel'])
 
   const workspaceRoot = nonEmptyString(config.workspaceRoot, 'workspaceRoot')
   if (workspaceRoot.includes('\0')) fail('workspaceRoot', 'must not contain NUL bytes')
@@ -147,10 +232,18 @@ export function parseConfig(value: unknown): OrchestratorConfig {
   const budgets = record(config.budgets, 'budgets')
   onlyKeys(budgets, 'budgets', ['maxWorkers', 'maxPluginToolActions', 'toolTimeoutMs'])
   const maxWorkers = budgets.maxWorkers
-  if (maxWorkers !== 0 && maxWorkers !== 1) fail('budgets.maxWorkers', 'must be 0 or 1')
-  if (mode === 'direct' && maxWorkers !== 0) fail('mode "direct"', 'requires budgets.maxWorkers to be 0')
-  if (mode === 'single-worker' && maxWorkers !== 1) {
-    fail('mode "single-worker"', 'requires budgets.maxWorkers to be 1')
+  const hasParallel = config.parallel !== undefined
+  if (hasParallel) {
+    if (mode !== 'single-worker') fail('parallel', 'requires mode "single-worker"')
+    if (!Number.isInteger(maxWorkers) || typeof maxWorkers !== 'number' || maxWorkers < 1 || maxWorkers > MAX_DAG_NODES) {
+      fail('budgets.maxWorkers', `must be an integer from 1 to ${MAX_DAG_NODES} when parallel is configured`)
+    }
+  } else {
+    if (mode === 'direct' && maxWorkers !== 0) fail('mode "direct"', 'requires budgets.maxWorkers to be 0')
+    if (mode === 'single-worker' && maxWorkers !== 1) {
+      fail('mode "single-worker"', 'requires budgets.maxWorkers to be exactly one (1)')
+    }
+    if (maxWorkers !== 0 && maxWorkers !== 1) fail('budgets.maxWorkers', 'must be 0 or 1')
   }
   const maxPluginToolActions = positiveInteger(
     budgets.maxPluginToolActions,
@@ -177,12 +270,19 @@ export function parseConfig(value: unknown): OrchestratorConfig {
     MAX_VERIFICATION_OUTPUT_BYTES,
   )
 
+  const parallel = hasParallel ? parallelConfig(config.parallel, {
+    commands,
+    timeoutMs,
+    maxOutputBytes,
+  }, maxWorkers as number) : undefined
+
   return {
     workspaceRoot,
     mode,
     worker: { provider, model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }), maxTokens },
     budgets: { maxWorkers, maxPluginToolActions, toolTimeoutMs },
     verification: { commands, timeoutMs, maxOutputBytes },
+    ...(parallel === undefined ? {} : { parallel }),
     ...(config.scheduling === undefined ? {} : { scheduling: schedulingConfig(config.scheduling) }),
   }
 }

@@ -39,6 +39,16 @@ const config: OrchestratorConfig = {
   },
 }
 
+const parallelConfig: OrchestratorConfig = {
+  ...config,
+  parallel: {
+    maxParallelWorkers: 1,
+    verification: { schemaVersion: 1, scope: 'dag', commands: [] },
+    workerToolAllowlist: [],
+    routeToolFilters: {},
+  },
+}
+
 const adaptiveConfig: OrchestratorConfig = {
   ...config,
   worker: {
@@ -490,6 +500,42 @@ describe('one-shot worker runtime', () => {
 })
 
 describe('delegate_worker tool', () => {
+  it.each([8, 16])('admits and runs one legacy delegation under a parallel cumulative budget of %i', async maxWorkers => {
+    const parallelConfig: OrchestratorConfig = {
+      ...config,
+      budgets: { ...config.budgets, maxWorkers },
+      parallel: {
+        maxParallelWorkers: Math.min(8, maxWorkers),
+        verification: { schemaVersion: 1, scope: 'dag', commands: [] },
+        workerToolAllowlist: ['read_file', 'write_file'],
+        routeToolFilters: {},
+      },
+    }
+    const { parent } = parentFor(rootSession(`worker-parallel-root-${maxWorkers}`))
+    const run = publishedRun(Promise.resolve({ stopReason: 'completed', structured: validHandoff, output: [] }))
+    const subagents = new FakeSubagents(async () => run.run)
+    const controller = new BudgetController(parallelConfig.budgets, () => undefined)
+    const tool = createDelegateWorkerTool({
+      config: parallelConfig,
+      subagents,
+      budgetRegistry: { forRootSession: () => controller },
+      schedulerResolver: noSchedulerResolver,
+    })
+
+    await expect(tool.execute(
+      { task: 'Bounded task.', allowedTools: ['read_file'] },
+      { signal: new AbortController().signal, agent: parent, deferContext: () => undefined } as never,
+    )).resolves.toEqual(validHandoff)
+
+    expect(subagents.starts).toBe(1)
+    expect(controller.snapshot()).toMatchObject({
+      maxWorkers,
+      admittedWorkers: 1,
+      admittedPluginToolActions: 1,
+    })
+    expect(run.dispose).toHaveBeenCalledTimes(1)
+  })
+
   it('keeps root sticky and cooldown state when its worker invocation completes', async () => {
     const { parent } = parentFor(rootSession('shared-root-worker-scope'))
     const rootId = String(parent.session.id)
@@ -912,6 +958,7 @@ describe('single-worker service lifecycle', () => {
     }) as never)
     await fiber
     expect(tools.get('delegate_worker')).toBeDefined()
+    expect((ctx as unknown as { get(name: string): unknown }).get('parallelExecution')).toBeUndefined()
     expect(tools.get('context_repo_map')).toBeUndefined()
     expect(tools.get('context_symbol_query')).toBeUndefined()
     expect(tools.get('context_expand_source')).toBeUndefined()
@@ -919,6 +966,53 @@ describe('single-worker service lifecycle', () => {
     await fiber.dispose()
     expect(tools.get('delegate_worker')).toBeUndefined()
     vi.useRealTimers()
+  })
+
+  it('mounts the internal parallel service only inside a parallel-enabled subagents generation', async () => {
+    const ctx = new Context()
+    const tools = toolRegistry()
+    ctx.provide('tools', tools as never)
+    const firstSubagents = await ctx.plugin(child => child.provide('subagents', new FakeSubagents(async () => {
+      throw new Error('worker should not start in this lifecycle test')
+    }) as never))
+    const budgetRegistry = {
+      forRootSession: () => ({
+        admitPluginTool: () => ({ allowed: true as const }),
+        admitWorker: () => ({ allowed: true as const }),
+        admitFanout: () => ({ allowed: true as const }),
+        snapshot: emptyBudgetSnapshot,
+      }),
+    }
+
+    const fiber = await ctx.plugin(child => mountSingleWorkerMode(
+      child,
+      parallelConfig,
+      budgetRegistry,
+      noSchedulerResolver,
+    ))
+
+    const firstService = (ctx as unknown as { get(name: string): unknown }).get('parallelExecution')
+    expect(firstService).toMatchObject({
+      run: expect.any(Function),
+    })
+    expect(tools.get('delegate_worker')).toBeDefined()
+    expect(tools.get('parallel_worker')).toBeUndefined()
+
+    await firstSubagents.dispose()
+    expect((ctx as unknown as { get(name: string): unknown }).get('parallelExecution')).toBeUndefined()
+    const nextSubagents = await ctx.plugin(child => child.provide('subagents', new FakeSubagents(async () => {
+      throw new Error('replacement worker should not start in this lifecycle test')
+    }) as never))
+    await vi.waitFor(() => {
+      expect((ctx as unknown as { get(name: string): unknown }).get('parallelExecution')).toMatchObject({
+        run: expect.any(Function),
+      })
+    })
+    expect((ctx as unknown as { get(name: string): unknown }).get('parallelExecution')).not.toBe(firstService)
+
+    await fiber.dispose()
+    expect((ctx as unknown as { get(name: string): unknown }).get('parallelExecution')).toBeUndefined()
+    await nextSubagents.dispose()
   })
 
   it('rejects Single Worker startup after the fixed missing-subagents deadline', async () => {

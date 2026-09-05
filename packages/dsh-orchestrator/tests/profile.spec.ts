@@ -1,9 +1,11 @@
 import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import * as yaml from 'js-yaml'
 import { entryListSchema } from '@deepseek-ai/cordis-plugin-include'
+import { parseConfig } from '../src/config.ts'
 
 const communityCandidates = [
   'dsh-lsp-actions',
@@ -25,6 +27,14 @@ const communityCandidates = [
 ] as const
 
 describe('DSH v0.1 profile', () => {
+  it('matches the committed byte and digest preservation fixture', async () => {
+    const root = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../..')
+    const fixture = JSON.parse(readFileSync(resolve(root, 'tests/replay/fixtures/v0.1-profile-bytes.json'), 'utf8')) as Record<string, { bytes: number; sha256: string }>
+    for (const [relativePath, expected] of Object.entries(fixture)) {
+      const bytes = readFileSync(resolve(root, relativePath))
+      expect({ bytes: bytes.byteLength, sha256: createHash('sha256').update(bytes).digest('hex') }).toEqual(expected)
+    }
+  })
   it('composes only the base and orchestrator bundles through a direct-mode user patch', () => {
     const root = resolve(fileURLToPath(new URL('.', import.meta.url)), '../../..')
     const profile = resolve(root, 'profiles/v0.1')
@@ -111,6 +121,16 @@ describe('DSH v0.3 adaptive profile', () => {
       expect.objectContaining({ id: 'ds-orchestrator' }),
       expect.objectContaining({ id: 'dsh-adaptive-scheduler' }),
     ]))
+    const v03Orchestrator = v03Patch.find(value =>
+      typeof value === 'object' && value !== null && 'id' in value && value.id === 'ds-orchestrator',
+    )
+    if (v03Orchestrator === undefined || typeof v03Orchestrator !== 'object' || v03Orchestrator === null || !('config' in v03Orchestrator)) {
+      throw new TypeError('v0.3 profile patch must configure ds-orchestrator')
+    }
+    expect(parseConfig(v03Orchestrator.config)).toMatchObject({
+      mode: 'single-worker',
+      budgets: { maxWorkers: 1 },
+    })
     expect(readFileSync(resolve(v01Profile, 'package.json'), 'utf8')).toBe(v01ManifestBefore)
     expect(readFileSync(resolve(v01Profile, 'cordis.patch.yml'), 'utf8')).toBe(v01PatchBefore)
   })

@@ -1,4 +1,11 @@
 import type { JsonSchema } from './types.js'
+import {
+  MAX_DAG_DEPS,
+  MAX_DAG_NODES,
+  MAX_DAG_PATHS,
+  MAX_PARALLEL_WORKERS,
+} from './parallel-paths.js'
+import { MAX_VERIFICATION_ARG_BYTES, MAX_VERIFICATION_ARGS, MAX_VERIFICATION_COMMANDS } from './parallel-verification.js'
 
 // JSON Schema maxLength counts Unicode code points, while the parser also enforces
 // the documented UTF-8 byte ceiling. These schemas cover every standard-expressible
@@ -91,7 +98,7 @@ const constraints: JsonSchema = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    maxWorkers: { type: 'integer', enum: [0, 1] },
+    maxWorkers: { type: 'integer', minimum: 0, maximum: MAX_PARALLEL_WORKERS },
     maxOutputTokens: { type: 'integer', minimum: 1, maximum: 128_000 },
     maxLatencyMs: { type: 'integer', minimum: 1, maximum: 600_000 },
     allowPaidFallback: { type: 'boolean' },
@@ -136,6 +143,63 @@ const actual: JsonSchema = {
     toolCalls: { type: 'integer', minimum: 0, maximum: 32 },
   },
 }
+
+const repoPathDeclaration: JsonSchema = {
+  type: 'string',
+  minLength: 1,
+  maxLength: 1_024,
+  pattern: '^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*[*?\\[\\]{}])(?!.*[\\u0000-\\u001F\\u007F])(?!.*//)(?!.*(?:^|/)\\.(?:/|$))(?!.*(?:^|/)\\.\\.(?:/|$)).+$',
+}
+
+const dagProfile: JsonSchema = profile
+const dagConstraints: JsonSchema = constraints
+const taskNode: JsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    schemaVersion: { type: 'integer', const: 1 },
+    nodeId: { type: 'string', minLength: 1, maxLength: 32, pattern: '^[^\\u0000-\\u001F\\u007F\\u003A\\u0022\\\\]+$' },
+    objective: { type: 'string', maxLength: 4_096, pattern: NO_NUL_PATTERN },
+    profile: dagProfile,
+    constraints: dagConstraints,
+    readPaths: { type: 'array', maxItems: MAX_DAG_PATHS, items: repoPathDeclaration },
+    writePaths: { type: 'array', maxItems: MAX_DAG_PATHS, items: repoPathDeclaration },
+    dependsOn: { type: 'array', maxItems: MAX_DAG_DEPS, items: { type: 'string', minLength: 1, maxLength: 32, pattern: '^[^\\u0000-\\u001F\\u007F\\u003A\\u0022\\\\]+$' } },
+  },
+  required: ['schemaVersion', 'nodeId', 'objective', 'profile', 'constraints', 'readPaths', 'writePaths', 'dependsOn'],
+}
+
+export const TASK_DAG_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    schemaVersion: { type: 'integer', const: 1 },
+    rootTaskId: boundedIdentifier,
+    nodes: { type: 'array', minItems: 1, maxItems: MAX_DAG_NODES, items: taskNode },
+  },
+  required: ['schemaVersion', 'rootTaskId', 'nodes'],
+})
+
+const parallelVerificationCommand: JsonSchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    name: boundedIdentifier,
+    args: { type: 'array', maxItems: MAX_VERIFICATION_ARGS, items: { type: 'string', maxLength: MAX_VERIFICATION_ARG_BYTES, pattern: NO_NUL_PATTERN } },
+  },
+  required: ['name', 'args'],
+}
+
+export const PARALLEL_VERIFICATION_POLICY_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    schemaVersion: { type: 'integer', const: 1 },
+    scope: { type: 'string', enum: ['level', 'dag'] },
+    commands: { type: 'array', maxItems: MAX_VERIFICATION_COMMANDS, items: parallelVerificationCommand },
+  },
+  required: ['schemaVersion', 'scope', 'commands'],
+})
 
 function derivedCounterInvariants(maximum: number, maxProperty: string, admittedProperty: string, remainingProperty: string): readonly JsonSchema[] {
   return Array.from({ length: maximum + 1 }, (_, maxValue) => ({
@@ -225,16 +289,16 @@ export const BUDGET_VIEW_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
   type: 'object',
   additionalProperties: false,
   properties: {
-    maxWorkers: { type: 'integer', minimum: 0, maximum: 1 },
-    admittedWorkers: { type: 'integer', minimum: 0, maximum: 1 },
+    maxWorkers: { type: 'integer', minimum: 0, maximum: MAX_DAG_NODES },
+    admittedWorkers: { type: 'integer', minimum: 0, maximum: MAX_DAG_NODES },
     maxPluginToolActions: { type: 'integer', minimum: 0, maximum: 32 },
     admittedPluginToolActions: { type: 'integer', minimum: 0, maximum: 32 },
-    remainingWorkers: { type: 'integer', minimum: 0, maximum: 1 },
+    remainingWorkers: { type: 'integer', minimum: 0, maximum: MAX_DAG_NODES },
     remainingPluginToolActions: { type: 'integer', minimum: 0, maximum: 32 },
   },
   required: ['maxWorkers', 'admittedWorkers', 'maxPluginToolActions', 'admittedPluginToolActions', 'remainingWorkers', 'remainingPluginToolActions'],
   allOf: [
-    ...derivedCounterInvariants(1, 'maxWorkers', 'admittedWorkers', 'remainingWorkers'),
+    ...derivedCounterInvariants(MAX_DAG_NODES, 'maxWorkers', 'admittedWorkers', 'remainingWorkers'),
     ...derivedCounterInvariants(32, 'maxPluginToolActions', 'admittedPluginToolActions', 'remainingPluginToolActions'),
   ],
 })
@@ -284,6 +348,30 @@ export const SCHEDULE_SELECTED_V1_JSON_SCHEMA: JsonSchema = deepFreeze({
     promptProfile: boundedIdentifier,
     modelFamily: boundedIdentifier,
     policyVersion: boundedIdentifier,
+    fanoutId: boundedIdentifier,
+    nodeId: { type: 'string', minLength: 1, maxLength: 32, pattern: '^[^\\u0000-\\u001F\\u007F\\u003A\\u0022\\\\]+$' },
+    requestId: boundedIdentifier,
   },
   required: ['schemaVersion', 'target', 'source', 'provider', 'model', 'maxTokens'],
+  allOf: [
+    {
+      if: {
+        properties: { target: { const: 'root' } },
+        required: ['target'],
+      },
+      then: { not: { required: ['fanoutId'] } },
+    },
+    {
+      if: { required: ['fanoutId'] },
+      then: { required: ['fanoutId', 'nodeId', 'requestId'] },
+    },
+    {
+      if: { required: ['nodeId'] },
+      then: { required: ['fanoutId', 'nodeId', 'requestId'] },
+    },
+    {
+      if: { required: ['requestId'] },
+      then: { required: ['fanoutId', 'nodeId', 'requestId'] },
+    },
+  ],
 })

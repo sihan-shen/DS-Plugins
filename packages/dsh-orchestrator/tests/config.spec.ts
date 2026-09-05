@@ -3,7 +3,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import * as yaml from 'js-yaml'
-import { parseConfig } from '../src/config.ts'
+import { parseConfig, routeToolFilterKey } from '../src/config.ts'
 
 const validConfig = {
   workspaceRoot: '.',
@@ -44,6 +44,25 @@ const validScheduling = {
   allowPaidFallback: false,
 } as const
 
+const singleWorkerConfig = {
+  ...validConfig,
+  mode: 'single-worker',
+  budgets: { ...validConfig.budgets, maxWorkers: 1 },
+} as const
+
+const parallelConfig = {
+  maxParallelWorkers: 4,
+  verification: {
+    schemaVersion: 1,
+    scope: 'dag',
+    commands: [{ name: 'typecheck', args: [] }],
+  },
+  workerToolAllowlist: ['read_file', 'write_file'],
+  routeToolFilters: {
+    '["provider-disabled","baseline-disabled",null,null,null]': ['read_file'],
+  },
+} as const
+
 function configWith(patch: Record<string, unknown>) {
   return {
     ...validConfig,
@@ -76,6 +95,170 @@ describe('parseConfig', () => {
 
   it('accepts the optional bounded scheduling configuration', () => {
     expect(parseConfig({ ...validConfig, scheduling: validScheduling })).toEqual({ ...validConfig, scheduling: validScheduling })
+  })
+
+  it('accepts parallel only with single-worker mode and cumulative workers up to 16', () => {
+    const parsed = parseConfig({
+      ...singleWorkerConfig,
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 16 },
+      parallel: parallelConfig,
+    })
+
+    expect(parsed.parallel).toEqual(parallelConfig)
+    expect(parsed.budgets.maxWorkers).toBe(16)
+  })
+
+  it.each([0, 8])('accepts maxParallelWorkers boundary %i when it fits the cumulative budget', maxParallelWorkers => {
+    const parsed = parseConfig({
+      ...singleWorkerConfig,
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 16 },
+      parallel: { ...parallelConfig, maxParallelWorkers },
+    })
+
+    expect(parsed.parallel?.maxParallelWorkers).toBe(maxParallelWorkers)
+  })
+
+  it('rejects maxParallelWorkers above the contracts worker-width ceiling', () => {
+    expect(() => parseConfig({
+      ...singleWorkerConfig,
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 16 },
+      parallel: { ...parallelConfig, maxParallelWorkers: 9 },
+    })).toThrow(/maxParallelWorkers/u)
+  })
+
+  it('detaches and deep-freezes parsed parallel tool allowlists and route filters', () => {
+    const input = {
+      maxParallelWorkers: 4,
+      verification: {
+        schemaVersion: 1 as const,
+        scope: 'dag' as const,
+        commands: [{ name: 'typecheck', args: [] }],
+      },
+      workerToolAllowlist: ['read_file', 'write_file'],
+      routeToolFilters: {
+        '["provider-disabled","baseline-disabled",null,null,null]': ['read_file', 'write_file'],
+      },
+    }
+    const parsed = parseConfig({
+      ...singleWorkerConfig,
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 8 },
+      parallel: input,
+    })
+    const parsedParallel = parsed.parallel
+    if (parsedParallel === undefined) throw new Error('parallel config must parse')
+    const key = Object.keys(parsedParallel.routeToolFilters)[0]!
+
+    expect(parsedParallel.workerToolAllowlist).not.toBe(input.workerToolAllowlist)
+    expect(parsedParallel.routeToolFilters).not.toBe(input.routeToolFilters)
+    expect(parsedParallel.routeToolFilters[key]).not.toBe(input.routeToolFilters[key])
+    expect(Object.isFrozen(parsedParallel.workerToolAllowlist)).toBe(true)
+    expect(Object.isFrozen(parsedParallel.routeToolFilters)).toBe(true)
+    expect(Object.isFrozen(parsedParallel.routeToolFilters[key])).toBe(true)
+  })
+
+  it('rejects parallel configs whose route filters exceed the allowlist or duplicate tools', () => {
+    const key = '["provider-disabled","baseline-disabled",null,null,null]'
+    expect(() => parseConfig({
+      ...singleWorkerConfig,
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 8 },
+      parallel: {
+        ...parallelConfig,
+        routeToolFilters: { [key]: ['read_file', 'edit_file'] },
+      },
+    })).toThrow(/workerToolAllowlist/u)
+    expect(() => parseConfig({
+      ...singleWorkerConfig,
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 8 },
+      parallel: {
+        ...parallelConfig,
+        workerToolAllowlist: ['read_file', 'read_file'],
+      },
+    })).toThrow(/duplicate/u)
+  })
+
+  it('rejects non-canonical route-tool-filter keys with spacing and alternate escapes', () => {
+    expect(() => parseConfig({
+      ...singleWorkerConfig,
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 8 },
+      parallel: {
+        ...parallelConfig,
+        routeToolFilters: {
+          '[ "provider-disabled","baseline-disabled",null,null,null]': ['read_file'],
+        },
+      },
+    })).toThrow(/canonical/u)
+
+    const quotedProvider = 'quote"provider'
+    expect(routeToolFilterKey({ provider: quotedProvider, model: 'model', maxTokens: 1 }))
+      .toBe('["quote\\"provider","model",null,null,null]')
+    expect(() => parseConfig({
+      ...singleWorkerConfig,
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 8 },
+      parallel: {
+        ...parallelConfig,
+        routeToolFilters: {
+          '["quote\\u0022provider","model",null,null,null]': ['read_file'],
+        },
+      },
+    })).toThrow(/canonical/u)
+  })
+
+  it('builds the canonical route-tool-filter key with null optional fields', () => {
+    expect(routeToolFilterKey({
+      provider: 'provider-disabled',
+      model: 'baseline-disabled',
+      maxTokens: 32_000,
+    })).toBe('["provider-disabled","baseline-disabled",null,null,null]')
+    expect(routeToolFilterKey({
+      provider: 'provider-disabled',
+      model: 'strong-disabled',
+      maxTokens: 64_000,
+      reasoningEffort: 'high',
+      promptProfile: 'coding-strong-v1',
+      modelFamily: 'deepseek',
+    })).toBe('["provider-disabled","strong-disabled","high","coding-strong-v1","deepseek"]')
+  })
+
+  it.each([
+    {
+      ...singleWorkerConfig,
+      mode: 'direct',
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 0 },
+      parallel: parallelConfig,
+    },
+    {
+      ...singleWorkerConfig,
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 17 },
+      parallel: parallelConfig,
+    },
+    {
+      ...singleWorkerConfig,
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 4 },
+      parallel: { ...parallelConfig, maxParallelWorkers: 5 },
+    },
+    {
+      ...singleWorkerConfig,
+      parallel: { ...parallelConfig, workerToolAllowlist: ['targeted_verify'] },
+    },
+    {
+      ...singleWorkerConfig,
+      parallel: { ...parallelConfig, workerToolAllowlist: 'read_file' },
+    },
+    {
+      ...singleWorkerConfig,
+      parallel: { ...parallelConfig, routeToolFilters: { bad: 'read_file' } },
+    },
+    {
+      ...singleWorkerConfig,
+      parallel: { ...parallelConfig, extra: true },
+    },
+  ])('rejects invalid parallel deployment %#', value => expect(() => parseConfig(value)).toThrow())
+
+  it('preserves old mode rules when parallel is absent', () => {
+    expect(() => parseConfig({
+      ...singleWorkerConfig,
+      budgets: { ...singleWorkerConfig.budgets, maxWorkers: 2 },
+    })).toThrow(/exactly one/u)
   })
 
   it('rejects unknown scheduling keys and out-of-range capability profiles', () => {

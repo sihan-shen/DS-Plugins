@@ -1,7 +1,9 @@
 import type {
   CapabilityProfileV1,
   CapabilityRequestV1,
+  CorrelationTripleV1,
   BudgetViewV1,
+  ExpectedEventBranch,
   HandoffV1,
   RouteDecisionV1,
   ScheduleDecisionV1,
@@ -10,12 +12,15 @@ import type {
   SchedulingConstraintsV1,
   VerificationEvidenceV1,
 } from './types.js'
+import { MAX_DAG_NODES, MAX_PARALLEL_WORKERS, parseNodeId } from './parallel-paths.js'
 
 export const MAX_SCHEDULING_STRING_BYTES = 16_384
 export const MAX_SCHEDULING_IDENTIFIER_BYTES = 256
 export const MAX_SCHEDULING_ITEMS = 128
 export const MAX_SCHEDULING_LATENCY_MS = 600_000
 export const MAX_SCHEDULING_OUTPUT_TOKENS = 128_000
+const MAX_PARALLEL_FANOUT_ID_BYTES = 67
+const MAX_PARALLEL_REQUEST_ID_BYTES = 94
 
 type RecordValue = Record<string, unknown>
 const textEncoder = new TextEncoder()
@@ -89,11 +94,11 @@ function boundedText(value: unknown, path: string, allowEmpty = true): string {
   return value
 }
 
-function boundedIdentifier(value: unknown, path: string): string {
+function boundedIdentifier(value: unknown, path: string, maximum = MAX_SCHEDULING_IDENTIFIER_BYTES): string {
   if (typeof value !== 'string' || value.trim() === '') fail(path, 'must be a non-empty identifier')
   if (value.includes('\0')) fail(path, 'must not contain a NUL byte')
-  if (textEncoder.encode(value).byteLength > MAX_SCHEDULING_IDENTIFIER_BYTES) {
-    fail(path, `must not exceed ${MAX_SCHEDULING_IDENTIFIER_BYTES} UTF-8 bytes`)
+  if (textEncoder.encode(value).byteLength > maximum) {
+    fail(path, `must not exceed ${maximum} UTF-8 bytes`)
   }
   return value
 }
@@ -195,11 +200,11 @@ function parseConstraints(value: unknown): SchedulingConstraintsV1 {
     'maxWorkers', 'maxOutputTokens', 'maxLatencyMs', 'allowPaidFallback', 'allowedProviders', 'requiredTools',
   ])
   const maxWorkers = required(constraints, 'maxWorkers', 'constraints')
-  if (maxWorkers !== 0 && maxWorkers !== 1) fail('constraints.maxWorkers', 'must be 0 or 1')
+  const parsedMaxWorkers = boundedInteger(maxWorkers, 'constraints.maxWorkers', 0, MAX_PARALLEL_WORKERS)
   const allowPaidFallback = required(constraints, 'allowPaidFallback', 'constraints')
   if (typeof allowPaidFallback !== 'boolean') fail('constraints.allowPaidFallback', 'must be a boolean')
   return {
-    maxWorkers,
+    maxWorkers: parsedMaxWorkers,
     maxOutputTokens: boundedInteger(required(constraints, 'maxOutputTokens', 'constraints'), 'constraints.maxOutputTokens', 1, MAX_SCHEDULING_OUTPUT_TOKENS),
     maxLatencyMs: boundedInteger(required(constraints, 'maxLatencyMs', 'constraints'), 'constraints.maxLatencyMs', 1, MAX_SCHEDULING_LATENCY_MS),
     allowPaidFallback,
@@ -282,7 +287,7 @@ export function parseScheduleDecisionV1(value: unknown): ScheduleDecisionV1 {
 export function parseBudgetViewV1(value: unknown): BudgetViewV1 {
   assertJsonValue(value, 'budget')
   const input = exactRecord(value, 'budget', ['maxWorkers', 'admittedWorkers', 'maxPluginToolActions', 'admittedPluginToolActions', 'remainingWorkers', 'remainingPluginToolActions'])
-  const maxWorkers = boundedInteger(required(input, 'maxWorkers', 'budget'), 'budget.maxWorkers', 0, 1)
+  const maxWorkers = boundedInteger(required(input, 'maxWorkers', 'budget'), 'budget.maxWorkers', 0, MAX_DAG_NODES)
   const admittedWorkers = boundedInteger(required(input, 'admittedWorkers', 'budget'), 'budget.admittedWorkers', 0, maxWorkers)
   const maxPluginToolActions = boundedInteger(required(input, 'maxPluginToolActions', 'budget'), 'budget.maxPluginToolActions', 0, 32)
   const admittedPluginToolActions = boundedInteger(required(input, 'admittedPluginToolActions', 'budget'), 'budget.admittedPluginToolActions', 0, maxPluginToolActions)
@@ -347,9 +352,46 @@ export function parseScheduleFeedbackV1(value: unknown): ScheduleFeedbackV1 {
   })
 }
 
-export function parseScheduleSelectedV1(value: unknown): ScheduleSelectedV1 {
+function parseScheduleSelectedCorrelation(
+  input: RecordValue,
+  target: ScheduleSelectedV1['target'],
+  expectedBranch: ExpectedEventBranch | undefined,
+): Partial<CorrelationTripleV1> {
+  if (expectedBranch !== undefined && expectedBranch !== 'legacy' && expectedBranch !== 'parallel') {
+    fail('scheduleSelected.expectedBranch', 'is unsupported')
+  }
+
+  const correlationKeys = ['fanoutId', 'nodeId', 'requestId'] as const
+  const present = correlationKeys.filter(key => Object.prototype.hasOwnProperty.call(input, key))
+  if (present.length !== 0 && present.length !== correlationKeys.length) {
+    fail('scheduleSelected', 'must contain the complete correlation triple or none of it')
+  }
+
+  const correlated = present.length === correlationKeys.length
+  if (target === 'root' && correlated) {
+    fail('scheduleSelected', 'root target must not contain a correlation triple')
+  }
+  if (expectedBranch === 'legacy' && correlated) {
+    fail('scheduleSelected', 'legacy branch must not contain a correlation triple')
+  }
+  if (expectedBranch === 'parallel' && target === 'worker' && !correlated) {
+    fail('scheduleSelected', 'parallel worker selection requires a correlation triple')
+  }
+  if (!correlated) return {}
+
+  return {
+    fanoutId: boundedIdentifier(input.fanoutId, 'scheduleSelected.fanoutId', MAX_PARALLEL_FANOUT_ID_BYTES),
+    nodeId: parseNodeId(input.nodeId, 'scheduleSelected.nodeId'),
+    requestId: boundedIdentifier(input.requestId, 'scheduleSelected.requestId', MAX_PARALLEL_REQUEST_ID_BYTES),
+  }
+}
+
+export function parseScheduleSelectedV1(value: unknown, expectedBranch?: ExpectedEventBranch): ScheduleSelectedV1 {
   assertJsonValue(value, 'scheduleSelected')
-  const input = exactRecord(value, 'scheduleSelected', ['schemaVersion', 'target', 'source', 'provider', 'model', 'maxTokens', 'reasoningEffort', 'promptProfile', 'modelFamily', 'policyVersion'])
+  const input = exactRecord(value, 'scheduleSelected', ['schemaVersion', 'target', 'source', 'provider', 'model', 'maxTokens', 'reasoningEffort', 'promptProfile', 'modelFamily', 'policyVersion', 'fanoutId', 'nodeId', 'requestId'])
+  if (input.schemaVersion !== 1) throw new TypeError('scheduleSelected.schemaVersion must be 1')
+  if (input.target !== 'root' && input.target !== 'worker') throw new TypeError('scheduleSelected.target is unsupported')
+  if (input.source !== 'scheduler' && input.source !== 'profile-fallback') throw new TypeError('scheduleSelected.source is unsupported')
   const route = parseRouteDecisionV1({
     provider: input.provider,
     model: input.model,
@@ -358,8 +400,17 @@ export function parseScheduleSelectedV1(value: unknown): ScheduleSelectedV1 {
     ...(Object.prototype.hasOwnProperty.call(input, 'promptProfile') ? { promptProfile: input.promptProfile } : {}),
     ...(Object.prototype.hasOwnProperty.call(input, 'modelFamily') ? { modelFamily: input.modelFamily } : {}),
   })
-  if (input.schemaVersion !== 1) throw new TypeError('scheduleSelected.schemaVersion must be 1')
-  if (input.target !== 'root' && input.target !== 'worker') throw new TypeError('scheduleSelected.target is unsupported')
-  if (input.source !== 'scheduler' && input.source !== 'profile-fallback') throw new TypeError('scheduleSelected.source is unsupported')
-  return deepFreeze({ schemaVersion: 1, target: input.target, source: input.source, provider: route.provider, model: route.model, maxTokens: route.maxTokens, ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort }), ...(route.promptProfile === undefined ? {} : { promptProfile: route.promptProfile }), ...(route.modelFamily === undefined ? {} : { modelFamily: route.modelFamily }), ...optionalIdentifier(input, 'policyVersion', 'scheduleSelected.policyVersion') })
+  return deepFreeze({
+    schemaVersion: 1,
+    target: input.target,
+    source: input.source,
+    provider: route.provider,
+    model: route.model,
+    maxTokens: route.maxTokens,
+    ...(route.reasoningEffort === undefined ? {} : { reasoningEffort: route.reasoningEffort }),
+    ...(route.promptProfile === undefined ? {} : { promptProfile: route.promptProfile }),
+    ...(route.modelFamily === undefined ? {} : { modelFamily: route.modelFamily }),
+    ...optionalIdentifier(input, 'policyVersion', 'scheduleSelected.policyVersion'),
+    ...parseScheduleSelectedCorrelation(input, input.target, expectedBranch),
+  })
 }

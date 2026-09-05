@@ -97,7 +97,9 @@ export function buildCapabilityRequest(config: OrchestratorConfig, input: Resolv
     objective: input.objective,
     profile,
     constraints: {
-      maxWorkers: input.target === 'worker' ? config.budgets.maxWorkers : 0,
+      // The model-facing delegate remains one-shot; the cumulative parallel budget
+      // belongs to the root BudgetController, never to a per-worker capability request.
+      maxWorkers: input.target === 'worker' ? 1 : 0,
       maxOutputTokens: config.worker.maxTokens,
       maxLatencyMs: scheduling?.maxLatencyMs ?? MAX_SCHEDULING_LATENCY_MS,
       allowPaidFallback: scheduling?.allowPaidFallback ?? false,
@@ -143,7 +145,7 @@ function routeIsAllowed(config: OrchestratorConfig, route: RouteDecisionV1): boo
     && route.maxTokens <= config.worker.maxTokens
 }
 
-function validateDecisionForConfig(
+export function validateScheduleDecisionForConfig(
   decision: ScheduleDecisionV1,
   config: OrchestratorConfig,
   target: 'root' | 'worker',
@@ -157,6 +159,44 @@ function validateDecisionForConfig(
   return decision
 }
 
+/** Resolve one already-projected capability request through the optional scheduler. */
+export async function resolveScheduleFromRequest(
+  config: OrchestratorConfig,
+  resolver: SchedulerResolver,
+  request: CapabilityRequestV1,
+  budget: BudgetViewV1,
+  signal: AbortSignal,
+): Promise<ResolvedScheduleV1> {
+  throwIfAborted(signal)
+  const scheduler = config.scheduling === undefined ? undefined : resolver.current()
+  if (scheduler === undefined) {
+    return Object.freeze({ request, decision: fixedProfileSchedule(config.worker, config.mode, request.target) })
+  }
+  const rawDecision = await scheduler.schedule(request, parseBudgetViewV1(budget), signal)
+  if (signal.aborted) {
+    if (request.target === 'worker') scheduler.complete?.(request.taskId)
+    throwIfAborted(signal)
+  }
+  try {
+    const decision = validateScheduleDecisionForConfig(
+      parseScheduleDecisionV1(rawDecision),
+      config,
+      request.target,
+    )
+    return Object.freeze({ request, decision, scheduler })
+  } catch (error) {
+    if (request.target === 'worker') scheduler.complete?.(request.taskId)
+    if (config.scheduling?.allowInvalidDecisionFallback === true) {
+      return Object.freeze({
+        request,
+        decision: fixedProfileSchedule(config.worker, config.mode, request.target),
+        scheduler,
+      })
+    }
+    throw new SchedulingValidationError('SCHEDULE_DECISION_INVALID', { cause: error })
+  }
+}
+
 /** Resolve scheduler-first while keeping invalid responses outside final budget admission. */
 export async function resolveSchedule(
   config: OrchestratorConfig,
@@ -164,28 +204,7 @@ export async function resolveSchedule(
   input: ResolveScheduleInput,
 ): Promise<ResolvedScheduleV1> {
   const request = buildCapabilityRequest(config, input)
-  throwIfAborted(input.signal)
-  const scheduler = config.scheduling === undefined ? undefined : resolver.current()
-  if (scheduler === undefined) return { request, decision: fixedProfileSchedule(config.worker, config.mode, input.target) }
-  const rawDecision = await scheduler.schedule(request, parseBudgetViewV1(input.budget), input.signal)
-  if (input.signal.aborted) {
-    if (input.target === 'worker') scheduler.complete?.(request.taskId)
-    throwIfAborted(input.signal)
-  }
-  try {
-    const decision = validateDecisionForConfig(
-      parseScheduleDecisionV1(rawDecision),
-      config,
-      input.target,
-    )
-    return { request, decision, scheduler }
-  } catch (error) {
-    if (input.target === 'worker') scheduler.complete?.(request.taskId)
-    if (config.scheduling?.allowInvalidDecisionFallback === true) {
-      return { request, decision: fixedProfileSchedule(config.worker, config.mode, input.target), scheduler }
-    }
-    throw new SchedulingValidationError('SCHEDULE_DECISION_INVALID', { cause: error })
-  }
+  return resolveScheduleFromRequest(config, resolver, request, input.budget, input.signal)
 }
 
 interface RestoredScheduleSelection {
