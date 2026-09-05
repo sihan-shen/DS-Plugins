@@ -100,6 +100,9 @@ importers:
       '@ds-plugins/dsh-context':
         specifier: workspace:*
         version: link:../dsh-context
+      '@ds-plugins/dsh-telemetry':
+        specifier: workspace:*
+        version: link:../dsh-telemetry
     devDependencies:
       '@types/node':
         specifier: 26.3.0

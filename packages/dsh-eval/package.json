@@ -18,6 +18,7 @@
   "dependencies": {
     "@ds-plugins/dsh-code-intelligence": "workspace:*",
     "@ds-plugins/dsh-context": "workspace:*",
+    "@ds-plugins/dsh-telemetry": "workspace:*",
     "@dqbd/tiktoken": "1.0.22"
   },
   "devDependencies": {
