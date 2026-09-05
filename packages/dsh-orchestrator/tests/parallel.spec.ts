@@ -7,7 +7,8 @@ import {
   type TaskDagV1,
   type TaskNodeV1,
 } from '@ds-plugins/dsh-scheduling-contracts'
-import { createBudgetControllerRegistry } from '../src/budgets.ts'
+import { createBudgetControllerRegistry, type BudgetRejection } from '../src/budgets.ts'
+import { appendVerificationFinished } from '../src/events.ts'
 import { appendParallelStarted } from '../src/parallel-events.ts'
 import {
   allocateDagId,
@@ -15,7 +16,8 @@ import {
   type ParallelRunValidationError,
 } from '../src/parallel.ts'
 import type { SchedulerResolver } from '../src/scheduling.ts'
-import type { HandoffV1, OrchestratorConfig } from '../src/types.ts'
+import type { HandoffV1, OrchestratorConfig, VerificationEvidenceV1 } from '../src/types.ts'
+import type { VerificationService } from '../src/verification.ts'
 
 const profile = {
   coding: 70,
@@ -31,6 +33,7 @@ interface NodeInput {
   readonly dependsOn?: readonly string[]
   readonly noRoute?: boolean
   readonly maxWorkers?: number
+  readonly requiredTools?: readonly string[]
 }
 
 function dag(nodes: readonly NodeInput[]): TaskDagV1 {
@@ -48,7 +51,7 @@ function dag(nodes: readonly NodeInput[]): TaskDagV1 {
         maxLatencyMs: 60_000,
         allowPaidFallback: false,
         ...(input.noRoute ? { allowedProviders: ['unavailable-provider'] } : {}),
-        requiredTools: [],
+        requiredTools: [...(input.requiredTools ?? [])],
       },
       readPaths: [`src/${input.id}.ts`],
       writePaths: [`src/${input.id}.ts`],
@@ -60,23 +63,37 @@ function dag(nodes: readonly NodeInput[]): TaskDagV1 {
 function config(options: {
   readonly maxWorkers?: number
   readonly maxParallelWorkers?: number
+  readonly maxPluginToolActions?: number
   readonly scope?: 'level' | 'dag'
+  readonly verificationCommands?: readonly string[]
+  readonly workerToolAllowlist?: readonly string[]
 } = {}): OrchestratorConfig {
+  const verificationCommands = options.verificationCommands ?? []
   return {
     workspaceRoot: '.',
     mode: 'single-worker',
     worker: { provider: 'provider-disabled', model: 'model-disabled', maxTokens: 32_000 },
     budgets: {
       maxWorkers: options.maxWorkers ?? 8,
-      maxPluginToolActions: 16,
+      maxPluginToolActions: options.maxPluginToolActions ?? 16,
       toolTimeoutMs: 60_000,
     },
-    verification: { commands: [], timeoutMs: 60_000, maxOutputBytes: 65_536 },
+    verification: {
+      commands: verificationCommands.map(name => ({ name, executable: 'ignored', fixedArgs: [], allowedArgs: 'none' })),
+      timeoutMs: 60_000,
+      maxOutputBytes: 65_536,
+    },
     parallel: {
       maxParallelWorkers: options.maxParallelWorkers ?? 4,
-      verification: { schemaVersion: 1, scope: options.scope ?? 'level', commands: [] },
-      workerToolAllowlist: [],
-      routeToolFilters: {},
+      verification: {
+        schemaVersion: 1,
+        scope: options.scope ?? 'level',
+        commands: verificationCommands.map(name => ({ name, args: [] })),
+      },
+      workerToolAllowlist: [...(options.workerToolAllowlist ?? [])],
+      routeToolFilters: options.workerToolAllowlist === undefined
+        ? {}
+        : { '["provider-disabled","model-disabled",null,null,null]': [...options.workerToolAllowlist] },
     },
   }
 }
@@ -106,6 +123,9 @@ interface RuntimeFixture {
   readonly config: OrchestratorConfig
   readonly budgetRegistry: ReturnType<typeof createBudgetControllerRegistry>
   readonly starts: string[]
+  readonly startRequests: SubagentStartRequest[]
+  readonly verificationCalls: VerificationEvidenceV1[]
+  readonly budgetRejections: BudgetRejection[]
   readonly runtime: ReturnType<typeof createParallelExecutionRuntime>
   readonly request: (taskDag: TaskDagV1) => { readonly dag: TaskDagV1; readonly parent: Agent; readonly signal: AbortSignal }
 }
@@ -114,32 +134,68 @@ function fixture(options: {
   readonly config?: OrchestratorConfig
   readonly session?: Session
   readonly start?: (request: SubagentStartRequest, index: number) => Promise<SubagentRun>
+  readonly handoff?: (nodeId: string) => HandoffV1
+  readonly verificationStatuses?: readonly VerificationEvidenceV1['status'][]
   readonly workerRefDigest?: (workerId: string) => string
 } = {}): RuntimeFixture {
   const runtimeConfig = options.config ?? config()
   const session = options.session ?? Session.create(SessionId('parallel-root'))
   const parent = { session } as Agent
   const starts: string[] = []
+  const startRequests: SubagentStartRequest[] = []
+  const verificationCalls: VerificationEvidenceV1[] = []
+  const budgetRejections: BudgetRejection[] = []
   let startIndex = 0
   const start = vi.fn(async (_provider: 'spawn', request: SubagentStartRequest): Promise<SubagentRun> => {
     const nodeId = nodeIdFrom(request)
     starts.push(nodeId)
+    startRequests.push(request)
     const index = startIndex++
     if (options.start !== undefined) return options.start(request, index)
     return {
       id: SessionId(`child-${nodeId}-${index}`),
-      result: Promise.resolve({ stopReason: 'completed', structured: completedHandoff(nodeId), output: [] }),
+      result: Promise.resolve({
+        stopReason: 'completed',
+        structured: options.handoff?.(nodeId) ?? completedHandoff(nodeId),
+        output: [],
+      }),
       dispose: vi.fn(async () => undefined),
     } as SubagentRun
   })
-  const budgetRegistry = createBudgetControllerRegistry(runtimeConfig.budgets, () => () => undefined)
+  const budgetRegistry = createBudgetControllerRegistry(runtimeConfig.budgets, () => rejection => {
+    budgetRejections.push(rejection)
+  })
   const schedulerResolver: SchedulerResolver = { current: () => undefined }
+  let verificationIndex = 0
   const runtime = createParallelExecutionRuntime({
     config: runtimeConfig,
     budgetRegistry,
     schedulerResolver,
     subagents: { start } as Pick<SubagentRuntime, 'start'>,
     appendAggregate: (target, aggregate) => target.append('dsh-plugin/parallel-finished', aggregate).seq,
+    ...(runtimeConfig.parallel!.verification.commands.length === 0 ? {} : {
+      verificationServiceFor: (target: Session) => ({
+        async run(commandName: string, args: readonly string[], signal: AbortSignal) {
+          if (signal.aborted) throw signal.reason
+          const status = options.verificationStatuses?.[verificationIndex] ?? 'passed'
+          verificationIndex += 1
+          const item: VerificationEvidenceV1 = {
+            schemaVersion: 1,
+            commandName,
+            args: [...args],
+            exitCode: status === 'passed' ? 0 : status === 'failed' ? 1 : null,
+            status,
+            stdout: `verification:${verificationIndex}:${status}`,
+            stderr: '',
+            truncated: false,
+            durationMs: verificationIndex,
+          }
+          verificationCalls.push(item)
+          appendVerificationFinished(target, item)
+          return item
+        },
+      }) as VerificationService,
+    }),
     ...(options.workerRefDigest === undefined ? {} : { workerRefDigest: options.workerRefDigest }),
   })
   return {
@@ -148,6 +204,9 @@ function fixture(options: {
     config: runtimeConfig,
     budgetRegistry,
     starts,
+    startRequests,
+    verificationCalls,
+    budgetRejections,
     runtime,
     request: taskDag => ({ dag: taskDag, parent, signal: new AbortController().signal }),
   }
@@ -390,5 +449,229 @@ describe('parallel runtime level flow', () => {
     expect(result.finalAggregate).toBe(result.aggregates[2])
     expect(result.finalAggregate.nodeResults.map(item => item.nodeId)).toEqual(['a', 'b'])
     expect(eventData(test.session, 'dsh-plugin/parallel-finished')).toHaveLength(3)
+  })
+})
+
+describe('parallel runtime integrated verification', () => {
+  it.each(['failed', 'timed-out', 'spawn-error'] as const)(
+    'stops later levels after a level %s result',
+    async status => {
+      const test = fixture({
+        config: config({ scope: 'level', verificationCommands: ['typecheck'] }),
+        verificationStatuses: [status],
+      })
+
+      const result = await test.runtime.run(test.request(dag([
+        { id: 'a' },
+        { id: 'b', dependsOn: ['a'] },
+        { id: 'c', dependsOn: ['b'] },
+      ])))
+
+      expect(result.aggregates.filter(item => item.scope === 'level')).toHaveLength(1)
+      expect(result.finalAggregate.nodeResults.filter(item => item.reason === 'level-verification-stopped')).toHaveLength(2)
+      expect(result.finalAggregate.verificationOutcome).toBe('command-failed')
+      expect(test.starts).toEqual(['a'])
+      expect(test.verificationCalls).toHaveLength(1)
+      expect(eventData(test.session, 'dsh-plugin/verification-finished')).toHaveLength(1)
+    },
+  )
+
+  it('folds only the last actual level invocation into the final aggregate', async () => {
+    const test = fixture({
+      config: config({ scope: 'level', verificationCommands: ['typecheck'] }),
+      verificationStatuses: ['passed', 'passed', 'passed', 'passed'],
+    })
+
+    const result = await test.runtime.run(test.request(dag([
+      { id: 'a' },
+      { id: 'b', dependsOn: ['a'] },
+      { id: 'c', dependsOn: ['b'] },
+      { id: 'd', dependsOn: ['c'] },
+    ])))
+
+    expect(result.aggregates).toHaveLength(5)
+    expect(result.finalAggregate.verification).toEqual(result.aggregates[3]?.verification)
+    expect(result.finalAggregate.verification).not.toEqual(result.aggregates[0]?.verification)
+    expect(test.verificationCalls).toHaveLength(4)
+  })
+
+  it('bounds a four-level, four-command policy to the last four evidence records in the final fold', async () => {
+    const commands = ['verify:1', 'verify:2', 'verify:3', 'verify:4']
+    const test = fixture({
+      config: config({
+        maxPluginToolActions: 32,
+        scope: 'level',
+        verificationCommands: commands,
+      }),
+    })
+
+    const result = await test.runtime.run(test.request(dag([
+      { id: 'a' },
+      { id: 'b', dependsOn: ['a'] },
+      { id: 'c', dependsOn: ['b'] },
+      { id: 'd', dependsOn: ['c'] },
+    ])))
+
+    expect(test.verificationCalls).toHaveLength(16)
+    expect(eventData(test.session, 'dsh-plugin/verification-finished')).toHaveLength(16)
+    expect(result.aggregates.filter(item => item.scope === 'level').map(item => item.verification?.length)).toEqual([4, 4, 4, 4])
+    expect(result.finalAggregate.verification).toEqual(result.aggregates[3]?.verification)
+    expect(result.finalAggregate.verification).toHaveLength(4)
+    expect(test.budgetRegistry.forRootSession(test.session.id).snapshot()).toMatchObject({ admittedPluginToolActions: 20 })
+  })
+
+  it('stops later levels when level verification admission is rejected', async () => {
+    const test = fixture({
+      config: config({
+        maxWorkers: 3,
+        maxPluginToolActions: 2,
+        scope: 'level',
+        verificationCommands: ['typecheck', 'test:profile'],
+      }),
+      verificationStatuses: ['passed'],
+    })
+
+    const result = await test.runtime.run(test.request(dag([
+      { id: 'a' },
+      { id: 'b', dependsOn: ['a'] },
+      { id: 'c', dependsOn: ['b'] },
+    ])))
+
+    expect(test.starts).toEqual(['a'])
+    expect(test.verificationCalls.map(item => item.commandName)).toEqual(['typecheck'])
+    expect(test.budgetRejections).toEqual([{ code: 'PLUGIN_TOOL_LIMIT', limit: 2, observed: 3 }])
+    expect(result.aggregates.filter(item => item.scope === 'level')).toHaveLength(1)
+    expect(result.finalAggregate.verificationOutcome).toBe('admission-rejected')
+    expect(result.finalAggregate.verification).toEqual(test.verificationCalls)
+    expect(result.finalAggregate.projectedHandoff.blockers).toContain('[verification: budget-rejected]')
+    expect(result.finalAggregate.nodeResults.filter(item => item.reason === 'level-verification-stopped')).toHaveLength(2)
+  })
+
+  it('keeps earlier level evidence after a later fanout rejection and maps the final status blocked', async () => {
+    const test = fixture({
+      config: config({ maxWorkers: 4, scope: 'level', verificationCommands: ['typecheck'] }),
+      verificationStatuses: ['passed'],
+    })
+    const controller = test.budgetRegistry.forRootSession(test.session.id)
+    expect(controller.admitFanout(2)).toEqual({ allowed: true })
+
+    const result = await test.runtime.run(test.request(dag([
+      { id: 'seed' },
+      { id: 'left', dependsOn: ['seed'] },
+      { id: 'right', dependsOn: ['seed'] },
+      { id: 'later', dependsOn: ['left'] },
+    ])))
+
+    expect(result.aggregates.filter(item => item.scope === 'level')).toHaveLength(1)
+    expect(result.finalAggregate.verification).toEqual(result.aggregates[0]?.verification)
+    expect(result.finalAggregate.verificationOutcome).toBe('passed')
+    expect(result.finalAggregate.aggregateStatus).toBe('blocked')
+    expect(test.verificationCalls).toHaveLength(1)
+  })
+
+  it('still runs DAG-scope verification after later admission rejection when an earlier accepted node exists', async () => {
+    const test = fixture({
+      config: config({ maxWorkers: 4, scope: 'dag', verificationCommands: ['typecheck'] }),
+      verificationStatuses: ['passed'],
+    })
+    const controller = test.budgetRegistry.forRootSession(test.session.id)
+    expect(controller.admitFanout(2)).toEqual({ allowed: true })
+
+    const result = await test.runtime.run(test.request(dag([
+      { id: 'seed' },
+      { id: 'left', dependsOn: ['seed'] },
+      { id: 'right', dependsOn: ['seed'] },
+      { id: 'later', dependsOn: ['left'] },
+    ])))
+
+    expect(result.aggregates).toEqual([result.finalAggregate])
+    expect(test.verificationCalls).toHaveLength(1)
+    expect(result.finalAggregate).toMatchObject({ aggregateStatus: 'blocked', verificationOutcome: 'passed' })
+  })
+
+  it('runs DAG-scope verification only after all runnable levels finish', async () => {
+    const test = fixture({
+      config: config({ scope: 'dag', verificationCommands: ['typecheck'] }),
+      verificationStatuses: ['failed'],
+    })
+
+    const result = await test.runtime.run(test.request(dag([
+      { id: 'a' },
+      { id: 'b', dependsOn: ['a'] },
+      { id: 'c', dependsOn: ['b'] },
+    ])))
+
+    expect(test.starts).toEqual(['a', 'b', 'c'])
+    expect(result.aggregates).toEqual([result.finalAggregate])
+    expect(result.finalAggregate.nodeResults.every(item => item.status === 'completed')).toBe(true)
+    expect(result.finalAggregate).toMatchObject({
+      aggregateStatus: 'verification-failed',
+      verificationOutcome: 'command-failed',
+    })
+  })
+
+  it('preserves earlier DAG verification evidence when a later command admission is rejected', async () => {
+    const test = fixture({
+      config: config({
+        maxWorkers: 1,
+        maxPluginToolActions: 2,
+        scope: 'dag',
+        verificationCommands: ['typecheck', 'test:profile'],
+      }),
+      verificationStatuses: ['passed'],
+    })
+
+    const result = await test.runtime.run(test.request(dag([{ id: 'a' }])))
+
+    expect(test.verificationCalls.map(item => item.commandName)).toEqual(['typecheck'])
+    expect(test.budgetRejections).toEqual([{ code: 'PLUGIN_TOOL_LIMIT', limit: 2, observed: 3 }])
+    expect(result.finalAggregate.verificationOutcome).toBe('admission-rejected')
+    expect(result.finalAggregate.verification).toEqual(test.verificationCalls)
+    expect(result.finalAggregate.projectedHandoff.blockers).toContain('[verification: budget-rejected]')
+    expect(result.finalAggregate.aggregateStatus).toBe('failed')
+  })
+
+  it('treats an ownership-clean completed Handoff with no changed files as accepted', async () => {
+    const test = fixture({
+      config: config({ scope: 'dag', verificationCommands: ['typecheck'] }),
+      handoff: nodeId => ({ ...completedHandoff(nodeId), changedFiles: [] }),
+    })
+
+    const result = await test.runtime.run(test.request(dag([{ id: 'a' }])))
+
+    expect(test.verificationCalls).toHaveLength(1)
+    expect(result.finalAggregate).toMatchObject({ aggregateStatus: 'completed', verificationOutcome: 'passed' })
+  })
+
+  it('skips DAG verification when no ownership-clean completed Handoff was accepted', async () => {
+    const test = fixture({
+      config: config({ scope: 'dag', verificationCommands: ['typecheck'] }),
+      handoff: nodeId => ({
+        ...completedHandoff(nodeId),
+        status: 'failed',
+        summary: `failed:${nodeId}`,
+        changedFiles: [],
+      }),
+    })
+
+    const result = await test.runtime.run(test.request(dag([{ id: 'a' }])))
+
+    expect(test.verificationCalls).toEqual([])
+    expect(result.finalAggregate).toMatchObject({ aggregateStatus: 'failed', verificationOutcome: 'not-run-no-accepted-nodes' })
+  })
+
+  it('keeps targeted_verify out of parallel worker start requests', async () => {
+    const test = fixture({
+      config: config({
+        scope: 'dag',
+        verificationCommands: ['typecheck'],
+        workerToolAllowlist: ['read_file'],
+      }),
+    })
+
+    await test.runtime.run(test.request(dag([{ id: 'a', requiredTools: ['read_file'] }])))
+
+    expect(test.startRequests[0]?.toolFilter?.allow).toEqual(['read_file'])
+    expect(test.startRequests[0]?.toolFilter?.allow).not.toContain('targeted_verify')
   })
 })

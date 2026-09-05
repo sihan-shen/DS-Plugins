@@ -14,6 +14,7 @@ import type {
   OwnershipViolationSummaryV1,
   ParallelAggregateV1,
   ParallelNodeResultV1,
+  ParallelVerificationPolicyV1,
   TaskDagV1,
   TaskNodeV1,
 } from '@ds-plugins/dsh-scheduling-contracts'
@@ -31,9 +32,15 @@ import {
   type ExecutableParallelNodeV1,
   type ParallelNodeClassificationV1,
 } from './parallel-scheduling.js'
+import {
+  foldFinalLevelVerification,
+  runParallelVerification,
+  type ParallelVerificationResultV1,
+} from './parallel-verification.js'
 import { runParallelWorker, type ParallelWorkerTerminalV1 } from './parallel-worker.js'
 import type { SchedulerResolver } from './scheduling.js'
 import type { HandoffV1, OrchestratorConfig } from './types.js'
+import type { VerificationService } from './verification.js'
 
 const ROOT_SESSION_ID_MAX_BYTES = 48
 const WORKER_REF_DIGEST_PATTERN = /^[0-9a-f]{32}$/u
@@ -81,6 +88,8 @@ export interface ParallelRuntimeOptions {
   readonly schedulerResolver: SchedulerResolver
   readonly subagents: Pick<SubagentRuntime, 'start'>
   readonly appendAggregate: typeof appendParallelFinished
+  /** Bind durable verification evidence to the parent session for one run. */
+  readonly verificationServiceFor?: (session: Session) => VerificationService
   readonly workerRefDigest?: (workerId: string) => string
 }
 
@@ -369,6 +378,19 @@ function applyAdmissionStop(
   }
 }
 
+function applyLevelVerificationStop(
+  state: DagRunStateV1,
+  remainingLevels: readonly (readonly string[])[],
+): void {
+  for (const level of remainingLevels) {
+    for (const nodeId of level) {
+      if (state.nodeResults.has(nodeId)) continue
+      const manifest = state.manifests.get(nodeId)!
+      state.nodeResults.set(nodeId, syntheticNotRun(manifest, 'level-verification-stopped'))
+    }
+  }
+}
+
 function workerRefRegistrar(
   state: DagRunStateV1,
   digestWorkerId: (workerId: string) => string,
@@ -456,6 +478,7 @@ function buildAggregate(
   state: DagRunStateV1,
   scope: 'level' | 'dag',
   nodeIds: readonly string[],
+  verification: ParallelVerificationResultV1,
   levelIndex?: number,
 ): ParallelAggregateV1 {
   const fanoutId = scope === 'level' ? `${state.dagId}:level:${levelIndex}` : `${state.dagId}:aggregate`
@@ -471,7 +494,8 @@ function buildAggregate(
       const summary = state.ownershipViolations.get(nodeId)
       return summary === undefined ? [] : [summary]
     }),
-    verificationOutcome: 'not-run-no-commands',
+    verificationOutcome: verification.outcome,
+    ...(verification.evidence.length === 0 ? {} : { verification: verification.evidence }),
   })
 }
 
@@ -489,12 +513,32 @@ function defaultWorkerRefDigest(workerId: string): string {
   return sha256Utf8(workerId).slice('sha256:'.length, 'sha256:'.length + 32)
 }
 
-/** Create the Task 11 DAG executor; integrated verification and lifecycle are added by later tasks. */
+function acceptedNodeCount(state: DagRunStateV1, nodeIds: readonly string[]): number {
+  return nodeIds.reduce((count, nodeId) => count + (state.acceptedHandoffs.has(nodeId) ? 1 : 0), 0)
+}
+
+function isActualVerificationInvocation(result: ParallelVerificationResultV1): boolean {
+  return result.outcome !== 'not-run-no-commands' && result.outcome !== 'not-run-no-accepted-nodes'
+}
+
+async function verifyAcceptedNodes(
+  policy: ParallelVerificationPolicyV1,
+  budget: BudgetController,
+  service: VerificationService | undefined,
+  signal: AbortSignal,
+  acceptedCount: number,
+): Promise<ParallelVerificationResultV1> {
+  if (policy.commands.length === 0) return { outcome: 'not-run-no-commands', evidence: [] }
+  if (service === undefined) throw new TypeError('parallel verification requires verificationServiceFor')
+  return runParallelVerification({ policy, controller: budget, service, signal }, acceptedCount)
+}
+
+/** Create the bounded DAG executor with integrated verification; lifecycle is added by Task 13. */
 export function createParallelExecutionRuntime(options: ParallelRuntimeOptions): ParallelExecutionService {
   const parallel = options.config.parallel
   if (parallel === undefined) throw new TypeError('parallel execution requires config.parallel')
-  if (parallel.verification.commands.length !== 0) {
-    throw new TypeError('parallel verification commands require the Task 12 verification runtime')
+  if (parallel.verification.commands.length !== 0 && options.verificationServiceFor === undefined) {
+    throw new TypeError('parallel verification commands require verificationServiceFor')
   }
   const digestWorkerId = options.workerRefDigest ?? defaultWorkerRefDigest
 
@@ -518,6 +562,10 @@ export function createParallelExecutionRuntime(options: ParallelRuntimeOptions):
       const state = createRunState(dagId, request.dag, manifest)
       const budget = options.budgetRegistry.forRootSession(rootId)
       const registerWorkerId = workerRefRegistrar(state, digestWorkerId)
+      const verificationService = parallel.verification.commands.length === 0
+        ? undefined
+        : options.verificationServiceFor!(request.parent.session)
+      const verificationInvocations: ParallelVerificationResultV1[] = []
 
       for (const [levelIndex, level] of validation.levels.entries()) {
         const readyNodeIds = applyDependencyReadiness(state, level)
@@ -541,11 +589,37 @@ export function createParallelExecutionRuntime(options: ParallelRuntimeOptions):
         )
 
         if (parallel.verification.scope === 'level') {
-          appendAggregate(options, state, request.parent.session, buildAggregate(state, 'level', level, levelIndex))
+          const verification = await verifyAcceptedNodes(
+            parallel.verification,
+            budget,
+            verificationService,
+            request.signal,
+            acceptedNodeCount(state, level),
+          )
+          if (isActualVerificationInvocation(verification)) verificationInvocations.push(verification)
+          appendAggregate(
+            options,
+            state,
+            request.parent.session,
+            buildAggregate(state, 'level', level, verification, levelIndex),
+          )
+          if (verification.outcome === 'command-failed' || verification.outcome === 'admission-rejected') {
+            applyLevelVerificationStop(state, validation.levels.slice(levelIndex + 1))
+            break
+          }
         }
       }
 
-      const finalAggregate = buildAggregate(state, 'dag', state.nodeOrder)
+      const finalVerification = parallel.verification.scope === 'level'
+        ? foldFinalLevelVerification(parallel.verification, verificationInvocations)
+        : await verifyAcceptedNodes(
+          parallel.verification,
+          budget,
+          verificationService,
+          request.signal,
+          acceptedNodeCount(state, state.nodeOrder),
+        )
+      const finalAggregate = buildAggregate(state, 'dag', state.nodeOrder, finalVerification)
       appendAggregate(options, state, request.parent.session, finalAggregate)
       return Object.freeze({
         dagId,

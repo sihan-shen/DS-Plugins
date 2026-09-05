@@ -157,6 +157,14 @@ export type {
   ParallelRunResultV1,
   ParallelRuntimeOptions,
 } from './parallel.js'
+export {
+  foldFinalLevelVerification,
+  runParallelVerification,
+} from './parallel-verification.js'
+export type {
+  ParallelVerificationResultV1,
+  ParallelVerificationRunnerOptions,
+} from './parallel-verification.js'
 export type {
   ResolveScheduleInput,
   ResolvedScheduleV1,
