@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/dsh-scheduling-contracts" },
     { "path": "./packages/dsh-context" },
+    { "path": "./packages/dsh-telemetry" },
     { "path": "./packages/dsh-context-cache" },
     { "path": "./packages/dsh-eval" },
     { "path": "./packages/dsh-code-intelligence" },

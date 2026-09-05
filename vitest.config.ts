@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 export default defineConfig({
   resolve: {
     alias: {
+      '@ds-plugins/dsh-telemetry/contracts': fileURLToPath(new URL('./packages/dsh-telemetry/src/contracts.ts', import.meta.url)),
       '@ds-plugins/dsh-context': fileURLToPath(new URL('./packages/dsh-context/src/index.ts', import.meta.url)),
       '@ds-plugins/dsh-scheduling-contracts': fileURLToPath(new URL('./packages/dsh-scheduling-contracts/src/index.ts', import.meta.url)),
       '@ds-plugins/dsh-code-intelligence': fileURLToPath(new URL('./packages/dsh-code-intelligence/src/index.ts', import.meta.url)),
@@ -13,6 +14,7 @@ export default defineConfig({
   },
   test: {
     include: [
+      'packages/dsh-telemetry/tests/**/*.spec.ts',
       'packages/dsh-scheduling-contracts/tests/**/*.spec.ts',
       'packages/dsh-adaptive-scheduler/tests/**/*.spec.ts',
       'packages/dsh-context/tests/**/*.spec.ts',

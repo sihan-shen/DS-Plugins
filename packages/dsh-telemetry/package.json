@@ -1,0 +1,18 @@
+{
+  "name": "@ds-plugins/dsh-telemetry",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "main": "./lib/src/contracts.js",
+  "types": "./lib/src/contracts.d.ts",
+  "exports": {
+    "./contracts": {
+      "types": "./lib/src/contracts.d.ts",
+      "default": "./lib/src/contracts.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run"
+  }
+}

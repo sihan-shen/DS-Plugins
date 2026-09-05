@@ -150,6 +150,8 @@ importers:
 
   packages/dsh-scheduling-contracts: {}
 
+  packages/dsh-telemetry: {}
+
   profiles/v0.1:
     dependencies:
       '@deepseek-ai/dsh-base':

@@ -50,3 +50,20 @@ The final v0.4 gate passes:
 ## Validation caveat
 
 The reported checks were run with the repository’s available Node/pnpm setup. If the environment changes, rerun the gate before release decisions.
+
+## v0.5 planning continuation (2026-09-05)
+
+- Plan: `docs/superpowers/plans/2026-09-05-dsh-v0.5-telemetry-and-learning.md`.
+- Planning branch: `codex/v0.5-telemetry-plan`, based on `af9256d`, in `/home/sihan/.codex/worktrees/54dc/DS-Plugins`.
+- Scope: opt-in bounded telemetry plugin; offline metrics, failure mining, immutable lessons, model calibration, and versioned candidate hypotheses in `dsh-eval`. No product implementation performed.
+- Assumptions: unavailable metrics remain explicit; candidates are inert typed hypotheses; repeated support defaults to three distinct runs and two task instances. No dedicated v0.5 spec exists; the plan distinguishes README requirements from proposed defaults.
+- Validation: local source/interface inspection, roadmap coverage review, placeholder scan and documentation whitespace check. Product tests were not run for this planning-only change.
+- Next action: review these scope assumptions, then execute the plan task-by-task in an implementation worktree. v0.4 remains complete; promotion/rollback and physical isolation remain outside this plan.
+
+## v0.5 implementation continuation (2026-09-05)
+
+- Worktree: `/home/sihan/.codex/worktrees/1d5b/DS-Plugins`; branch `codex/v0.5-telemetry-implementation`, baseline `af9256d`. The planning worktree's uncommitted plan and HANDOFF additions were copied here unchanged.
+- Task 1 code is implemented and under review: pure telemetry contracts, strict parsers, canonical JSON, package/build/test discovery. Tasks 2–10 remain.
+- Actual validation: `pnpm install --frozen-lockfile` passed (approved environment access); `pnpm install --lockfile-only` passed; `pnpm exec vitest run packages/dsh-telemetry/tests/contracts.spec.ts --config vitest.config.ts` passed 56 tests; `pnpm --filter @ds-plugins/dsh-telemetry build` passed; `git diff --check` passed.
+- No provider calls or v0.5 Loader acceptance performed yet.
+- Next: complete Task 1 review, then projection/privacy Task 2 and bounded storage Task 3 before enabling the collector.
