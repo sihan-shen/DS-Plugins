@@ -150,7 +150,11 @@ importers:
 
   packages/dsh-scheduling-contracts: {}
 
-  packages/dsh-telemetry: {}
+  packages/dsh-telemetry:
+    devDependencies:
+      '@types/node':
+        specifier: 26.3.0
+        version: 26.3.0
 
   profiles/v0.1:
     dependencies:

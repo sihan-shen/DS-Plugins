@@ -63,7 +63,8 @@ The reported checks were run with the repository’s available Node/pnpm setup. 
 ## v0.5 implementation continuation (2026-09-05)
 
 - Worktree: `/home/sihan/.codex/worktrees/1d5b/DS-Plugins`; branch `codex/v0.5-telemetry-implementation`, baseline `af9256d`. The planning worktree's uncommitted plan and HANDOFF additions were copied here unchanged.
-- Task 1 code is implemented and under review: pure telemetry contracts, strict parsers, canonical JSON, package/build/test discovery. Tasks 2–10 remain.
+- Task 1 is reviewed and committed as `7d492cf`: pure telemetry contracts, strict parsers, canonical JSON, package/build/test discovery. Task 2 privacy projection is implemented and reviewed; Tasks 3–10 remain.
 - Actual validation: `pnpm install --frozen-lockfile` passed (approved environment access); `pnpm install --lockfile-only` passed; `pnpm exec vitest run packages/dsh-telemetry/tests/contracts.spec.ts --config vitest.config.ts` passed 56 tests; `pnpm --filter @ds-plugins/dsh-telemetry build` passed; `git diff --check` passed.
 - No provider calls or v0.5 Loader acceptance performed yet.
-- Next: complete Task 1 review, then projection/privacy Task 2 and bounded storage Task 3 before enabling the collector.
+- Task 2 actual validation: `pnpm exec vitest run packages/dsh-telemetry/tests` passed 101 tests across 3 files; telemetry build and `git diff --check` passed.
+- Next: implement bounded storage Task 3 before enabling the collector.
