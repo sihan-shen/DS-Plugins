@@ -152,6 +152,9 @@ importers:
 
   packages/dsh-telemetry:
     devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.1
+        version: 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
       '@types/node':
         specifier: 26.3.0
         version: 26.3.0
