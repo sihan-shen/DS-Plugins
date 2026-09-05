@@ -63,8 +63,9 @@ The reported checks were run with the repository’s available Node/pnpm setup. 
 ## v0.5 implementation continuation (2026-09-05)
 
 - Worktree: `/home/sihan/.codex/worktrees/1d5b/DS-Plugins`; branch `codex/v0.5-telemetry-implementation`, baseline `af9256d`. The planning worktree's uncommitted plan and HANDOFF additions were copied here unchanged.
-- Task 1 is reviewed and committed as `7d492cf`: pure telemetry contracts, strict parsers, canonical JSON, package/build/test discovery. Task 2 privacy projection is implemented and reviewed; Tasks 3–10 remain.
+- Task 1 is reviewed and committed as `7d492cf`: pure telemetry contracts, strict parsers, canonical JSON, package/build/test discovery. Task 2 privacy projection is reviewed and committed as `c17a15b`; Task 3 bounded storage is implemented and reviewed. Tasks 4–10 remain.
 - Actual validation: `pnpm install --frozen-lockfile` passed (approved environment access); `pnpm install --lockfile-only` passed; `pnpm exec vitest run packages/dsh-telemetry/tests/contracts.spec.ts --config vitest.config.ts` passed 56 tests; `pnpm --filter @ds-plugins/dsh-telemetry build` passed; `git diff --check` passed.
 - No provider calls or v0.5 Loader acceptance performed yet.
 - Task 2 actual validation: `pnpm exec vitest run packages/dsh-telemetry/tests` passed 101 tests across 3 files; telemetry build and `git diff --check` passed.
-- Next: implement bounded storage Task 3 before enabling the collector.
+- Task 3 actual validation: all telemetry suites passed 121 tests across 4 files; telemetry build and whitespace checks passed. Storage queues drain explicitly on flush/dispose; collector must schedule flush.
+- Next: commit Task 3 and implement opt-in passive collector Task 4.

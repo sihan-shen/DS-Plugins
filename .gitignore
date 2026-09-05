@@ -20,3 +20,6 @@
 /profiles/*/node_modules/
 /packages/*/lib/
 *.tsbuildinfo
+
+# Private bounded telemetry records and per-store salt
+**/.dsh-telemetry/
