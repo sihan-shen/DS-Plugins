@@ -4,55 +4,39 @@
 
 > 当前状态：DSH v0.1 已实现 Direct / Single Worker、Handoff、预算与 targeted verification，并通过 keyless Loader/replay 验收。本仓库不执行本地源码或付费 provider smoke；`pnpm test:provider` 始终安全禁用。使用和限制见 [`packages/dsh-orchestrator/README.md`](packages/dsh-orchestrator/README.md)。
 
-## DeepSeek Harness 开发环境
+## Fedora development environment
 
-本仓库采用两层环境：Home Manager 只启用 `direnv + nix-direnv`，项目 Flake 固定 Node.js 24、Corepack、项目专属 pnpm wrapper 和编译工具。Harness 本身从源码运行，不作为全局 npm 或 Nix package 安装。
+本仓库直接使用 Fedora 系统工具链，不再依赖 Nix、Home Manager 或 direnv。需要 Node.js 24（也支持 Node.js 22.19+）、pnpm 11.7.0，以及 TypeScript 和原生扩展使用的编译工具。
 
-### 1. 启用 Home Manager module
-
-在现有 Home Manager flake 中加入本仓库输入：
-
-```nix
-inputs.ds-plugins.url = "git+file:///你的/DS-Plugins/绝对路径";
-```
-
-把输入传入 Home Manager 配置后导入 module：
-
-```nix
-imports = [
-  inputs.ds-plugins.homeManagerModules.deepseek-harness-dev
-];
-```
-
-应用现有 Home Manager 配置：
+### 1. 安装系统依赖
 
 ```bash
-home-manager switch --flake /你的/home-manager/flake路径#你的配置名
+sudo dnf install nodejs npm git gcc gcc-c++ clang make cmake pkgconf-pkg-config \
+  python3 uv rust cargo ripgrep fd-find jq tree-sitter-cli gdb strace gh
+sudo npm install --global pnpm@11.7.0 typescript@5.9.3 typescript-language-server
 ```
 
-本 module 不设置用户名、Home 目录或 `home.stateVersion`。
-
-### 2. 允许项目环境
+安装后运行仓库检查器：
 
 ```bash
-cd /你的/DS-Plugins/绝对路径
-direnv allow
+bash scripts/check-fedora-dev-env.sh
 ```
 
-`.envrc` 只有 `use flake`。授权后，每次进入仓库都会自动加载项目工具链，并将 `DSH_HOME` 设置为仓库内的 `.dsh`。
+检查器要求 `package.json` 支持的 Node.js 版本、固定的 pnpm 11.7.0，以及项目开发和诊断所需命令。若 Fedora 的 `nodejs` 包提供了不兼容版本，请先停止，不要强行绕过版本检查。
 
-检查环境：
+### 2. 安装项目依赖
 
 ```bash
-node --version
-corepack --version
-command -v pnpm
-pnpm --version
-git --version
-printf '%s\n' "$DSH_HOME"
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
 ```
 
-Node 应为 24.x，`pnpm` 应解析到 Nix dev shell 的 `dsh-pnpm-wrapper`，`DSH_HOME` 应指向本仓库的 `.dsh`。该 wrapper 直接执行 Node.js 24 自带的 `corepack pnpm`，无需也不应启用 Corepack shim；shim 启用会尝试写入不可变的 Nix store。
+项目运行状态保存在仓库内的 `.dsh`。需要时在当前 shell 中设置：
+
+```bash
+export DSH_HOME="$PWD/.dsh"
+```
 
 ### 3. 安装并运行 Harness 源码
 
@@ -64,12 +48,13 @@ pnpm --version
 pnpm install
 pnpm run typecheck
 pnpm run build
-dsh-web
+DSH_HOME="$(cd ../.. && pwd -P)/.dsh" \
+  node --expose-internals --import tsx/esm apps/cli/src/bin.ts web --no-open
 ```
 
-浏览器访问 `http://127.0.0.1:3080`。dev shell 的 pnpm wrapper 会让 Corepack 依据 Harness 的 `package.json#packageManager` 选择 pnpm；不要另行全局安装 pnpm。
+浏览器访问 `http://127.0.0.1:3080`。Harness 会依据自己的 `package.json#packageManager` 使用对应的 pnpm 版本。
 
-`dsh-web` 会自动进入本仓库的 Harness 源码目录，并使用适配当前 Nix Node.js 24 的直接 Node 启动方式运行 Web UI。它可以从 DS-Plugins 根目录或任意子目录执行；额外参数会原样传给 `dsh web`。
+上面的命令使用 Harness 的源码入口运行 Web UI，并让它读取本仓库的 `.dsh` 状态目录。
 
 如果 GitHub 来源的 TypeScript 插件依赖 `prepare` 构建，而 pnpm 10+ 报告脚本被忽略，请只在对应 profile 的 `pnpm-workspace.yaml` 中允许该包：
 
@@ -82,7 +67,7 @@ allowBuilds:
 
 ## 目录
 
-- [DeepSeek Harness 开发环境](#deepseek-harness-开发环境)
+- [Fedora development environment](#fedora-development-environment)
 - [目标](#目标)
 - [非目标](#非目标)
 - [架构](#架构)

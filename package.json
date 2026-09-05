@@ -7,6 +7,7 @@
     "node": "^22.19.0 || >=24"
   },
   "scripts": {
+    "env:check": "bash scripts/check-fedora-dev-env.sh",
     "build": "pnpm --filter @ds-plugins/dsh-scheduling-contracts build && pnpm --filter @ds-plugins/dsh-adaptive-scheduler build && pnpm --filter @ds-plugins/dsh-orchestrator build",
     "typecheck": "tsc -b",
     "test": "pnpm build && node --expose-internals ./node_modules/vitest/vitest.mjs run --config vitest.config.ts",
