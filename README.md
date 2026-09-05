@@ -1010,6 +1010,8 @@ v0.2c 已合入 `main`：`@ds-plugins/dsh-context` 作为不可变 ContextBlockV
 
 ### v0.4：Economical Multi-Agent
 
+Task 14 real-Loader acceptance and the economical full gate are verified (2026-09-05, cached Node v22.23.1): the real `profiles/v0.3-adaptive` Loader overlay creates an actual Session and internal `parallelExecution` service; the acceptance fixture starts two independent children concurrently, asserts non-empty `maxDepth: 1` and child tool filters, confirms passed integrated verification with `test:profile` command evidence in the actual Session replay, and replays those events through `validateParallelEventReplay`. The full `pnpm test:v0.4` gate passes 38 files / 607 tests; `tsc -b` and `git diff --check` exit 0.
+
 插件归属：继续扩展 Orchestrator，不另建 DAG 或 Worker 插件；Scheduler 负责资源选择和 affinity，Orchestrator 负责依赖、所有权和生命周期。
 
 交付：

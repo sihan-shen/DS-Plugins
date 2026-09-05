@@ -112,18 +112,32 @@ function singleWorkerOverlay(entries: readonly ProfileEntry[]): Record<string, u
 function parallelOverlay(entries: readonly ProfileEntry[]): Record<string, unknown> {
   const overlay = singleWorkerOverlay(entries)
   const config = overlay.config as Record<string, unknown>
+  const routes = (config.scheduling as { allowedRoutes?: readonly Record<string, unknown>[] } | undefined)?.allowedRoutes ?? []
+  const routeToolFilters = Object.fromEntries(routes.flatMap(route => {
+    if (route === undefined) return []
+    return [[JSON.stringify([route.provider, route.model, route.reasoningEffort ?? null, route.promptProfile ?? null, route.modelFamily ?? null]), ['read_file', 'write_file']]]
+  }))
   return {
     ...overlay,
     config: {
       ...config,
+      budgets: { ...((config.budgets ?? {}) as Record<string, unknown>), maxWorkers: 4 },
       parallel: {
-        maxParallelWorkers: 1,
-        verification: { schemaVersion: 1, scope: 'dag', commands: [] },
-        workerToolAllowlist: [],
-        routeToolFilters: {},
+        maxParallelWorkers: 4,
+        verification: { schemaVersion: 1, scope: 'dag', commands: [{ name: 'test:profile', args: [] }] },
+        workerToolAllowlist: ['read_file', 'write_file'],
+        routeToolFilters,
       },
     },
   }
+}
+
+function adaptiveCatalogOverlay(entries: readonly ProfileEntry[]): Record<string, unknown> {
+  const scheduler = entries.find(entry => entry.id === 'dsh-adaptive-scheduler')
+  if (scheduler?.config === undefined || typeof scheduler.config !== 'object' || Array.isArray(scheduler.config)) throw new Error('missing adaptive scheduler config')
+  const config = structuredClone(scheduler.config) as Record<string, unknown>
+  config.catalog = (config.catalog as Record<string, unknown>[]).map(entry => ({ ...entry, toolFilter: ['read_file', 'write_file'] }))
+  return { id: 'dsh-adaptive-scheduler', config }
 }
 
 async function copyActualProfile(root: string, profileName: 'v0.1' | 'v0.3-adaptive'): Promise<string> {
@@ -178,7 +192,7 @@ async function copyActualProfile(root: string, profileName: 'v0.1' | 'v0.3-adapt
   return profileDir
 }
 
-async function loadActualProfile(options: ProfileLoadOptions): Promise<LoadedProfileRuntime> {
+export async function loadActualProfile(options: ProfileLoadOptions): Promise<LoadedProfileRuntime> {
   const root = await mkdtemp(join(tmpdir(), 'dsh-orchestrator-profile-'))
   let rootAdaptiveLink: string | undefined
   try {
@@ -201,7 +215,7 @@ async function loadActualProfile(options: ProfileLoadOptions): Promise<LoadedPro
         ...(profileName === 'v0.3-adaptive' ? ['dsh-adaptive-scheduler'] : []),
       ]),
       ...(options.parallelOverlay
-        ? [parallelOverlay(entries)]
+      ? [parallelOverlay(entries), adaptiveCatalogOverlay(entries)]
         : options.mode === 'single-worker'
           ? [singleWorkerOverlay(entries)]
           : []),
@@ -241,7 +255,7 @@ async function loadActualProfile(options: ProfileLoadOptions): Promise<LoadedPro
   }
 }
 
-async function injectedServices(context: BootedContext, requireSubagents = false): Promise<{
+export async function injectedServices(context: BootedContext, requireSubagents = false): Promise<{
   readonly tools: { get(name: string): unknown }
   readonly sessions: { create(id: ReturnType<typeof SessionId>, options: unknown): unknown }
   readonly subagents?: SubagentRuntime
@@ -258,7 +272,7 @@ async function injectedServices(context: BootedContext, requireSubagents = false
   return services
 }
 
-function fakeSpawnProvider(): SubagentProvider {
+export function fakeSpawnProvider(): SubagentProvider {
   return {
     name: 'spawn',
     inheritsParentContext: false,
@@ -384,6 +398,17 @@ describe('built DSH v0.1 profile Loader composition', () => {
       })
       expect(services.tools.get('delegate_worker')).toBeDefined()
       expect(services.tools.get('parallel_worker')).toBeUndefined()
+    })
+  })
+
+  it('keeps the existing worker constraints while exposing parallelExecution only through the overlay', async () => {
+    await withActualProfile({ profile: 'v0.3-adaptive', mode: 'single-worker', enableSubagents: true }, async (runtime) => {
+      expect((runtime.context as unknown as { get(name: string): unknown }).get('parallelExecution')).toBeUndefined()
+    })
+    await withActualProfile({ profile: 'v0.3-adaptive', mode: 'single-worker', enableSubagents: true, parallelOverlay: true }, async (runtime) => {
+      const service = (runtime.context as unknown as { get(name: string): unknown }).get('parallelExecution')
+      expect(service).toMatchObject({ run: expect.any(Function) })
+      expect((await injectedServices(runtime.context, true)).tools.get('delegate_worker')).toBeDefined()
     })
   })
 })
