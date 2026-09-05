@@ -8,4 +8,7 @@ export { getValidatedCompleteRunsV1, parseDatasetV1 } from './telemetry/dataset.
 export type { ValidatedCompleteRunV1 } from './telemetry/dataset.js'
 export { computeTelemetryMetrics } from './telemetry/metrics.js'
 export { mineFailures } from './telemetry/miner.js'
+export { buildLessons, writeLesson } from './telemetry/lessons.js'
+export { calibrateModels } from './telemetry/calibration.js'
+export type { CalibrationV1 } from './telemetry/calibration.js'
 export type { BaselineFileV1, BaselineRunOptionsV1, BaselineRunV1, RetrievalRunV1 } from './types.js'
