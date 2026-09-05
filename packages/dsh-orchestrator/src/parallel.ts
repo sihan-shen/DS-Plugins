@@ -1,4 +1,5 @@
 import type { Agent } from '@deepseek-ai/dsh-agent'
+import type { Context } from '@deepseek-ai/cordis'
 import type { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { SubagentRuntime } from '@deepseek-ai/dsh-subagent'
 import { sha256Utf8 } from '@ds-plugins/dsh-context'
@@ -45,6 +46,7 @@ import type { VerificationService } from './verification.js'
 const ROOT_SESSION_ID_MAX_BYTES = 48
 const WORKER_REF_DIGEST_PATTERN = /^[0-9a-f]{32}$/u
 const RUN_REQUEST_KEYS = ['dag', 'parent', 'signal'] as const
+const GENERATION_DISPOSED_REASON = 'generation-disposed'
 
 type ParallelRunValidationCode =
   | 'INVALID_ROOT_SESSION_ID'
@@ -60,6 +62,12 @@ export interface ParallelRunRequestV1 {
 
 export interface ParallelExecutionService {
   run(request: ParallelRunRequestV1): Promise<ParallelRunResultV1>
+}
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    parallelExecution: ParallelExecutionService
+  }
 }
 
 export interface ParallelRunResultV1 {
@@ -82,6 +90,16 @@ export class ParallelRunValidationError extends Error {
   }
 }
 
+/** Stable caller-visible error raised when the owning service generation is disposed. */
+export class ParallelGenerationDisposedError extends Error {
+  readonly code = 'GENERATION_DISPOSED' as const
+
+  constructor() {
+    super('parallel execution generation disposed')
+    this.name = 'ParallelGenerationDisposedError'
+  }
+}
+
 export interface ParallelRuntimeOptions {
   readonly config: OrchestratorConfig
   readonly budgetRegistry: Pick<BudgetControllerRegistry, 'forRootSession'>
@@ -91,6 +109,13 @@ export interface ParallelRuntimeOptions {
   /** Bind durable verification evidence to the parent session for one run. */
   readonly verificationServiceFor?: (session: Session) => VerificationService
   readonly workerRefDigest?: (workerId: string) => string
+  /** Internal service-generation cancellation source installed by the lifecycle mount. */
+  readonly generationSignal?: AbortSignal
+}
+
+export interface MountedParallelExecutionService {
+  readonly service: ParallelExecutionService
+  readonly dispose: () => Promise<void>
 }
 
 interface ManifestEntryV1 extends PlannedParallelRequestV1 {
@@ -126,6 +151,11 @@ type ClassificationOutcomeV1 =
 type WorkerOutcomeV1 =
   | { readonly terminal: ParallelWorkerTerminalV1 }
   | { readonly error: unknown }
+
+interface RunAbortScope {
+  readonly signal: AbortSignal
+  dispose(): void
+}
 
 function isRecord(value: unknown): value is Record<PropertyKey, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -172,6 +202,45 @@ function parseParallelRunEnvelope(value: unknown): ParallelRunRequestV1 {
   if (!isAbortSignal(signal)) throw new TypeError('parallel run request.signal must be an AbortSignal')
 
   return { dag: dag as unknown as TaskDagV1, parent: parent as unknown as Agent, signal }
+}
+
+function runAbortScope(caller: AbortSignal, generation: AbortSignal | undefined): RunAbortScope {
+  const controller = new AbortController()
+  const sources = generation === undefined ? [caller] : [caller, generation]
+  const listeners: Array<readonly [AbortSignal, () => void]> = []
+  for (const source of sources) {
+    const forward = () => {
+      if (!controller.signal.aborted) controller.abort(source.reason)
+    }
+    if (source.aborted) {
+      forward()
+      break
+    }
+    source.addEventListener('abort', forward, { once: true })
+    listeners.push([source, forward])
+  }
+  return {
+    signal: controller.signal,
+    dispose() {
+      for (const [source, listener] of listeners) source.removeEventListener('abort', listener)
+    },
+  }
+}
+
+function throwIfGenerationDisposed(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new ParallelGenerationDisposedError()
+}
+
+function guardedSubagents(
+  subagents: Pick<SubagentRuntime, 'start'>,
+  signal: AbortSignal,
+): Pick<SubagentRuntime, 'start'> {
+  return {
+    start(provider, request) {
+      if (signal.aborted) return Promise.reject(signal.reason)
+      return subagents.start(provider, request)
+    },
+  }
 }
 
 function rootSessionId(session: Session): SessionId {
@@ -416,6 +485,7 @@ async function runExecutableLevel(
   executable: readonly ExecutableEntryV1[],
   parent: Agent,
   signal: AbortSignal,
+  subagents: Pick<SubagentRuntime, 'start'>,
   registerWorkerId: (workerId: SessionId) => string,
 ): Promise<void> {
   const outcomes = await Promise.all(executable.map(async (item): Promise<WorkerOutcomeV1> => {
@@ -431,7 +501,7 @@ async function runExecutableLevel(
         resolvedSchedule: item.classification.resolvedSchedule,
         parent,
         signal,
-        subagents: options.subagents,
+        subagents,
         registerWorkerId,
       })
     } catch (error) {
@@ -533,7 +603,7 @@ async function verifyAcceptedNodes(
   return runParallelVerification({ policy, controller: budget, service, signal }, acceptedCount)
 }
 
-/** Create the bounded DAG executor with integrated verification; lifecycle is added by Task 13. */
+/** Create the bounded DAG executor with integrated verification. */
 export function createParallelExecutionRuntime(options: ParallelRuntimeOptions): ParallelExecutionService {
   const parallel = options.config.parallel
   if (parallel === undefined) throw new TypeError('parallel execution requires config.parallel')
@@ -545,87 +615,150 @@ export function createParallelExecutionRuntime(options: ParallelRuntimeOptions):
   return Object.freeze({
     async run(requestValue: ParallelRunRequestV1): Promise<ParallelRunResultV1> {
       const request = parseParallelRunEnvelope(requestValue)
-      const rootId = assertRootSessionId(request.parent.session)
-      const validation = validateTaskDagV1(request.dag, dagValidationLimits(options.config))
-      if (!validation.valid) {
-        throw new ParallelRunValidationError('INVALID_DAG', validation.issues)
-      }
-
-      const { dagId } = allocateDagId(request.parent.session)
-      const manifest = plannedManifest(dagId, validation.levels, parallel.verification.scope)
-      appendParallelStarted(request.parent.session, {
-        schemaVersion: 1,
-        dagId,
-        requests: manifest.map(({ fanoutId, nodeId, requestId }) => ({ fanoutId, nodeId, requestId })),
-      })
-
-      const state = createRunState(dagId, request.dag, manifest)
-      const budget = options.budgetRegistry.forRootSession(rootId)
-      const registerWorkerId = workerRefRegistrar(state, digestWorkerId)
-      const verificationService = parallel.verification.commands.length === 0
-        ? undefined
-        : options.verificationServiceFor!(request.parent.session)
-      const verificationInvocations: ParallelVerificationResultV1[] = []
-
-      for (const [levelIndex, level] of validation.levels.entries()) {
-        const readyNodeIds = applyDependencyReadiness(state, level)
-        const executable = await classifyReadyNodes(options, state, readyNodeIds, budget, request.signal)
-        if (executable.length === 0) continue
-
-        const admission = budget.admitFanout(executable.length)
-        if (!admission.allowed) {
-          applyAdmissionStop(state, executable, validation.levels.slice(levelIndex + 1))
-          completeSchedules(executable)
-          break
+      const abortScope = runAbortScope(request.signal, options.generationSignal)
+      let committed = false
+      try {
+        throwIfGenerationDisposed(options.generationSignal)
+        const rootId = assertRootSessionId(request.parent.session)
+        const validation = validateTaskDagV1(request.dag, dagValidationLimits(options.config))
+        if (!validation.valid) {
+          throw new ParallelRunValidationError('INVALID_DAG', validation.issues)
         }
 
-        await runExecutableLevel(
-          options,
-          state,
-          executable,
-          request.parent,
-          request.signal,
-          registerWorkerId,
-        )
+        throwIfGenerationDisposed(options.generationSignal)
+        const { dagId } = allocateDagId(request.parent.session)
+        const manifest = plannedManifest(dagId, validation.levels, parallel.verification.scope)
+        appendParallelStarted(request.parent.session, {
+          schemaVersion: 1,
+          dagId,
+          requests: manifest.map(({ fanoutId, nodeId, requestId }) => ({ fanoutId, nodeId, requestId })),
+        })
 
-        if (parallel.verification.scope === 'level') {
-          const verification = await verifyAcceptedNodes(
+        const state = createRunState(dagId, request.dag, manifest)
+        const budget = options.budgetRegistry.forRootSession(rootId)
+        const registerWorkerId = workerRefRegistrar(state, digestWorkerId)
+        const verificationService = parallel.verification.commands.length === 0
+          ? undefined
+          : options.verificationServiceFor!(request.parent.session)
+        const verificationInvocations: ParallelVerificationResultV1[] = []
+        const runSubagents = guardedSubagents(options.subagents, abortScope.signal)
+
+        for (const [levelIndex, level] of validation.levels.entries()) {
+          throwIfGenerationDisposed(options.generationSignal)
+          const readyNodeIds = applyDependencyReadiness(state, level)
+          const executable = await classifyReadyNodes(options, state, readyNodeIds, budget, abortScope.signal)
+          throwIfGenerationDisposed(options.generationSignal)
+          if (executable.length === 0) continue
+
+          const admission = budget.admitFanout(executable.length)
+          if (!admission.allowed) {
+            applyAdmissionStop(state, executable, validation.levels.slice(levelIndex + 1))
+            completeSchedules(executable)
+            break
+          }
+
+          throwIfGenerationDisposed(options.generationSignal)
+          await runExecutableLevel(
+            options,
+            state,
+            executable,
+            request.parent,
+            abortScope.signal,
+            runSubagents,
+            registerWorkerId,
+          )
+          throwIfGenerationDisposed(options.generationSignal)
+
+          if (parallel.verification.scope === 'level') {
+            const verification = await verifyAcceptedNodes(
+              parallel.verification,
+              budget,
+              verificationService,
+              abortScope.signal,
+              acceptedNodeCount(state, level),
+            )
+            throwIfGenerationDisposed(options.generationSignal)
+            if (isActualVerificationInvocation(verification)) verificationInvocations.push(verification)
+            appendAggregate(
+              options,
+              state,
+              request.parent.session,
+              buildAggregate(state, 'level', level, verification, levelIndex),
+            )
+            if (verification.outcome === 'command-failed' || verification.outcome === 'admission-rejected') {
+              applyLevelVerificationStop(state, validation.levels.slice(levelIndex + 1))
+              break
+            }
+          }
+        }
+
+        const finalVerification = parallel.verification.scope === 'level'
+          ? foldFinalLevelVerification(parallel.verification, verificationInvocations)
+          : await verifyAcceptedNodes(
             parallel.verification,
             budget,
             verificationService,
-            request.signal,
-            acceptedNodeCount(state, level),
+            abortScope.signal,
+            acceptedNodeCount(state, state.nodeOrder),
           )
-          if (isActualVerificationInvocation(verification)) verificationInvocations.push(verification)
-          appendAggregate(
-            options,
-            state,
-            request.parent.session,
-            buildAggregate(state, 'level', level, verification, levelIndex),
-          )
-          if (verification.outcome === 'command-failed' || verification.outcome === 'admission-rejected') {
-            applyLevelVerificationStop(state, validation.levels.slice(levelIndex + 1))
-            break
-          }
+        throwIfGenerationDisposed(options.generationSignal)
+        const finalAggregate = buildAggregate(state, 'dag', state.nodeOrder, finalVerification)
+        const result = Object.freeze({
+          dagId,
+          aggregates: Object.freeze([...state.aggregates, finalAggregate]),
+          finalAggregate,
+        })
+        throwIfGenerationDisposed(options.generationSignal)
+        appendAggregate(options, state, request.parent.session, finalAggregate)
+        committed = true
+        return result
+      } catch (error) {
+        if (!committed && options.generationSignal?.aborted) {
+          throw new ParallelGenerationDisposedError()
         }
+        throw error
+      } finally {
+        abortScope.dispose()
       }
+    },
+  })
+}
 
-      const finalVerification = parallel.verification.scope === 'level'
-        ? foldFinalLevelVerification(parallel.verification, verificationInvocations)
-        : await verifyAcceptedNodes(
-          parallel.verification,
-          budget,
-          verificationService,
-          request.signal,
-          acceptedNodeCount(state, state.nodeOrder),
-        )
-      const finalAggregate = buildAggregate(state, 'dag', state.nodeOrder, finalVerification)
-      appendAggregate(options, state, request.parent.session, finalAggregate)
-      return Object.freeze({
-        dagId,
-        aggregates: Object.freeze([...state.aggregates]),
-        finalAggregate,
-      })
+/** Register one generation-scoped internal parallel service and drain it before unregistering. */
+export function mountParallelExecutionService(
+  ctx: Context,
+  options: ParallelRuntimeOptions,
+): MountedParallelExecutionService {
+  const generation = new AbortController()
+  const active = new Set<Promise<unknown>>()
+  let disposing = false
+  const runtime = createParallelExecutionRuntime({ ...options, generationSignal: generation.signal })
+  const service: ParallelExecutionService = Object.freeze({
+    run(request: ParallelRunRequestV1) {
+      if (disposing) return Promise.reject(new ParallelGenerationDisposedError())
+      const promise = Promise.resolve().then(() => runtime.run(request))
+      active.add(promise)
+      void promise.then(
+        () => { active.delete(promise) },
+        () => { active.delete(promise) },
+      )
+      return promise
+    },
+  })
+  const lifecycle = ctx.effect(function* () {
+    const unregister = ctx.provide('parallelExecution', service)
+    yield unregister
+    yield async () => {
+      disposing = true
+      generation.abort(GENERATION_DISPOSED_REASON)
+      await Promise.allSettled([...active])
+    }
+  }, 'ds-orchestrator: parallel execution generation')
+
+  return Object.freeze({
+    service,
+    async dispose() {
+      await lifecycle()
     },
   })
 }

@@ -149,9 +149,12 @@ export type { ParallelWorkerRunInput, ParallelWorkerTerminalV1 } from './paralle
 export {
   allocateDagId,
   createParallelExecutionRuntime,
+  mountParallelExecutionService,
+  ParallelGenerationDisposedError,
   ParallelRunValidationError,
 } from './parallel.js'
 export type {
+  MountedParallelExecutionService,
   ParallelExecutionService,
   ParallelRunRequestV1,
   ParallelRunResultV1,

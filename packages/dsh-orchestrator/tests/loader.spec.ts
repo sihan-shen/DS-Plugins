@@ -62,6 +62,7 @@ interface AppBoot {
 interface ProfileLoadOptions {
   readonly mode: 'direct' | 'single-worker'
   readonly enableSubagents?: boolean
+  readonly parallelOverlay?: boolean
   readonly profile?: 'v0.1' | 'v0.3-adaptive'
 }
 
@@ -104,6 +105,23 @@ function singleWorkerOverlay(entries: readonly ProfileEntry[]): Record<string, u
       ...config,
       mode: 'single-worker',
       budgets: { ...(budgets as Record<string, unknown>), maxWorkers: 1 },
+    },
+  }
+}
+
+function parallelOverlay(entries: readonly ProfileEntry[]): Record<string, unknown> {
+  const overlay = singleWorkerOverlay(entries)
+  const config = overlay.config as Record<string, unknown>
+  return {
+    ...overlay,
+    config: {
+      ...config,
+      parallel: {
+        maxParallelWorkers: 1,
+        verification: { schemaVersion: 1, scope: 'dag', commands: [] },
+        workerToolAllowlist: [],
+        routeToolFilters: {},
+      },
     },
   }
 }
@@ -182,7 +200,11 @@ async function loadActualProfile(options: ProfileLoadOptions): Promise<LoadedPro
         ...(options.enableSubagents ? ['subagent'] : []),
         ...(profileName === 'v0.3-adaptive' ? ['dsh-adaptive-scheduler'] : []),
       ]),
-      ...(options.mode === 'single-worker' ? [singleWorkerOverlay(entries)] : []),
+      ...(options.parallelOverlay
+        ? [parallelOverlay(entries)]
+        : options.mode === 'single-worker'
+          ? [singleWorkerOverlay(entries)]
+          : []),
     ]
     if (profileName === 'v0.3-adaptive') {
       const rootPluginModules = join(repositoryRoot, 'node_modules', '@ds-plugins')
@@ -290,6 +312,7 @@ describe('built DSH v0.1 profile Loader composition', () => {
       const services = await injectedServices(runtime.context)
       expect(services.tools.get('targeted_verify')).toBeDefined()
       expect(services.tools.get('delegate_worker')).toBeUndefined()
+      expect((runtime.context as unknown as { get(name: string): unknown }).get('parallelExecution')).toBeUndefined()
 
       await runtime.context.loader.remove('include')
       expect(runtime.context.get('tools')?.get('targeted_verify')).toBeUndefined()
@@ -315,6 +338,7 @@ describe('built DSH v0.1 profile Loader composition', () => {
           ): Promise<unknown>
         } | undefined
         expect(delegate).toBeDefined()
+        expect((runtime.context as unknown as { get(name: string): unknown }).get('parallelExecution')).toBeUndefined()
 
         const session = services.sessions.create(SessionId('loader-single-worker-root'), { meta: { cwd: repositoryRoot } }) as {
           readonly id: ReturnType<typeof SessionId>
@@ -341,7 +365,25 @@ describe('built DSH v0.1 profile Loader composition', () => {
       const services = await injectedServices(runtime.context, true)
       expect(services.tools.get('targeted_verify')).toBeDefined()
       expect(services.tools.get('delegate_worker')).toBeDefined()
+      expect((runtime.context as unknown as { get(name: string): unknown }).get('parallelExecution')).toBeUndefined()
+      expect(services.tools.get('parallel_worker')).toBeUndefined()
       expect((runtime.context as unknown as { get(name: string): unknown }).get('adaptiveScheduler')).toBeDefined()
+    })
+  })
+
+  it('registers only the internal parallel service when a test overlay supplies parallel config', async () => {
+    await withActualProfile({
+      profile: 'v0.3-adaptive',
+      mode: 'single-worker',
+      enableSubagents: true,
+      parallelOverlay: true,
+    }, async (runtime) => {
+      const services = await injectedServices(runtime.context, true)
+      expect((runtime.context as unknown as { get(name: string): unknown }).get('parallelExecution')).toMatchObject({
+        run: expect.any(Function),
+      })
+      expect(services.tools.get('delegate_worker')).toBeDefined()
+      expect(services.tools.get('parallel_worker')).toBeUndefined()
     })
   })
 })
