@@ -1,0 +1,35 @@
+{
+  "name": "@ds-plugins/dsh-telemetry",
+  "version": "0.5.0",
+  "private": true,
+  "type": "module",
+  "main": "./lib/src/index.js",
+  "types": "./lib/src/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/src/index.d.ts",
+      "default": "./lib/src/index.js"
+    },
+    "./contracts": {
+      "types": "./lib/src/contracts.d.ts",
+      "default": "./lib/src/contracts.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run",
+    "test:package-entry": "pnpm run build && pnpm exec vitest run tests/package-entry.spec.ts"
+  },
+  "devDependencies": {
+    "@types/node": "26.3.0",
+    "@deepseek-ai/cordis": "4.0.1"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

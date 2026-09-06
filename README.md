@@ -1026,6 +1026,8 @@ Task 14 real-Loader acceptance and the economical full gate are verified (2026-0
 
 插件归属：新增 Telemetry 插件负责有界、脱敏的运行证据；Failure Miner、Lesson 校准和候选生成保持离线 package，不允许采集插件直接修改生产策略。
 
+本版本提供本地离线分析命令：先用 `dsh-telemetry export <input> <output>` 导出有界 JSONL，再用 `dsh-telemetry analyze <events> <annotations> <output-dir>` 生成指标、重复失败模式、校准画像、Lesson 和可追溯候选。分析结果只写入输出目录，候选不会自动改变运行时 Profile 或路由策略。
+
 交付：
 
 - 统一运行指标和 Failure Taxonomy。

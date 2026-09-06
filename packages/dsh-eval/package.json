@@ -18,10 +18,14 @@
   "dependencies": {
     "@ds-plugins/dsh-code-intelligence": "workspace:*",
     "@ds-plugins/dsh-context": "workspace:*",
+    "@ds-plugins/dsh-telemetry": "workspace:*",
     "@dqbd/tiktoken": "1.0.22"
   },
   "devDependencies": {
     "@types/node": "26.3.0",
     "vitest": "4.0.18"
+  },
+  "bin": {
+    "dsh-telemetry": "./lib/src/telemetry/cli.js"
   }
 }

@@ -100,6 +100,9 @@ importers:
       '@ds-plugins/dsh-context':
         specifier: workspace:*
         version: link:../dsh-context
+      '@ds-plugins/dsh-telemetry':
+        specifier: workspace:*
+        version: link:../dsh-telemetry
     devDependencies:
       '@types/node':
         specifier: 26.3.0
@@ -149,6 +152,15 @@ importers:
         version: 4.1.0
 
   packages/dsh-scheduling-contracts: {}
+
+  packages/dsh-telemetry:
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.1
+        version: 4.0.1(@deepseek-ai/cordis-plugin-include@1.0.6)(@deepseek-ai/cordis-plugin-loader@1.0.2)
+      '@types/node':
+        specifier: 26.3.0
+        version: 26.3.0
 
   profiles/v0.1:
     dependencies:

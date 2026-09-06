@@ -9,13 +9,7 @@
     "rootDir": ".",
     "skipLibCheck": true,
     "strict": true,
-    "target": "ES2022",
-    "resolveJsonModule": true
+    "target": "ES2022"
   },
-  "include": ["src/**/*.ts"],
-  "references": [
-    { "path": "../dsh-context" },
-    { "path": "../dsh-code-intelligence" },
-    { "path": "../dsh-telemetry" }
-  ]
+  "include": ["src/**/*.ts"]
 }
