@@ -73,3 +73,11 @@ The reported checks were run with the repository’s available Node/pnpm setup. 
 - Task 6 actual validation: all offline telemetry suites passed 25 tests across 3 files; eval build and whitespace checks passed, review clean.
 - Task 7 actual validation: all offline telemetry suites passed 38 tests across 5 files; eval build and whitespace checks passed, review clean.
 - Next: commit Task 7 and implement inert candidate generation Task 8. Full Loader acceptance remains Task 10; ensure clean build order includes eval dependencies.
+
+## Environment migration recovery (2026-09-06)
+
+- Main repository moved to `/home/sihan/Projects/DS-Plugins`. Repaired this worktree's `.git` pointer after verifying the same branch and `e410d7a` history in the relocated Git metadata; no history rewritten.
+- Task 8 had not written files before the agent session disappeared; resumed it with a fresh agent after checking clean status.
+- Current Node: v26.8.1. Direct `node node_modules/typescript/bin/tsc -b packages/dsh-eval` passed; direct Vitest run of offline telemetry passed 38 tests across 5 files. System pnpm is 11.3.0; restoring project-pinned 11.7.0 under a temporary PNPM_HOME for final gates.
+
+- Task 8 candidate generation is implemented in the working tree; direct Node Vitest validation passed 43 offline telemetry tests and eval tsc build passed after environment migration. The implementation is ready to commit before Task 9.
