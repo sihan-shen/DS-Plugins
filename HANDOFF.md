@@ -78,6 +78,8 @@ The reported checks were run with the repository’s available Node/pnpm setup. 
 
 - Main repository moved to `/home/sihan/Projects/DS-Plugins`. Repaired this worktree's `.git` pointer after verifying the same branch and `e410d7a` history in the relocated Git metadata; no history rewritten.
 - Task 8 had not written files before the agent session disappeared; resumed it with a fresh agent after checking clean status.
-- Current Node: v26.8.1. Direct `node node_modules/typescript/bin/tsc -b packages/dsh-eval` passed; direct Vitest run of offline telemetry passed 38 tests across 5 files. System pnpm is 11.3.0; restoring project-pinned 11.7.0 under a temporary PNPM_HOME for final gates.
+- Current Node: v26.8.1. Direct `node node_modules/typescript/bin/tsc -b packages/dsh-eval` passed; direct Vitest run of offline telemetry passed 47 tests across 7 files including CLI. System pnpm is 11.3.0; project-pinned 11.7.0 is available under temporary PNPM_HOME for final gates.
 
-- Task 8 candidate generation is implemented in the working tree; direct Node Vitest validation passed 43 offline telemetry tests and eval tsc build passed after environment migration. The implementation is ready to commit before Task 9.
+- Task 8 inert candidate generation is committed as `21bf435`; direct Node Vitest validation passed 43 offline telemetry tests and eval tsc build passed after environment migration.
+
+- Task 9 offline CLI is implemented and tested in the working tree; it exports private numbered segments and atomically writes bounded analysis artifacts.
