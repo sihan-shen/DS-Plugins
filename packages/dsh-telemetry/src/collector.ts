@@ -20,6 +20,7 @@ interface Run {
   runRef: string
   count: number
   lost: number
+  started: boolean
   seen: Set<string>
   sessions: Set<string>
 }
@@ -87,12 +88,13 @@ export function createCollector(store: TelemetryStore): TelemetryCollector {
     for (const ref of run.sessions) { sessions.delete(ref); retire(ref) }
     retire(run.rootRef)
     enqueue({ schemaVersion: 1, kind: 'run-seal', domainRef, runRef: run.runRef,
-      observationCount: run.count, lostCount: run.lost, complete: complete && run.lost === 0 && !writeError }, run)
+      observationCount: run.count, lostCount: run.lost, complete: complete && run.started && run.lost === 0 && !writeError }, run)
   }
   return {
     observe(session, event) {
       let run: Run | undefined
       let ref: string | undefined
+      let projected: ReturnType<typeof projectEvent> | undefined
       const reject = () => {
         if (ref !== undefined && !sessions.has(ref)) retire(ref)
         loss(run)
@@ -112,10 +114,19 @@ export function createCollector(store: TelemetryStore): TelemetryCollector {
         if (!run && parentRef !== undefined) run = sessions.get(parentRef)?.run
         if (!run) {
           if (parentRef !== undefined) { retire(ref); retire(parentRef); loss(); return }
-          if (event.type !== 'dsh-plugin/run-started' || roots.size >= MAX_ROOTS || admissionsClosed || retired.has(ref)) {
+          const startsRun = event.type === 'dsh-plugin/run-started'
+          const schedulesRoot = event.type === 'dsh-plugin/schedule-selected'
+          if ((!startsRun && !schedulesRoot) || roots.size >= MAX_ROOTS || admissionsClosed || retired.has(ref)) {
             retire(ref); loss(); return
           }
-          run = { rootRef: ref, runRef: identify('run', JSON.stringify([ref, randomUUID()])), count: 0, lost: 0, seen: new Set(), sessions: new Set([ref]) }
+          const candidate: Run = { rootRef: ref, runRef: identify('run', JSON.stringify([ref, randomUUID()])), count: 0, lost: 0, started: false, seen: new Set(), sessions: new Set([ref]) }
+          if (schedulesRoot) {
+            if (!Number.isSafeInteger(event.seq) || event.seq < 0) { reject(); return }
+            projected = projectEvent(event, { schemaVersion: 1, domainRef, runRef: candidate.runRef,
+              sessionRef: ref, seq: 1, observedAtMs: Date.now() }, identify)
+            if (projected?.kind !== 'schedule-selected' || projected.facts.scope !== 'root') { reject(); return }
+          }
+          run = candidate
           roots.set(ref, run)
           sessions.set(ref, { run })
         }
@@ -130,9 +141,12 @@ export function createCollector(store: TelemetryStore): TelemetryCollector {
           run.sessions.add(ref)
         }
         if (event.type === 'dsh-plugin/run-started' && parentRef !== undefined) { loss(run); return }
-        const projected = projectEvent(event, { schemaVersion: 1, domainRef, runRef: run.runRef,
+        projected ??= projectEvent(event, { schemaVersion: 1, domainRef, runRef: run.runRef,
           sessionRef: ref, seq: run.count + 1, observedAtMs: Date.now() }, identify)
-        if (projected && enqueue(projected, run)) run.count++
+        if (projected && enqueue(projected, run)) {
+          run.count++
+          if (projected.kind === 'run-started') run.started = true
+        }
       } catch { reject() }
     },
     reject(id) {

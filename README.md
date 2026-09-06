@@ -1026,7 +1026,30 @@ Task 14 real-Loader acceptance and the economical full gate are verified (2026-0
 
 插件归属：新增 Telemetry 插件负责有界、脱敏的运行证据；Failure Miner、Lesson 校准和候选生成保持离线 package，不允许采集插件直接修改生产策略。
 
-本版本提供本地离线分析命令：先用 `dsh-telemetry export <input> <output>` 导出有界 JSONL，再用 `dsh-telemetry analyze <events> <annotations> <output-dir>` 生成指标、重复失败模式、校准画像、Lesson 和可追溯候选。分析结果只写入输出目录，候选不会自动改变运行时 Profile 或路由策略。
+状态：v0.5 的 keyless release acceptance 已于 2026-09-06 完成。`pnpm test:v0.5` 通过 25 个测试文件 / 317 个测试，`pnpm test:v0.4` 通过 39 个测试文件 / 621 个测试，`pnpm typecheck`、profile preservation、`git diff --check` 和禁用状态的 provider smoke 均通过。本版本不宣称 provider、网络、凭据或真实 coding-task 验收。
+
+本版本提供本地离线分析命令。先构建 evaluator：
+
+```bash
+pnpm --filter @ds-plugins/dsh-eval build
+```
+
+然后使用已实现的 flag 语法导出和分析：
+
+```bash
+node packages/dsh-eval/lib/src/telemetry/cli.js export --store <absolute-dir> --out <new-file>
+node packages/dsh-eval/lib/src/telemetry/cli.js analyze --events <file> --annotations <file> --out <new-dir>
+```
+
+完整的 package 用法、隐私/锁/evidence 边界和可运行 fixture 见
+[`packages/dsh-telemetry/README.md`](packages/dsh-telemetry/README.md)。分析结果只写入新的输出目录，候选不会自动改变运行时 Profile 或路由策略。
+
+v0.5 的固定 metric inventory 为：
+
+- 可计算（在证据足够且 eligible 时）：`task_success_rate`、`accepted_result_rate`、`worker_spawn_rate`、`model_switch_rate`、`verification_cost`。
+- 当前不可用（输出 `value: null`、`basis: "unavailable"`）：`cache_hit_ratio`、`uncached_tokens_per_success`、`source_token_estimate`、`uncached_source_tokens`、`lsp_to_source_ratio`、`worker_reuse_rate`、`retry_rate`、`latency_per_success`、`fallback_rate`。
+
+不完整或缺失的 evidence 会保持为 incomplete/unknown，不会被填补为成功；本版本不会自动改变运行时策略，也不包含 provider access、网络、凭据或 live task validation。
 
 交付：
 

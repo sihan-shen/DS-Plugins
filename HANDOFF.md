@@ -2,11 +2,12 @@
 
 ## Objective
 
-Maintain the DSH personal Coding Agent plugin architecture and its Fedora-native development environment. The v0.4 economical multi-agent slice is implemented and accepted through keyless Loader/replay coverage.
+Maintain the DSH personal Coding Agent plugin architecture and its Fedora-native development environment. The v0.4 economical multi-agent slice and the v0.5 bounded telemetry/offline-learning release are complete within their keyless boundaries.
 
 ## Current status
 
 - v0.4 Tasks 1–14 are implemented; Task 14 is the final planned v0.4 acceptance task.
+- v0.5 implementation is merged on `main` at `5b551ec`; keyless release acceptance is closed on `codex/v0.6` with the recorded final gates below. The pre-green RED transcript was not retained and is not reconstructed as evidence.
 - Existing profiles `profiles/v0.1` and `profiles/v0.3-adaptive` are preserved.
 - `profiles/v0.4` does not exist.
 - Provider, network, credentials, and live coding-task acceptance remain intentionally out of scope.
@@ -21,7 +22,7 @@ Maintain the DSH personal Coding Agent plugin architecture and its Fedora-native
 
 ## Verified evidence
 
-The final v0.4 gate passes:
+Historical v0.4 evidence recorded before the 2026-09-06 post-merge reconciliation (not rerun in that task):
 
 - `pnpm test:v0.4`: 38 files, 607 tests
 - `pnpm test:v0.3`: 38 files, 607 tests
@@ -43,9 +44,11 @@ The final v0.4 gate passes:
 
 ## Next actions
 
-1. Treat v0.4 implementation and acceptance as complete.
-2. If desired, perform a separate integration/release review of the committed slice.
-3. For future work, start from the v0.5 roadmap in `README.md`; do not reopen completed v0.4 tasks unless a new defect is found.
+1. Keep v0.4 accepted as historical keyless evidence; do not reopen it without a new defect.
+2. Treat v0.5 keyless release acceptance as closed; do not claim provider, network, credential, or live coding-task acceptance.
+3. Treat Task 10 implementation, lifecycle/negative evidence, named gate, and final acceptance as complete. The historical RED transcript was not retained; the final gate is the authoritative release evidence.
+4. Start v0.6 with offline governance: versioned candidate evaluation, controlled fixture A/B, human approval, promotion, and rollback artifacts.
+5. Keep online policy mutation, provider/network access, and physical worker isolation outside automatic promotion until separately specified and verified.
 
 ## Validation caveat
 
@@ -78,17 +81,36 @@ The reported checks were run with the repository’s available Node/pnpm setup. 
 
 - Main repository moved to `/home/sihan/Projects/DS-Plugins`. Repaired this worktree's `.git` pointer after verifying the same branch and `e410d7a` history in the relocated Git metadata; no history rewritten.
 - Task 8 had not written files before the agent session disappeared; resumed it with a fresh agent after checking clean status.
-- Current Node: v26.8.1. Direct `node node_modules/typescript/bin/tsc -b packages/dsh-eval` passed; direct Vitest run of offline telemetry passed 47 tests across 7 files including CLI. System pnpm is 11.3.0; project-pinned 11.7.0 is available under temporary PNPM_HOME for final gates.
+- Historical migration-session environment: Node v26.8.1. Direct `node node_modules/typescript/bin/tsc -b packages/dsh-eval` passed; direct Vitest run of offline telemetry passed 47 tests across 7 files including CLI. That prior session recorded project-pinned pnpm 11.7.0 under a temporary `PNPM_HOME`; the later post-merge reconciliation session could not locate or reproduce that temporary executable.
 
 - Task 8 inert candidate generation is committed as `21bf435`; direct Node Vitest validation passed 43 offline telemetry tests and eval tsc build passed after environment migration.
 
 - Task 9 offline CLI is implemented and tested in the working tree; it exports private numbered segments and atomically writes bounded analysis artifacts.
 
-## v0.5 acceptance continuation (2026-09-06)
+## v0.5 implementation and partial acceptance continuation (2026-09-06)
 
 - Task 9 is committed as `afa10a8`; the CLI exposes `dsh-telemetry export` and `dsh-telemetry analyze` with bounded input/output and atomic sibling-directory publication.
-- Task 10 acceptance is implemented in `tests/replay/telemetry.snapshot.spec.ts` and `tests/replay/telemetry-loader.ts`. The test boots the real `v0.3-adaptive` Loader with a direct-mode overlay, registers the actual `dsh-telemetry` package entry, collects three real Sessions, flushes numbered segments, validates event snapshots are unchanged, rejects private sentinel text, mines repeated failures, and checks every candidate evidence reference resolves to a retained observation. A one-run negative case produces no candidate.
+- Partial Task 10 Loader evidence is implemented in `tests/replay/telemetry.snapshot.spec.ts` and `tests/replay/telemetry-loader.ts`. The test boots the real `v0.3-adaptive` Loader with a direct-mode overlay, registers the actual `dsh-telemetry` package entry, collects three real Sessions, exercises a valid legacy worker stream and the economical parallel replay fixture, flushes numbered segments, validates canonical Session snapshots against an equivalent telemetry-disabled control before flush, after flush, and after analysis, rejects private sentinel text, mines repeated failures, and checks every candidate evidence reference resolves to a retained observation. It also covers generation removal/reload, stale callback isolation, duplicate one-run analysis, corrupted/partial evidence, unavailable-storage outcome preservation, and correlation-scoped parallel lifecycle cardinalities. Task 10 Steps 1 and 3 are focused-evidence complete; Step 4 is implemented; the unrecorded RED step, broad final acceptance, and acceptance commit remain open.
 - Loader test helpers now support a temporary telemetry package symlink, telemetry service injection, direct-mode overlay, and bounded telemetry storage configuration. Existing profile behavior remains covered by the original loader tests.
-- Root `build` now orders context/code-intelligence before eval and includes telemetry/eval. `test:v0.5` runs the telemetry/eval suites plus the real Loader telemetry replay.
-- Validation: `node node_modules/typescript/bin/tsc -b` passed; the focused v0.5 gate passed 18 files / 240 tests; provider smoke printed the expected disabled keyless message; `git diff --check` and profile preservation checks passed.
-- The broad replay set still has pre-existing environment migration failures for code-intelligence (missing `upstream/deepseek-harness/.../web-app/package.json`) and one v0.4 verification fixture; those are excluded from `test:v0.5` and are unrelated to the telemetry changes. No provider calls or live coding-task acceptance were performed.
+- Root `build` now orders context/code-intelligence before eval and includes telemetry/eval. The merged `test:v0.5` script matches the broader command retained in the implementation plan and passed in the restored host environment.
+- Historical validation from the implementation session: `node node_modules/typescript/bin/tsc -b` passed; the focused fallback passed 18 files / 240 tests; provider smoke printed the expected disabled keyless message; `git diff --check` and profile preservation checks passed. This was not the full planned v0.5 acceptance gate.
+- Current focused validation: `./node_modules/.bin/vitest run tests/replay/telemetry.snapshot.spec.ts --config vitest.config.ts` passed 1 file / 14 tests; the restored named `test:v0.5` gate passed 25 files / 317 tests.
+- Post-review collector fix completed on 2026-09-06: validated root-target `schedule-selected` events now provision a provisional run until the later `run-started`; worker-target and malformed schedules remain rejected, and schedule-only roots cannot seal complete. Focused validation passed 21 collector tests plus 14 Loader telemetry tests (35 total), and the telemetry TypeScript build passed.
+- Post-review CLI fix completed on 2026-09-06: executable telemetry CLI failures now emit only controlled `TELEMETRY_CLI_ERROR` codes/locations, with subprocess coverage for analyze/export parser and filesystem failures; raw rejected keys, sentinels, and paths are excluded. Focused CLI validation passed 8 tests and the eval TypeScript build passed.
+- CLI intake-boundary hardening completed and reviewed on 2026-09-06: bounded readers now enforce actual event/annotation byte ceilings, raw JSONL line admission, aggregate export-segment bytes, total record count and annotation count before JSON parsing; focused CLI validation passed 10 tests, the eval TypeScript build passed, and `git diff --check` passed.
+- Manifest coverage fix completed and reviewed on 2026-09-06: `unknownRunCount` now counts validated complete runs with no annotation or an explicit `outcome:'unknown'`, while incomplete runs remain excluded. The regression fixture covers both unknown cases and an incomplete run; focused CLI validation passed 11 tests, the eval TypeScript build passed, and `git diff --check` passed.
+- Parallel Loader acceptance hardening completed and reviewed on 2026-09-06: the real economical replay now asserts one complete replay, a committed DAG aggregate covering every fixture node/request, and correlation-scoped projected lifecycle cardinalities. Focused replay validation passed 14 tests and `git diff --check` passed; broad suites remain intentionally unrun.
+- Canonical Loader snapshot hardening completed and reviewed on 2026-09-06: a telemetry-disabled v0.1 direct Loader control run and an equivalent telemetry-enabled run now execute the same Session scenario; initial snapshots and live Session events are compared before flush, after flush, and after offline analysis. Only top-level runtime timestamps are normalized. Focused replay validation passed 14 tests and `git diff --check` passed; broad suites remain intentionally unrun.
+- Earlier migration-session replay failures for code-intelligence and one v0.4 verification fixture were not reproduced by the restored named gate. The passing gate included `tests/replay`; no provider calls or live coding-task acceptance were performed.
+
+## v0.5 post-merge release-evidence reconciliation (2026-09-06)
+
+- Merged baseline inspected: `5b551ec` on `main`, containing the v0.5 implementation commits from `7d492cf` through `72a144e`. Implementation is present, but the plan checkboxes leave unsupported RED runs, Task 9 documentation, and Task 10 acceptance requirements open.
+- Exact named-gate attempt before the script reconciliation: `pnpm test:v0.5` exited 1 before build or test execution with `[ERROR] unable to open database file`; the reconciled named gate remains unrun.
+- Exact environment caveat for that session: `package.json` pins `pnpm@11.7.0`; `/usr/bin/pnpm` is pnpm 11.3.0 but `pnpm --version` fails with the same database error. Corepack was absent, and the temporary pinned executable recorded in an earlier migration session was no longer available, so pnpm 11.7.0 could not be reproduced.
+- Historical fallback evidence from that same 2026-09-06 reconciliation session (cwd `/home/sihan/Projects/DS-Plugins`, Node v26.8.1): `node node_modules/typescript/bin/tsc -b --pretty false` passed; `node --expose-internals ./node_modules/vitest/vitest.mjs run packages/dsh-telemetry/tests packages/dsh-eval/tests tests/replay/telemetry.snapshot.spec.ts --config vitest.config.ts` passed 18 files / 240 tests. This direct fallback was not the full planned gate.
+- Historical boundary checks from that session: the provider smoke script exited 0 with `DISABLED: local OpenAI Codex provider smoke is intentionally unavailable; keyless verification only.`; `git diff --exit-code af9256d -- profiles/v0.1 profiles/v0.3-adaptive` passed; dependency scans found no telemetry-to-eval import and no offline telemetry import of scheduler/profile writers.
+- Documentation and script follow-ups completed on 2026-09-06: `packages/dsh-telemetry/README.md` includes the exact build command, runnable fixture reference, evidence boundaries, and metric availability; root `README.md` uses the implemented flag-based CLI syntax, links package usage, lists the v0.5 metric inventory, and records release status; `test:v0.5` matches the broader plan command.
+- Focused acceptance follow-ups completed on 2026-09-06: CLI intake limits now cover actual byte ceilings, raw JSONL line admission, aggregate segment bytes, total records, and annotation count; manifest reporting covers complete unannotated and explicitly unknown runs; the Loader replay and canonical-event checks now have focused parallel and control-run assertions. These results do not satisfy the named full gate.
+- The v0.4 counts above remain historical evidence and were not rerun. No provider call, credential access, network acceptance, live coding-task acceptance, online policy mutation, rollback, or physical worker-isolation claim was added.
+- Current environment restoration: with host filesystem access, `pnpm --version` reports 11.7.0, `package.json` reports `pnpm@11.7.0`, and `pnpm store path` resolves to `/home/sihan/.local/share/pnpm/store/v11`. The prior database error was sandbox access to pnpm's user-level SQLite state; no repository dependency files were changed. The restored v0.5 gate passed 25 files / 317 tests; v0.4 passed 39 files / 621 tests; typecheck, frozen install, provider smoke, profile preservation, and `git diff --check` also passed. This closes the v0.5 keyless release boundary; provider/network/live-task acceptance remains out of scope.

@@ -3,12 +3,50 @@ import { createCollector } from '../src/collector.ts'
 import type { TelemetryStore } from '../src/store.ts'
 import type { TelemetryRecordV1 } from '../src/contracts.ts'
 const started = (seq = 1) => ({ seq, type: 'dsh-plugin/run-started', data: { schemaVersion: 1, mode: 'direct', provider: 'secret-provider', model: 'secret-model' } })
+const selected = (seq = 1) => ({ seq, type: 'dsh-plugin/schedule-selected', data: { schemaVersion: 1, target: 'root', source: 'scheduler', provider: 'secret-provider', model: 'secret-model', maxTokens: 1_000 } })
 const budget = (seq = 2) => ({ seq, type: 'dsh-plugin/budget-rejected', data: { schemaVersion: 1, reason: 'secret-reason', observed: 2, limit: 1 } })
 function setup() {
   const records: TelemetryRecordV1[] = []
   const store: TelemetryStore = { salt: new Uint8Array(32).fill(1), enqueue: vi.fn(record => { records.push(record); return true }), flush: vi.fn(async () => {}), dispose: vi.fn(async () => {}), stats: () => ({ queued: 0, dropped: 0, writeErrors: 0 }) }
   return { records, store, collector: createCollector(store) }
 }
+it('retains a scheduled root through run start and a child terminal observation', async () => {
+  const { collector, records } = setup()
+  collector.observe({ id: 'root' }, selected())
+  collector.observe({ id: 'root' }, started(3))
+  collector.observe({ id: 'child', parentId: 'root' }, budget(1))
+  collector.closeRoot('root')
+  await collector.flush()
+  expect(records.map(record => record.kind)).toEqual([
+    'schedule-selected',
+    'run-started',
+    'budget-rejected',
+    'run-seal',
+  ])
+  expect(records.at(-1)).toMatchObject({ observationCount: 3, lostCount: 0, complete: true })
+  expect(collector.stats()).toMatchObject({ trackedRuns: 0, dropped: 0 })
+  await collector.dispose()
+})
+it('does not complete a provisional root that never starts', async () => {
+  const { collector, records } = setup()
+  collector.observe({ id: 'root' }, selected())
+  collector.closeRoot('root')
+  await collector.flush()
+  expect(records.map(record => record.kind)).toEqual(['schedule-selected', 'run-seal'])
+  expect(records.at(-1)).toMatchObject({ observationCount: 1, lostCount: 0, complete: false })
+  await collector.dispose()
+})
+it('does not admit worker-target or malformed schedule events as roots', async () => {
+  const { collector, records } = setup()
+  const root = selected()
+  collector.observe({ id: 'worker-target' }, { ...root, data: { ...root.data, target: 'worker' } })
+  collector.observe({ id: 'malformed' }, { ...root, data: { ...root.data, maxTokens: 0 } })
+  collector.observe({ id: 'worker-target' }, started(2))
+  collector.observe({ id: 'malformed' }, started(2))
+  expect(collector.stats()).toMatchObject({ trackedRuns: 0, dropped: 4 })
+  expect(records).toHaveLength(0)
+  await collector.dispose()
+})
 it('deduplicates canonical sequence per session and seals root after accepted descendants', async () => {
   const { collector, records, store } = setup()
   collector.observe({ id: 'root' }, started())
