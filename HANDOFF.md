@@ -83,3 +83,12 @@ The reported checks were run with the repository’s available Node/pnpm setup. 
 - Task 8 inert candidate generation is committed as `21bf435`; direct Node Vitest validation passed 43 offline telemetry tests and eval tsc build passed after environment migration.
 
 - Task 9 offline CLI is implemented and tested in the working tree; it exports private numbered segments and atomically writes bounded analysis artifacts.
+
+## v0.5 acceptance continuation (2026-09-06)
+
+- Task 9 is committed as `afa10a8`; the CLI exposes `dsh-telemetry export` and `dsh-telemetry analyze` with bounded input/output and atomic sibling-directory publication.
+- Task 10 acceptance is implemented in `tests/replay/telemetry.snapshot.spec.ts` and `tests/replay/telemetry-loader.ts`. The test boots the real `v0.3-adaptive` Loader with a direct-mode overlay, registers the actual `dsh-telemetry` package entry, collects three real Sessions, flushes numbered segments, validates event snapshots are unchanged, rejects private sentinel text, mines repeated failures, and checks every candidate evidence reference resolves to a retained observation. A one-run negative case produces no candidate.
+- Loader test helpers now support a temporary telemetry package symlink, telemetry service injection, direct-mode overlay, and bounded telemetry storage configuration. Existing profile behavior remains covered by the original loader tests.
+- Root `build` now orders context/code-intelligence before eval and includes telemetry/eval. `test:v0.5` runs the telemetry/eval suites plus the real Loader telemetry replay.
+- Validation: `node node_modules/typescript/bin/tsc -b` passed; the focused v0.5 gate passed 18 files / 240 tests; provider smoke printed the expected disabled keyless message; `git diff --check` and profile preservation checks passed.
+- The broad replay set still has pre-existing environment migration failures for code-intelligence (missing `upstream/deepseek-harness/.../web-app/package.json`) and one v0.4 verification fixture; those are excluded from `test:v0.5` and are unrelated to the telemetry changes. No provider calls or live coding-task acceptance were performed.

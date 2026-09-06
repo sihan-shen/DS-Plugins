@@ -64,6 +64,8 @@ interface ProfileLoadOptions {
   readonly enableSubagents?: boolean
   readonly parallelOverlay?: boolean
   readonly profile?: 'v0.1' | 'v0.3-adaptive'
+  readonly telemetryStorageRoot?: string
+  readonly telemetryDirect?: boolean
 }
 
 interface LoadedProfileRuntime {
@@ -187,6 +189,11 @@ async function copyActualProfile(root: string, profileName: 'v0.1' | 'v0.3-adapt
       join(root, 'packages/dsh-adaptive-scheduler/node_modules/@ds-plugins/dsh-scheduling-contracts'),
       process.platform === 'win32' ? 'junction' : 'dir',
     )
+    await symlink(
+      join(repositoryRoot, 'packages/dsh-telemetry'),
+      join(profileDir, 'node_modules', '@ds-plugins', 'dsh-telemetry'),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    )
   }
   await writeFile(join(profileDir, 'cordis.yml'), '[]\n')
   return profileDir
@@ -208,8 +215,25 @@ export async function loadActualProfile(options: ProfileLoadOptions): Promise<Lo
       ...profile.patches,
     ]
     const entries = appBoot.composeEntries([profilePatches])
+    const telemetryOrchestrator = options.telemetryDirect
+      ? (() => {
+          const entry = entries.find(item => item.id === 'ds-orchestrator')
+          if (entry?.config === undefined || typeof entry.config !== 'object' || Array.isArray(entry.config)) throw new Error('missing orchestrator config for telemetry overlay')
+          const config = structuredClone(entry.config) as Record<string, unknown>
+          const budgets = config.budgets
+          return {
+            id: 'ds-orchestrator',
+            config: {
+              ...config,
+              mode: 'direct',
+              budgets: { ...((budgets ?? {}) as Record<string, unknown>), maxWorkers: 0 },
+            },
+          }
+        })()
+      : undefined
     const patches = [
       ...profilePatches,
+      ...(options.telemetryStorageRoot === undefined ? [] : [{ insert: [{ id: 'dsh-telemetry', name: '@ds-plugins/dsh-telemetry', config: { enabled: true, storageRoot: options.telemetryStorageRoot } }] }]),
       ...disabledRows(entries, [
         ...(options.enableSubagents ? ['subagent'] : []),
         ...(profileName === 'v0.3-adaptive' ? ['dsh-adaptive-scheduler'] : []),
@@ -219,6 +243,7 @@ export async function loadActualProfile(options: ProfileLoadOptions): Promise<Lo
         : options.mode === 'single-worker'
           ? [singleWorkerOverlay(entries)]
           : []),
+      ...(telemetryOrchestrator === undefined ? [] : [telemetryOrchestrator]),
     ]
     if (profileName === 'v0.3-adaptive') {
       const rootPluginModules = join(repositoryRoot, 'node_modules', '@ds-plugins')
@@ -270,6 +295,15 @@ export async function injectedServices(context: BootedContext, requireSubagents 
   })
   if (services === undefined) throw new Error('actual profile did not inject its required services')
   return services
+}
+
+export async function injectedTelemetry(context: BootedContext): Promise<{ flush(): Promise<void>; stats(): unknown; dispose(): Promise<void> }> {
+  let telemetry: { flush(): Promise<void>; stats(): unknown; dispose(): Promise<void> } | undefined
+  await context.inject(['telemetry'], child => {
+    telemetry = (child as unknown as { telemetry?: typeof telemetry }).telemetry
+  })
+  if (telemetry === undefined) throw new Error('actual profile did not inject telemetry')
+  return telemetry
 }
 
 export function fakeSpawnProvider(): SubagentProvider {
