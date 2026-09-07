@@ -2,6 +2,42 @@
 
 `@ds-plugins/dsh-orchestrator` is an out-of-tree DeepSeek Harness (DSH) bundle for a small, evidence-first coding-agent loop. It composes with the official `@deepseek-ai/dsh-base` bundle and never replaces the DSH agent loop or provider implementation.
 
+## Status and compatibility
+
+- Parent repository: [DS-Plugins](https://github.com/sihan-shen/DS-Plugins)
+- DSH dependency line: `0.1.1-rc.2`
+- Cordis peer dependency: `4.0.1`
+- Shared plugin dependencies: `@ds-plugins/dsh-context` `^0.2.0` and
+  `@ds-plugins/dsh-scheduling-contracts` `^0.3.0`
+- Availability: the bundle is used by the parent repository's `v0.1` and
+  `v0.2c-context` profiles. It is prepared for standalone publication but is
+  not yet published to npm; it requires the scheduling-contracts package to be
+  published first (or supplied from a local workspace).
+
+## Install and standalone development
+
+After the shared contract packages are published, install it with its DSH host
+dependencies:
+
+```sh
+pnpm add @ds-plugins/dsh-orchestrator
+```
+
+The bundle is loaded by the host through the included
+[`cordis.patch.yml`](./cordis.patch.yml). For a standalone checkout:
+
+```sh
+pnpm install
+pnpm typecheck
+pnpm test
+pnpm run test:package-entry
+pnpm pack --dry-run
+```
+
+The standalone test configuration intentionally excludes parent-repository
+profile/Loader coverage and integration tests that compose unpublished sibling
+plugins. Those remain covered in the parent repository.
+
 ## Scope
 
 v0.1 has two mutually exclusive modes:
