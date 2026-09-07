@@ -6,7 +6,7 @@ import type {
   SymbolMatchV1,
 } from '@ds-plugins/dsh-context'
 import { sha256Utf8 } from '@ds-plugins/dsh-context'
-import manifest from '../../../tests/eval/fixtures/v0.2a/manifest.json'
+import manifest from '../fixtures/v0.2a/manifest.json'
 import { computeRetrievalMetrics } from '../src/metrics.js'
 import { evaluatePromotion } from '../src/reports.js'
 import { estimateSourceTokensV1 } from '../src/tokenizer.js'

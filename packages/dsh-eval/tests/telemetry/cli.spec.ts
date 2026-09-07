@@ -2,13 +2,13 @@ import { mkdtemp, mkdir, writeFile, chmod, readFile, rm } from 'node:fs/promises
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { ref, observation, seal, annotation } from './fixture.js'
 import { openTelemetryStore } from '@ds-plugins/dsh-telemetry/storage'
 import { runCli } from '../../src/telemetry/cli.js'
 
-const root = process.cwd()
-const cli = join(root, 'packages/dsh-eval/lib/src/telemetry/cli.js')
+const cli = fileURLToPath(new URL('../../lib/src/telemetry/cli.js', import.meta.url))
 const run = (args: string[]) => spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' })
 
 describe('telemetry CLI', () => {

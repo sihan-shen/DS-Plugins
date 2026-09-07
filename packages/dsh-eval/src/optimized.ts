@@ -24,7 +24,7 @@ import { runFixtureVerifier } from './fixture-verifier.js'
 import { estimateSourceTokensV1 } from './tokenizer.js'
 import type { BaselineFileV1, RetrievalRunV1, SourceMeasurementV1 } from './types.js'
 
-const fixtureRoot = fileURLToPath(new URL(import.meta.url.includes('/lib/') ? '../../../../tests/eval/fixtures/v0.2a/repos/' : '../../../tests/eval/fixtures/v0.2a/repos/', import.meta.url))
+const fixtureRoot = fileURLToPath(new URL(import.meta.url.includes('/lib/') ? '../../fixtures/v0.2a/repos/' : '../fixtures/v0.2a/repos/', import.meta.url))
 const manifestPath = join(fixtureRoot, '..', 'manifest.json')
 const fixedManifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { readonly tasks: readonly EvaluationTaskV1[] }
 

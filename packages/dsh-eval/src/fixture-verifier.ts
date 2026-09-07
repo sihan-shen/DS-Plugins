@@ -6,7 +6,7 @@ import type { EvaluationTaskV1 } from '@ds-plugins/dsh-context'
 import type { BaselineRunV1, RetrievalRunV1 } from './types.js'
 import { readCheckedFixtureFile } from './baseline.js'
 
-const fixtureRoot = fileURLToPath(new URL(import.meta.url.includes('/lib/') ? '../../../../tests/eval/fixtures/v0.2a/repos/' : '../../../tests/eval/fixtures/v0.2a/repos/', import.meta.url))
+const fixtureRoot = fileURLToPath(new URL(import.meta.url.includes('/lib/') ? '../../fixtures/v0.2a/repos/' : '../fixtures/v0.2a/repos/', import.meta.url))
 
 const manifestPath = join(fixtureRoot, '..', 'manifest.json')
 const fixtureManifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { revision?: string; fixture_hashes?: Record<string, string> }
