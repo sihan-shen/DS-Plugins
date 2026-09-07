@@ -29,6 +29,7 @@
 - Create: `packages/dsh-eval/src/governance/resolver.ts`
 - Create: `packages/dsh-eval/tests/governance/resolver.spec.ts`
 - Modify: `packages/dsh-eval/src/governance/index.ts`
+- Modify: `packages/dsh-eval/tests/governance/contracts.spec.ts`
 
 **Interfaces:**
 - Consumes: `OfflineEvidenceResolverInputV1`, `ResolvedRunEvidenceV1`, `TemplateOfflineFixtureDefinitionV1`, `TEMPLATE_OFFLINE_V1_CORPUS_MANIFEST`, `TEMPLATE_OFFLINE_V1_POLICY_REF`, and the existing `validate*` functions.

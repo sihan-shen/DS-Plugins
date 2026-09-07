@@ -764,6 +764,7 @@ describe('governance contracts', () => {
       './contracts.js',
       './corpus.js',
       './policy.js',
+      './resolver.js',
       './validate.js',
     ]))
     expect(new Set(imports)).toEqual(new Set([
@@ -774,6 +775,7 @@ describe('governance contracts', () => {
       './contracts.js',
       './corpus.js',
       './policy.js',
+      './resolver.js',
       './validate.js',
     ]))
   })
