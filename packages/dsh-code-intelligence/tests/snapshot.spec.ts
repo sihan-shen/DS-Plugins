@@ -8,7 +8,7 @@ import { RepositorySnapshotStore } from '../src/snapshot.ts'
 import { parseSnapshotConfig } from '../src/config.ts'
 import { createSessionRuntimeResolver } from '../src/session-runtime.ts'
 
-const fixtureRoot = resolve(fileURLToPath(new URL('../../../tests/fixtures/code-intelligence/repository/', import.meta.url)))
+const fixtureRoot = resolve(fileURLToPath(new URL('./fixtures/repository/', import.meta.url)))
 const createdRoots: string[] = []
 
 afterEach(async () => {

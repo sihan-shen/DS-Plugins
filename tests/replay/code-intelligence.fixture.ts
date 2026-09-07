@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { SessionId } from '@deepseek-ai/dsh-session'
-import { buildSymbolIndex, createCodeIntelligenceTools, extractFallbackSymbols, parseSnapshotConfig, RepositorySnapshotStore } from '../../packages/dsh-code-intelligence/src/index.ts'
+import { buildSymbolIndex, createCodeIntelligenceTools, extractFallbackSymbols, parseSnapshotConfig, RepositorySnapshotStore } from '@ds-plugins/dsh-code-intelligence'
 
 const repositoryRoot = resolve(fileURLToPath(new URL('../..', import.meta.url)))
 const sourceProfileDir = join(repositoryRoot, 'profiles/v0.2b-readonly')

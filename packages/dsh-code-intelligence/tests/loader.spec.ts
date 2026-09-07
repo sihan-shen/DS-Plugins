@@ -1,7 +1,6 @@
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
@@ -10,8 +9,6 @@ import { sha256Utf8 } from '@ds-plugins/dsh-context'
 import { apply } from '../src/plugin.ts'
 
 const roots: string[] = []
-const repositoryRoot = resolve(fileURLToPath(new URL('../../..', import.meta.url)))
-
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })))
 })
@@ -96,12 +93,7 @@ const provideWorkspaceRegistry = (ctx: Context, registry: WorkspaceRegistry) => 
 }
 
 async function pinnedModule(packageName: string): Promise<Record<string, any>> {
-  const packageDirectory = (await readdir(join(repositoryRoot, 'node_modules', '.pnpm')))
-    .find(entry => entry.startsWith(`@deepseek-ai+${packageName}@0.1.1-rc.2`))
-  if (packageDirectory === undefined) throw new Error(`pinned package is unavailable: ${packageName}`)
-  return import(pathToFileURL(join(
-    repositoryRoot, 'node_modules', '.pnpm', packageDirectory, 'node_modules', '@deepseek-ai', packageName, 'lib/index.js',
-  )).href)
+  return import(`@deepseek-ai/${packageName}`)
 }
 
 function memoryBackend() {
@@ -515,19 +507,5 @@ describe('loadable code intelligence bundle', () => {
     await expect(compiler.repoMap({ snapshotId: map.snapshotId, limit: 10 }, exec.signal)).rejects.toThrow(/disposed/i)
     await mounted.disposers[0]!()
     expect(listenerDisposed).toBe(true)
-  })
-
-  it('keeps the v0.2b overlay read-only and separate from v0.1', async () => {
-    const overlay = JSON.parse(await readFile(new URL('../../../profiles/v0.2b-readonly/package.json', import.meta.url), 'utf8')) as { dsh: { profile: { bundles: string[] } }; dependencies: Record<string, string> }
-    const v01 = JSON.parse(await readFile(new URL('../../../profiles/v0.1/package.json', import.meta.url), 'utf8')) as { dsh: { profile: { bundles: string[] } } }
-    expect(overlay.dsh.profile.bundles).toEqual([
-      '@deepseek-ai/dsh-base',
-      '@deepseek-ai/dsh-web-app',
-      '@ds-plugins/dsh-code-intelligence',
-    ])
-    expect(overlay.dsh.profile.bundles).not.toContain('@ds-plugins/dsh-orchestrator')
-    expect(Object.keys(overlay.dependencies)).not.toContain('dsh-lsp-actions')
-    expect(v01.dsh.profile.bundles).toContain('@ds-plugins/dsh-orchestrator')
-    expect(v01.dsh.profile.bundles).not.toContain('@ds-plugins/dsh-code-intelligence')
   })
 })

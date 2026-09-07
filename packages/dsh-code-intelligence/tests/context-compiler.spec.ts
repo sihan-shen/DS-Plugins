@@ -11,8 +11,8 @@ import {
   parseSymbolQueryResultV1,
   sha256Utf8,
 } from '@ds-plugins/dsh-context'
-import { ContextCacheStore } from '../../dsh-context-cache/src/index.ts'
-import type { CacheBoundaryV1, ContextCacheStoreApiV1 } from '../../dsh-context-cache/src/types.ts'
+import { ContextCacheStore } from '@ds-plugins/dsh-context-cache'
+import type { CacheBoundaryV1, ContextCacheStoreApiV1 } from '@ds-plugins/dsh-context-cache'
 import { createContextCompiler } from '../src/context-compiler.ts'
 import { parseSnapshotConfig } from '../src/config.ts'
 import { extractFallbackSymbols } from '../src/fallback.ts'

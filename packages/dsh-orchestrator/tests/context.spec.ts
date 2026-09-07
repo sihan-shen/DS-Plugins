@@ -2,7 +2,7 @@ import { Context } from '@deepseek-ai/cordis'
 import { Session, SessionId } from '@deepseek-ai/dsh-session'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { createContextBlockV1, parseContextBlockV1 } from '@ds-plugins/dsh-context'
-import { createContextTools as createTask3ContextTools } from '../../dsh-code-intelligence/src/tools.ts'
+import { createContextTools as createTask3ContextTools } from '@ds-plugins/dsh-code-intelligence'
 import { describe, expect, it, vi } from 'vitest'
 import {
   CONTEXT_PROMPT_ORDER,

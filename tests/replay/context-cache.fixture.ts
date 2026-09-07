@@ -18,7 +18,7 @@ import {
   extractFallbackSymbols,
   RepositorySnapshotStore,
   type ContextCompilerHandle,
-} from '../../packages/dsh-code-intelligence/src/index.ts'
+} from '@ds-plugins/dsh-code-intelligence'
 
 const RAW_SOURCE_MARKER = 'export const replayRawSourceMarker = true\n'
 
