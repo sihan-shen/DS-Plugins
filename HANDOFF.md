@@ -131,3 +131,12 @@ The reported checks were run with the repository’s available Node/pnpm setup. 
 - `resolveCandidateSupport` replays complete-pool admission, reviewed/observed attribution, budget-rejected evidence, cohort identity, minimum support, first-32 diversity selection, evidence fill, rule mapping, and pattern/lesson/candidate hashes without importing v0.5 builders.
 - Governance validation passed 7 files / 141 tests; package typecheck, build, and import-graph purity checks passed. Full `packages/dsh-eval/tests` validation passed 214 tests with 5 sandbox-only telemetry CLI subprocess failures (`spawnSync /usr/bin/node EPERM`); no governance test failed.
 - The candidate-support worker disconnected after producing its implementation/test patch, so final integration and validation were completed on the main thread. Proposal construction, approval/rejection/promotion/rollback, and the hash-chained ledger remain the next separate v0.6 plan.
+
+## Deferred v0.6 future work (recorded 2026-09-07)
+
+- Design and implement proposal construction and current-active-artifact binding.
+- Add human decision transitions for approval, rejection, promotion, and rollback.
+- Add the occurrence-aware, hash-chained governance ledger with deterministic seed/entry/head digests and immutable proposal snapshots.
+- Add replay tests for stale decisions, duplicate decisions, rollback targets, repeated artifact occurrences, seeded-artifact reintroduction, and exact idempotent retries.
+- Keep artifact publication/signatures, online A/B exposure accounting, quota/cost facts, runtime activation, coordinated multi-surface generations, and physical worker isolation in separate future plans.
+- Do not claim that the current v0.6 runtime changes active profiles, routing, permissions, providers, network state, or credentials; it remains an offline, keyless evidence-validation boundary.
