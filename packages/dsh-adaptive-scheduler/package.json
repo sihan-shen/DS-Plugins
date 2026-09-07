@@ -1,7 +1,7 @@
 {
   "name": "@ds-plugins/dsh-adaptive-scheduler",
   "version": "0.3.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "main": "./lib/src/index.js",
   "types": "./lib/src/index.d.ts",
@@ -11,8 +11,17 @@
       "default": "./lib/src/index.js"
     }
   },
+  "files": [
+    "lib/src",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsc -b",
+    "typecheck": "tsc -b",
     "test": "vitest run",
     "test:package-entry": "pnpm run build && pnpm exec vitest run tests/package-entry.spec.ts"
   },
@@ -21,13 +30,14 @@
       "patch": "./cordis.patch.yml"
     }
   },
-  "dependencies": {
-    "@ds-plugins/dsh-scheduling-contracts": "workspace:*"
-  },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "4.0.1"
+    "@deepseek-ai/cordis": "4.0.1",
+    "@ds-plugins/dsh-scheduling-contracts": "^0.3.0"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.1"
+    "@deepseek-ai/cordis": "4.0.1",
+    "@ds-plugins/dsh-scheduling-contracts": "workspace:*",
+    "typescript": "5.9.3",
+    "vitest": "4.0.18"
   }
 }
