@@ -1,7 +1,11 @@
 {
   "name": "@ds-plugins/dsh-telemetry",
   "version": "0.5.0",
-  "private": true,
+  "description": "Bounded, opt-in local telemetry bundle for DeepSeek Harness",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": "^22.19.0 || >=24"
+  },
   "type": "module",
   "main": "./lib/src/index.js",
   "types": "./lib/src/index.d.ts",
@@ -13,16 +17,32 @@
     "./contracts": {
       "types": "./lib/src/contracts.d.ts",
       "default": "./lib/src/contracts.js"
-    }
+    },
+    "./storage": {
+      "types": "./lib/src/storage.d.ts",
+      "default": "./lib/src/storage.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
   },
+  "files": [
+    "lib/src/**/*.js",
+    "lib/src/**/*.d.ts",
+    "lib/src/**/*.d.ts.map",
+    "cordis.patch.yml",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -b",
+    "prepack": "pnpm run build",
     "test": "vitest run",
     "test:package-entry": "pnpm run build && pnpm exec vitest run tests/package-entry.spec.ts"
   },
   "devDependencies": {
     "@types/node": "26.3.0",
-    "@deepseek-ai/cordis": "4.0.1"
+    "@deepseek-ai/cordis": "4.0.1",
+    "typescript": "5.9.3",
+    "vitest": "4.0.18"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1"

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { ref, observation, seal, annotation } from './fixture.js'
-import { openTelemetryStore } from '../../../dsh-telemetry/src/store.js'
+import { openTelemetryStore } from '@ds-plugins/dsh-telemetry/storage'
 import { runCli } from '../../src/telemetry/cli.js'
 
 const root = process.cwd()

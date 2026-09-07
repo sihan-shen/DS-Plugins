@@ -1,6 +1,65 @@
-# DSH Telemetry
+# `@ds-plugins/dsh-telemetry`
 
-Telemetry is opt-in, local, bounded, and passive. It stores allowlisted observations and pseudonymous references in private JSONL segments. The private `salt.bin` file is never exported. Queue loss, incomplete seals, retention, and missing segments are preserved as incomplete evidence.
+An independent DSH bundle for opt-in, local, bounded, and passive telemetry.
+It stores allowlisted observations and pseudonymous references in private JSONL
+segments. The private `salt.bin` file is never exported. Queue loss,
+incomplete seals, retention, and missing segments are preserved as incomplete
+evidence.
+
+## Status and compatibility
+
+- Parent repository: [DSH-Plugins](https://github.com/sihan-shen/DS-Plugins)
+- DSH dependency line: `0.1.1-rc.2` (`@deepseek-ai/dsh-base`,
+  `@deepseek-ai/dsh-session`, `@deepseek-ai/dsh-subprocess`, and
+  `@deepseek-ai/dsh-tools`)
+- Cordis peer dependency: `4.0.1`
+- Availability: optional and disabled by default; it is not included in the
+  default DSH profiles and is not yet published to npm. Use a local checkout,
+  packed artifact, or a published package when available, then enable it
+  explicitly in the host profile.
+
+## Install
+
+When published, install the package together with the DSH host dependencies:
+
+```bash
+pnpm add @ds-plugins/dsh-telemetry
+```
+
+Until then, use a local checkout or packed artifact from the independent
+repository.
+
+The bundle contributes a disabled-by-default `dsh-telemetry` entry. Enable it
+in the host profile with an absolute private storage root:
+
+```yaml
+- insert:
+    - id: dsh-telemetry
+      name: '@ds-plugins/dsh-telemetry'
+      config:
+        enabled: true
+        storageRoot: /absolute/private/path/.dsh-telemetry
+```
+
+The package exports three public surfaces:
+
+- `@ds-plugins/dsh-telemetry`: Cordis lifecycle and plugin metadata.
+- `@ds-plugins/dsh-telemetry/contracts`: versioned telemetry schemas and validators.
+- `@ds-plugins/dsh-telemetry/storage`: bounded local store used by offline exporters and tests.
+
+Telemetry is not provider access, live-task validation, or an automatic policy
+promotion mechanism. Offline analysis remains owned by `@ds-plugins/dsh-eval`.
+
+## Development
+
+```bash
+pnpm install
+pnpm typecheck
+pnpm test
+pnpm run test:package-entry
+```
+
+## Offline analysis
 
 Build the offline evaluator before using its CLI:
 
