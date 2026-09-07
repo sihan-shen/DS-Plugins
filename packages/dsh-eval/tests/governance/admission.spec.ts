@@ -43,6 +43,13 @@ describe('raw canonical governance admission', () => {
       .toThrow('governance admission non-canonical bytes')
   })
 
+  it('rejects excessive nesting during bounded structural preflight', () => {
+    const nested = `${'['.repeat(33)}0${']'.repeat(33)}`
+
+    expect(() => parseCanonicalGovernanceJson(bytes(nested)))
+      .toThrow('governance admission structure')
+  })
+
   it('does not invoke getters or toJSON during object canonicalization', () => {
     let getterCalls = 0
     let toJsonCalls = 0
