@@ -30,6 +30,11 @@
   "peerDependencies": {
     "@ds-plugins/dsh-context": "^0.2.0"
   },
+  "peerDependenciesMeta": {
+    "@ds-plugins/dsh-context": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/node": "26.3.0"
   }
