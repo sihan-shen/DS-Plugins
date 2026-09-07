@@ -750,6 +750,8 @@ describe('governance contracts', () => {
       readFile(resolve(packageRoot, 'src/governance/contracts.ts'), 'utf8'),
       readFile(resolve(packageRoot, 'src/governance/canonical.ts'), 'utf8'),
       readFile(resolve(packageRoot, 'src/governance/admission.ts'), 'utf8'),
+      readFile(resolve(packageRoot, 'src/governance/corpus.ts'), 'utf8'),
+      readFile(resolve(packageRoot, 'src/governance/policy.ts'), 'utf8'),
       readFile(resolve(packageRoot, 'src/governance/index.ts'), 'utf8'),
     ])
     const imports = sources.flatMap(extractImportSpecifiers)
@@ -760,6 +762,8 @@ describe('governance contracts', () => {
       './admission.js',
       './canonical.js',
       './contracts.js',
+      './corpus.js',
+      './policy.js',
       './validate.js',
     ]))
     expect(new Set(imports)).toEqual(new Set([
@@ -768,6 +772,8 @@ describe('governance contracts', () => {
       './admission.js',
       './canonical.js',
       './contracts.js',
+      './corpus.js',
+      './policy.js',
       './validate.js',
     ]))
   })

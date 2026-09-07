@@ -1,6 +1,30 @@
 export { canonicalGovernanceJson, sha256Canonical } from './canonical.js'
 export { parseCanonicalGovernanceJson } from './admission.js'
 export {
+  TEMPLATE_OFFLINE_V1_CORPUS_MANIFEST,
+  TEMPLATE_OFFLINE_V1_CORPUS_MANIFEST_BODY,
+  TEMPLATE_OFFLINE_V1_CORPUS_MANIFEST_BYTES,
+  TEMPLATE_OFFLINE_V1_CORPUS_MANIFEST_DIGEST,
+  TEMPLATE_OFFLINE_V1_FIXTURE_DEFINITIONS,
+  TEMPLATE_OFFLINE_V1_FIXTURE_INPUT_BODIES,
+  TEMPLATE_OFFLINE_V1_FIXTURE_INPUT_BYTES,
+  TEMPLATE_OFFLINE_V1_FIXTURE_INPUT_DIGESTS,
+  assertTemplateOfflineV1CorpusManifest,
+} from './corpus.js'
+export type {
+  AuthoritativeCorpusManifestV1,
+  GovernanceJsonValue,
+  TemplateOfflineFixtureDefinitionV1,
+  TemplateOfflineFixtureInputBodyV1,
+} from './corpus.js'
+export {
+  TEMPLATE_OFFLINE_V1_POLICY,
+  TEMPLATE_OFFLINE_V1_POLICY_BYTES,
+  TEMPLATE_OFFLINE_V1_POLICY_DIGEST,
+  TEMPLATE_OFFLINE_V1_POLICY_REF,
+} from './policy.js'
+export type { TemplateOfflinePolicyV1 } from './policy.js'
+export {
   validateArmMetricObservationV1,
   validateArtifactRefV1,
   validateCandidateSupportRunV1,
