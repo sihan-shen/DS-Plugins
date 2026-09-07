@@ -30,6 +30,15 @@ This is still an evolving research and implementation workspace, not a drop-in r
 
 The repository uses Node.js `^22.19.0 || >=24` and pnpm `11.7.0`.
 
+The runtime plugins under `packages/` are Git submodules. Clone them with:
+
+```bash
+git clone --recurse-submodules https://github.com/sihan-shen/DS-Plugins.git
+cd DS-Plugins
+```
+
+For an existing checkout, initialize them with `git submodule update --init --recursive`.
+
 ```bash
 pnpm install --frozen-lockfile
 pnpm typecheck

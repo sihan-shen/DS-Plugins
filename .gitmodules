@@ -1,0 +1,20 @@
+[submodule "packages/dsh-telemetry"]
+	path = packages/dsh-telemetry
+	url = https://github.com/sihan-shen/dsh-telemetry.git
+	branch = master
+[submodule "packages/dsh-code-intelligence"]
+	path = packages/dsh-code-intelligence
+	url = https://github.com/sihan-shen/dsh-code-intelligence.git
+	branch = master
+[submodule "packages/dsh-adaptive-scheduler"]
+	path = packages/dsh-adaptive-scheduler
+	url = https://github.com/sihan-shen/dsh-adaptive-scheduler.git
+	branch = master
+[submodule "packages/dsh-orchestrator"]
+	path = packages/dsh-orchestrator
+	url = https://github.com/sihan-shen/dsh-orchestrator.git
+	branch = master
+[submodule "packages/dsh-eval"]
+	path = packages/dsh-eval
+	url = https://github.com/sihan-shen/dsh-eval.git
+	branch = master

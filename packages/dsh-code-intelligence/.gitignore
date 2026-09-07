@@ -1,7 +1,0 @@
-node_modules/
-lib/
-*.tsbuildinfo
-*.tgz
-.vite/
-.vite-temp/
-coverage/

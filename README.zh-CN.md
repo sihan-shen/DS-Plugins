@@ -30,6 +30,15 @@ DS-Plugins 是一套个人 Coding Agent 插件，用来让 Agent 工作更有边
 
 仓库要求 Node.js `^22.19.0 || >=24` 和 pnpm `11.7.0`。
 
+`packages/` 下的运行时插件现在是 Git submodule。请使用以下命令完整克隆：
+
+```bash
+git clone --recurse-submodules https://github.com/sihan-shen/DS-Plugins.git
+cd DS-Plugins
+```
+
+如果已经有现有 checkout，请执行 `git submodule update --init --recursive` 初始化插件仓库。
+
 ```bash
 pnpm install --frozen-lockfile
 pnpm typecheck
