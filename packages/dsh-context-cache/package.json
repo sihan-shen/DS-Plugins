@@ -27,8 +27,8 @@
     "prepack": "pnpm run build",
     "test": "vitest run"
   },
-  "dependencies": {
-    "@ds-plugins/dsh-context": "github:sihan-shen/DS-Plugins#3dc1d0fe7c076f9797855b06959a438395acd2a8&path:/packages/dsh-context"
+  "peerDependencies": {
+    "@ds-plugins/dsh-context": "^0.2.0"
   },
   "devDependencies": {
     "@types/node": "26.3.0"
