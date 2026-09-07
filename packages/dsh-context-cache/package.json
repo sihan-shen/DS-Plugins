@@ -23,6 +23,7 @@
   ],
   "scripts": {
     "build": "tsc -b",
+    "prepare": "pnpm run build",
     "prepack": "pnpm run build",
     "test": "vitest run"
   },
