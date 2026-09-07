@@ -771,6 +771,7 @@ describe('governance contracts', () => {
       '@ds-plugins/dsh-telemetry/contracts',
       'node:crypto',
       './admission.js',
+      './candidate-support.js',
       './canonical.js',
       './contracts.js',
       './corpus.js',

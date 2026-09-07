@@ -135,6 +135,7 @@
 - Create: `packages/dsh-eval/src/governance/candidate-support.ts`
 - Create: `packages/dsh-eval/tests/governance/candidate-support.spec.ts`
 - Modify: `packages/dsh-eval/src/governance/index.ts`
+- Modify: `packages/dsh-eval/tests/governance/contracts.spec.ts`
 
 **Interfaces:**
 - Consumes: `CandidateV1`, `CandidateSupportV1`, `TemplateArtifactV1`, pure telemetry contract validators, `FAILURE_CLASSES`, and `sha256Canonical`.
