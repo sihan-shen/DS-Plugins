@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   TEMPLATE_OFFLINE_V1_CORPUS_MANIFEST,
   TEMPLATE_OFFLINE_V1_POLICY_DIGEST,
+  evaluateGovernanceEvidence,
   sha256Canonical,
   type OfflineEvidenceResolverInputV1,
   type ResolvedRunEvidenceV1,
@@ -128,6 +129,7 @@ describe('authoritative offline evidence resolver', () => {
     expect(evidence.baseArm.metrics[0]).toMatchObject({ value: 1, numerator: 2, denominator: 2 })
     expect(evidence.comparisons.every(comparison => comparison.result === 'pass')).toBe(true)
     expect(evidence.result).toBe('passed')
+    expect(evaluateGovernanceEvidence(evidence)).toEqual(evidence)
   })
 
   it('rejects a self-consistent substituted manifest as non-authoritative', () => {

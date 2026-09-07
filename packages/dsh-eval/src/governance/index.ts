@@ -1,6 +1,6 @@
 export { canonicalGovernanceJson, sha256Canonical } from './canonical.js'
 export { parseCanonicalGovernanceJson } from './admission.js'
-export { resolveOfflineEvidence } from './resolver.js'
+export { evaluateGovernanceEvidence, resolveOfflineEvidence } from './resolver.js'
 export {
   TEMPLATE_OFFLINE_V1_CORPUS_MANIFEST,
   TEMPLATE_OFFLINE_V1_CORPUS_MANIFEST_BODY,
