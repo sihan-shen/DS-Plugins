@@ -18,3 +18,15 @@
 	path = packages/dsh-eval
 	url = https://github.com/sihan-shen/dsh-eval.git
 	branch = master
+[submodule "packages/dsh-scheduling-contracts"]
+	path = packages/dsh-scheduling-contracts
+	url = https://github.com/sihan-shen/dsh-scheduling-contracts.git
+	branch = master
+[submodule "packages/dsh-context"]
+	path = packages/dsh-context
+	url = https://github.com/sihan-shen/dsh-context.git
+	branch = master
+[submodule "packages/dsh-context-cache"]
+	path = packages/dsh-context-cache
+	url = https://github.com/sihan-shen/dsh-context-cache.git
+	branch = master

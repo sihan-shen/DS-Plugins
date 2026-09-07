@@ -105,7 +105,17 @@ importers:
         specifier: 4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.1)(@types/node@26.3.0)(yaml@2.9.0)
 
-  packages/dsh-context: {}
+  packages/dsh-context:
+    devDependencies:
+      '@types/node':
+        specifier: 26.3.0
+        version: 26.3.0
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.1)(@types/node@26.3.0)(yaml@2.9.0)
 
   packages/dsh-context-cache:
     dependencies:
@@ -116,6 +126,12 @@ importers:
       '@types/node':
         specifier: 26.3.0
         version: 26.3.0
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.1)(@types/node@26.3.0)(yaml@2.9.0)
 
   packages/dsh-eval:
     dependencies:
@@ -194,7 +210,17 @@ importers:
         specifier: 4.0.18
         version: 4.0.18(@opentelemetry/api@1.9.1)(@types/node@26.3.0)(yaml@2.9.0)
 
-  packages/dsh-scheduling-contracts: {}
+  packages/dsh-scheduling-contracts:
+    devDependencies:
+      '@types/node':
+        specifier: 26.3.0
+        version: 26.3.0
+      typescript:
+        specifier: 5.9.3
+        version: 5.9.3
+      vitest:
+        specifier: 4.0.18
+        version: 4.0.18(@opentelemetry/api@1.9.1)(@types/node@26.3.0)(yaml@2.9.0)
 
   packages/dsh-telemetry:
     devDependencies:
