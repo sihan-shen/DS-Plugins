@@ -9,11 +9,16 @@
     ".": {
       "types": "./lib/src/index.d.ts",
       "default": "./lib/src/index.js"
+    },
+    "./governance": {
+      "types": "./lib/src/governance/index.d.ts",
+      "default": "./lib/src/governance/index.js"
     }
   },
   "scripts": {
     "build": "tsc -b",
-    "test": "vitest run"
+    "test": "pnpm run build && pnpm run test:types && cd ../.. && pnpm exec vitest run --config vitest.config.ts packages/dsh-eval/tests",
+    "test:types": "tsc --noEmit -p tsconfig.governance-tests.json"
   },
   "dependencies": {
     "@ds-plugins/dsh-code-intelligence": "workspace:*",
