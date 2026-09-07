@@ -1,7 +1,11 @@
 {
   "name": "@ds-plugins/dsh-scheduling-contracts",
   "version": "0.3.0",
-  "private": true,
+  "description": "Versioned scheduling contracts shared by DSH plugins",
+  "packageManager": "pnpm@11.7.0",
+  "engines": {
+    "node": "^22.19.0 || >=24"
+  },
   "type": "module",
   "main": "./lib/src/index.js",
   "types": "./lib/src/index.d.ts",
@@ -11,8 +15,15 @@
       "default": "./lib/src/index.js"
     }
   },
+  "files": [
+    "lib/src/**/*.js",
+    "lib/src/**/*.d.ts",
+    "lib/src/**/*.d.ts.map",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -b",
+    "prepack": "pnpm run build",
     "test": "vitest run"
   }
 }

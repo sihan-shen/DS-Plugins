@@ -30,6 +30,7 @@
     "build": "tsc -b",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.governance-tests.json",
     "test": "pnpm run build && pnpm run typecheck && vitest run --config vitest.config.ts",
+    "test:package-entry": "pnpm run build && pnpm exec vitest run --config vitest.package-entry.config.ts",
     "prepack": "pnpm run build"
   },
   "dependencies": {

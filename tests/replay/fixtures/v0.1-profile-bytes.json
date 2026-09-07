@@ -1,7 +1,7 @@
 {
   "profiles/v0.1/package.json": {
-    "bytes": 533,
-    "sha256": "d47567697ffc358448f960b0cd25003f36d865ec3e097fbba912e881f9f6ecaa"
+    "bytes": 528,
+    "sha256": "a41fde26dde548f418d53f5d20c350cbaa161969f94a1c5e3d6ae025fdbcad08"
   },
   "profiles/v0.1/cordis.patch.yml": {
     "bytes": 591,

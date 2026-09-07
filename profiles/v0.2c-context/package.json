@@ -10,7 +10,7 @@
     "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
     "@ds-plugins/dsh-code-intelligence": "^0.2.0",
     "@ds-plugins/dsh-context-cache": "workspace:*",
-    "@ds-plugins/dsh-orchestrator": "workspace:*"
+    "@ds-plugins/dsh-orchestrator": "^0.1.0"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1"

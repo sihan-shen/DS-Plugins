@@ -7,14 +7,9 @@
     "moduleResolution": "NodeNext",
     "outDir": "./lib",
     "rootDir": ".",
-    "baseUrl": ".",
-    "paths": {
-      "@ds-plugins/dsh-scheduling-contracts": ["../dsh-scheduling-contracts/src/index.ts"]
-    },
     "skipLibCheck": true,
     "strict": true,
     "target": "ES2022"
   },
-  "include": ["src/**/*.ts"],
-  "references": [{ "path": "../dsh-scheduling-contracts" }]
+  "include": ["src/**/*.ts"]
 }

@@ -45,7 +45,7 @@ v0.1 has two mutually exclusive modes:
 - `direct`: one root agent; it registers `targeted_verify` and records `dsh-plugin/run-started`.
 - `single-worker`: the root agent also receives one foreground `delegate_worker` action. It can start exactly one serial child and receives only a validated `HandoffV1`, never a child transcript.
 
-The repository profile at [`../../profiles/v0.1`](../../profiles/v0.1) is a source-workspace profile. Run `pnpm install` at the repository root before loading it; its `workspace:*` dependency is intentionally not a standalone published-profile installation recipe. To use a packed or published bundle elsewhere, create a normal DSH profile with `@deepseek-ai/dsh-base` plus this bundle, then copy the equivalent `ds-orchestrator` configuration below into that profile's `cordis.patch.yml`.
+The repository profile at [`profiles/v0.1`](https://github.com/sihan-shen/DS-Plugins/tree/main/profiles/v0.1) is a source-workspace profile. Its workspace dependency is intentionally not a standalone published-profile installation recipe. To use a packed or published bundle elsewhere, create a normal DSH profile with `@deepseek-ai/dsh-base` plus this bundle, then copy the equivalent `ds-orchestrator` configuration below into that profile's `cordis.patch.yml`.
 
 The profile deliberately provides composition only. Use it beneath a DSH surface such as the official Headless or Web bundle; it does not add its own UI or provider.
 

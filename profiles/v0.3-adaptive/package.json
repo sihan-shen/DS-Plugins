@@ -11,9 +11,9 @@
     "@deepseek-ai/dsh-subprocess": "0.1.1-rc.2",
     "@deepseek-ai/dsh-system-prompt": "0.1.1-rc.2",
     "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
-    "@ds-plugins/dsh-adaptive-scheduler": "workspace:*",
-    "@ds-plugins/dsh-orchestrator": "workspace:*",
-    "@ds-plugins/dsh-scheduling-contracts": "workspace:*"
+    "@ds-plugins/dsh-adaptive-scheduler": "^0.3.0",
+    "@ds-plugins/dsh-orchestrator": "^0.1.0",
+    "@ds-plugins/dsh-scheduling-contracts": "^0.3.0"
   },
   "dsh": {
     "profile": {
