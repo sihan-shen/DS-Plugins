@@ -749,6 +749,7 @@ describe('governance contracts', () => {
     const sources = await Promise.all([
       readFile(resolve(packageRoot, 'src/governance/contracts.ts'), 'utf8'),
       readFile(resolve(packageRoot, 'src/governance/canonical.ts'), 'utf8'),
+      readFile(resolve(packageRoot, 'src/governance/admission.ts'), 'utf8'),
       readFile(resolve(packageRoot, 'src/governance/index.ts'), 'utf8'),
     ])
     const imports = sources.flatMap(extractImportSpecifiers)
@@ -756,14 +757,18 @@ describe('governance contracts', () => {
     expect(imports).toEqual(expect.arrayContaining([
       '@ds-plugins/dsh-telemetry/contracts',
       'node:crypto',
+      './admission.js',
       './canonical.js',
       './contracts.js',
+      './validate.js',
     ]))
     expect(new Set(imports)).toEqual(new Set([
       '@ds-plugins/dsh-telemetry/contracts',
       'node:crypto',
+      './admission.js',
       './canonical.js',
       './contracts.js',
+      './validate.js',
     ]))
   })
 

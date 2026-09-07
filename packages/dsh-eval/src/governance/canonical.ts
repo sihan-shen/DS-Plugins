@@ -102,12 +102,13 @@ function canonicalize(
     const ownProperties = Object.getOwnPropertyNames(value)
     const lengthDescriptor = Object.getOwnPropertyDescriptor(value, 'length')
     if (!lengthDescriptor || !('value' in lengthDescriptor)) fail('array length must be a data property')
+    const descriptors = new Map<string, PropertyDescriptor & { value: unknown }>()
     for (const property of ownProperties) {
       if (property === 'length') continue
       if (!isCanonicalArrayIndex(property) || Number(property) >= length) {
         fail('invalid array property')
       }
-      assertDataProperty(Object.getOwnPropertyDescriptor(value, property))
+      descriptors.set(property, assertDataProperty(Object.getOwnPropertyDescriptor(value, property)))
     }
     for (let index = 0; index < length; index += 1) {
       if (!Object.prototype.hasOwnProperty.call(value, String(index))) fail(`array is sparse at index ${index}`)
@@ -117,7 +118,7 @@ function canonicalize(
     writer.write('[')
     for (let index = 0; index < length; index += 1) {
       if (index !== 0) writer.write(',')
-      canonicalize(value[index], writer, seen, depth + 1, state)
+      canonicalize(descriptors.get(String(index))!.value, writer, seen, depth + 1, state)
     }
     writer.write(']')
     seen.delete(value)
@@ -146,12 +147,12 @@ function canonicalize(
   seen.delete(value)
 }
 
-function canonicalJson(value: unknown): string {
+export function canonicalGovernanceJson(value: unknown): string {
   const writer = new CanonicalWriter()
   canonicalize(value, writer, new WeakSet<object>(), 0, { nodes: 0 })
   return writer.toString()
 }
 
 export function sha256Canonical(value: unknown): string {
-  return createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex')
+  return createHash('sha256').update(canonicalGovernanceJson(value), 'utf8').digest('hex')
 }
