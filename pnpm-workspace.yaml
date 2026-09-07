@@ -2,6 +2,25 @@ packages:
   - packages/*
   - profiles/*
 
+# Keep local shared packages linked during monorepo development and satisfy
+# optional peer dependencies without consulting npm for private packages.
+linkWorkspacePackages: true
+
+# Git-hosted plugin dependencies are intentional in this no-npm workspace.
+blockExoticSubdeps: false
+
+# The parent workspace develops the submodules from their checked-out sources;
+# standalone repositories keep the GitHub specs in their own manifests.
+overrides:
+  '@ds-plugins/dsh-context': 'link:packages/dsh-context'
+  '@ds-plugins/dsh-context-cache': 'link:packages/dsh-context-cache'
+  '@ds-plugins/dsh-scheduling-contracts': 'link:packages/dsh-scheduling-contracts'
+  '@ds-plugins/dsh-telemetry': 'link:packages/dsh-telemetry'
+  '@ds-plugins/dsh-code-intelligence': 'link:packages/dsh-code-intelligence'
+  '@ds-plugins/dsh-adaptive-scheduler': 'link:packages/dsh-adaptive-scheduler'
+  '@ds-plugins/dsh-orchestrator': 'link:packages/dsh-orchestrator'
+  '@ds-plugins/dsh-eval': 'link:packages/dsh-eval'
+
 # pnpm blocks dependency lifecycle scripts until this workspace reviews them.
 # The native runtime providers and test bundler need their maintained scripts;
 # the remaining scripts are not required for this profile bundle.

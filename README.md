@@ -39,6 +39,14 @@ cd DS-Plugins
 
 For an existing checkout, initialize them with `git submodule update --init --recursive`.
 
+Individual plugins can also be installed directly from GitHub without publishing to npm:
+
+```bash
+dsh plugin --profile web add github:sihan-shen/dsh-telemetry#c4ddfa3417887796826754d4370f7932bb6bf19d
+```
+
+`dsh-code-intelligence`, `dsh-adaptive-scheduler`, and `dsh-orchestrator` also fetch shared packages from a pinned commit in the parent repository. With pnpm 11, add `blockExoticSubdeps: false` to the target profile's `pnpm-workspace.yaml`, then allow the Git packages' `prepare` scripts when pnpm prints its `allowBuilds` instructions. `dsh-eval` is an offline evaluation CLI, not a DSH runtime bundle.
+
 ```bash
 pnpm install --frozen-lockfile
 pnpm typecheck

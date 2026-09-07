@@ -39,6 +39,14 @@ cd DS-Plugins
 
 如果已经有现有 checkout，请执行 `git submodule update --init --recursive` 初始化插件仓库。
 
+独立插件也可以直接从 GitHub 安装，不需要发布 npm：
+
+```bash
+dsh plugin --profile web add github:sihan-shen/dsh-telemetry#c4ddfa3417887796826754d4370f7932bb6bf19d
+```
+
+`dsh-code-intelligence`、`dsh-adaptive-scheduler` 和 `dsh-orchestrator` 还会从父仓库的固定 commit 获取共享包。使用 pnpm 11 时，需要在目标 profile 的 `pnpm-workspace.yaml` 中加入 `blockExoticSubdeps: false`，并按首次安装时 pnpm 输出的提示允许对应 Git 包执行 `prepare` 构建脚本。`dsh-eval` 是离线评估 CLI，不是 DSH runtime bundle。
+
 ```bash
 pnpm install --frozen-lockfile
 pnpm typecheck
