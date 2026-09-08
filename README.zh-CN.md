@@ -47,6 +47,8 @@ dsh plugin --profile web add github:sihan-shen/dsh-telemetry#c4ddfa3417887796826
 
 `dsh-code-intelligence`、`dsh-adaptive-scheduler` 和 `dsh-orchestrator` 还会从父仓库的固定 commit 获取共享包。使用 pnpm 11 时，需要在目标 profile 的 `pnpm-workspace.yaml` 中加入 `blockExoticSubdeps: false`，并按首次安装时 pnpm 输出的提示允许对应 Git 包执行 `prepare` 构建脚本。`dsh-eval` 是离线评估 CLI，不是 DSH runtime bundle。
 
+当前运行时兼容线为 DSH `0.1.2-rc.1` 和 Cordis `4.0.2`。目标 DSH 包源码以已审阅的 upstream commit [`a66e4702047846cdaa10c66c9d3df3951f5ea70d`](https://github.com/deepseek-ai/DeepSeek-Harness/commit/a66e4702047846cdaa10c66c9d3df3951f5ea70d) 为准。
+
 ```bash
 pnpm install --frozen-lockfile
 pnpm typecheck

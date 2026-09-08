@@ -47,6 +47,8 @@ dsh plugin --profile web add github:sihan-shen/dsh-telemetry#c4ddfa3417887796826
 
 `dsh-code-intelligence`, `dsh-adaptive-scheduler`, and `dsh-orchestrator` also fetch shared packages from a pinned commit in the parent repository. With pnpm 11, add `blockExoticSubdeps: false` to the target profile's `pnpm-workspace.yaml`, then allow the Git packages' `prepare` scripts when pnpm prints its `allowBuilds` instructions. `dsh-eval` is an offline evaluation CLI, not a DSH runtime bundle.
 
+The current runtime compatibility line is DSH `0.1.2-rc.1` and Cordis `4.0.2`. Target DSH package source availability is tied to the reviewed upstream commit [`a66e4702047846cdaa10c66c9d3df3951f5ea70d`](https://github.com/deepseek-ai/DeepSeek-Harness/commit/a66e4702047846cdaa10c66c9d3df3951f5ea70d).
+
 ```bash
 pnpm install --frozen-lockfile
 pnpm typecheck

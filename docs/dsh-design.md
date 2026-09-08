@@ -5,7 +5,7 @@
 
 基于 DeepSeek Harness（DSH）的个人 Coding Agent 插件方案。目标是构建一个 **ChatGPT/Codex-first、上下文经济、按需多 Agent、可评估演进** 的开发代理，而不是重写一个通用 Agent runtime。
 
-> 当前状态：DSH v0.6 已覆盖 Direct / Single Worker、Handoff、预算、targeted verification，以及受治理的离线证据解析、评估和 replay support。本仓库不执行本地源码或付费 provider smoke；`pnpm test:provider` 始终安全禁用。使用和限制见 [`packages/dsh-orchestrator/README.md`](packages/dsh-orchestrator/README.md)。
+> 当前状态：DSH v0.6 已覆盖 Direct / Single Worker、Handoff、预算、targeted verification，以及受治理的离线证据解析、评估和 replay support。当前运行时兼容线为 DSH `0.1.2-rc.1` 和 Cordis `4.0.2`；目标 DSH 包源码以已审阅的 upstream commit [`a66e4702047846cdaa10c66c9d3df3951f5ea70d`](https://github.com/deepseek-ai/DeepSeek-Harness/commit/a66e4702047846cdaa10c66c9d3df3951f5ea70d) 为准。本仓库不执行本地源码或付费 provider smoke；`pnpm test:provider` 始终安全禁用。使用和限制见 [`packages/dsh-orchestrator/README.md`](packages/dsh-orchestrator/README.md)。
 
 ## Fedora development environment
 
@@ -47,6 +47,7 @@ export DSH_HOME="$PWD/.dsh"
 mkdir -p upstream
 git clone https://github.com/deepseek-ai/deepseek-harness.git upstream/deepseek-harness
 cd upstream/deepseek-harness
+git checkout a66e4702047846cdaa10c66c9d3df3951f5ea70d
 pnpm --version
 pnpm install
 pnpm run typecheck
