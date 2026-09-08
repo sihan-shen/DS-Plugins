@@ -4,6 +4,8 @@
 
 > 面向 DeepSeek Harness 的 ChatGPT/Codex-first 编排层。
 
+当前开发重点在dsh-code-intelligence项目，其他项目迭代暂停。
+
 DS-Plugins 是一套个人 Coding Agent 插件，用来让 Agent 工作更有边界：保持工作上下文足够小，只在确实有收益时委派任务，并要求用证据确认结果。项目通过插件和编排层扩展 DeepSeek Harness，而不是替换底层的 Agent loop。
 
 ## 为什么做这个项目

@@ -4,6 +4,8 @@
 
 > ChatGPT/Codex-first orchestration for DeepSeek Harness.
 
+当前开发重点在dsh-code-intelligence项目，其他项目迭代暂停。
+
 DS-Plugins is a personal coding-agent plugin stack for making agent work more deliberate: keep the working context small, delegate only when it helps, and require evidence before accepting a result. It extends DeepSeek Harness through plugins and orchestration instead of replacing the underlying agent loop.
 
 ## Why this exists
