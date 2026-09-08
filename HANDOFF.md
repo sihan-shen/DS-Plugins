@@ -165,3 +165,9 @@ The reported checks were run with the repository’s available Node/pnpm setup. 
 - The smallest verified correction is the root `devDependencies` entry `@deepseek-ai/dsh-attachment: 0.1.2-rc.1`; no profile dependency, override, source, test, or submodule change is required.
 - After `pnpm install --lockfile-only`, the lockfile uses `@deepseek-ai/dsh-subagent@0.1.2-rc.1(12c4f18ee06fe705de3246b06de9f58a)`, whose dependency is `@deepseek-ai/dsh-attachment@0.1.2-rc.1`.
 - Validation: Task 1 consistency test 2/2; installed `admitPromptContent` export check passed; current Task 3 loader suite 7/7; full orchestrator directory 382/383 with only the known profile byte/digest fixture drift (`521` / `370d79470f50b706f911f3598b593f3140e83313a4f0d44c9ac836af6c317fe9` received versus `528` / `a41fde26dde548f418d53f5d20c350cbaa161969f94a1c5e3d6ae025fdbcad08` expected), deferred to Task 6/8.
+
+## DSH 0.1.2-rc.1 continuation (2026-09-08)
+
+- Task 5 documentation and scheduler package-entry expectations are implemented in submodule commits `6fe5325` (adaptive scheduler), `bea0ff6` (eval README), `3ce3623` (code intelligence README), `69b3383` (orchestrator README), and `c77f098` (telemetry README), plus parent current-doc commit `f244c5e`. Historical candidate artifacts remain unchanged. Astra/Low review dispatches twice terminated with adapter EOF before returning a report; no review pass is claimed.
+- Task 6 adds `tests/replay/profile-compatibility.fixture.ts` and a fresh-root resolution gate covering `v0.1`, `v0.2b-readonly`, `v0.2c-context`, and `v0.3-adaptive`; commit `08d6da7`. The named Loader/replay suite passed 27/27 before the added gate and context-cache replay passed 8/8 after it. Parent `pnpm typecheck` passed.
+- Task 7 standalone frozen-install consumer checker is not yet implemented. Do not claim the final branch complete until that checker and the final acceptance/pointer reconciliation are executed.
