@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MAX_CONTEXT_SESSION_BYTES, truncateUtf8ByBytes } from '../../packages/dsh-context/src/index.ts'
 import { createContextCacheReplayFixture, type ContextCacheReplayFixture } from './context-cache.fixture.ts'
+import { copyProfileResolutionSurface, profileNames } from './profile-compatibility.fixture.ts'
 
 const fixtures: ContextCacheReplayFixture[] = []
 
@@ -17,6 +18,27 @@ async function fixture(): Promise<ContextCacheReplayFixture> {
 }
 
 describe('v0.2c separate provider-disabled profile', () => {
+  it('resolves every profile from its own fresh module surface at the target versions', async () => {
+    const expected = new Map([
+      ['v0.1', ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-session', '@deepseek-ai/cordis']],
+      ['v0.2b-readonly', ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-tools', '@deepseek-ai/cordis']],
+      ['v0.2c-context', ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-session', '@deepseek-ai/cordis']],
+      ['v0.3-adaptive', ['@deepseek-ai/dsh-base', '@deepseek-ai/dsh-session', '@deepseek-ai/cordis']],
+    ] as const)
+    const surfaces = await Promise.all(profileNames.map(profile => copyProfileResolutionSurface(profile)))
+    try {
+      for (const surface of surfaces) {
+        const packageNames = expected.get(surface.profile) ?? []
+        for (const name of packageNames) {
+          const version = surface.resolveManifest(name).version
+          expect(version, `${surface.profile} ${name}`).toBe(name === '@deepseek-ai/cordis' ? '4.0.2' : '0.1.2-rc.1')
+        }
+      }
+    } finally {
+      await Promise.all(surfaces.map(surface => surface.dispose()))
+    }
+  })
+
   it('composes the official Web workspace service with orchestrator, code intelligence, and cache', async () => {
     const root = new URL('../../', import.meta.url)
     const manifest = JSON.parse(await readFile(new URL('profiles/v0.2c-context/package.json', root), 'utf8')) as {
