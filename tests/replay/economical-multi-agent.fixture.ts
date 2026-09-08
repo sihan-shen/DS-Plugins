@@ -1,4 +1,4 @@
-import type { TaskDagV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import type { TaskDagV1 } from '@han_05/dsh-scheduling-contracts'
 
 const profile = { coding: 50, reasoning: 50, toolUse: 50, repoContext: 50, risk: 50, difficulty: 50 } as const
 const constraints = { maxWorkers: 1, maxOutputTokens: 32_000, maxLatencyMs: 60_000, allowPaidFallback: false, requiredTools: ['read_file'] } as const

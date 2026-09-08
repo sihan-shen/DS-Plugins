@@ -4,7 +4,7 @@
 
 **Goal:** Add the first runtime v0.6 slice that accepts only bounded, canonical governance input and validates the exported governance contracts without mutating caller data.
 
-**Architecture:** Keep admission and validation inside the pure `@ds-plugins/dsh-eval/governance` subpath. Separate raw-byte canonical admission from detached object validation so raw APIs can compare original bytes while object APIs can validate and serialize without claiming raw provenance. Reuse the existing governance canonicalizer only after making its byte, depth, node, field, string, and error limits explicit.
+**Architecture:** Keep admission and validation inside the pure `@han_05/dsh-eval/governance` subpath. Separate raw-byte canonical admission from detached object validation so raw APIs can compare original bytes while object APIs can validate and serialize without claiming raw provenance. Reuse the existing governance canonicalizer only after making its byte, depth, node, field, string, and error limits explicit.
 
 **Tech Stack:** TypeScript, Node `TextDecoder`/`TextEncoder`, Vitest, existing governance contracts, existing `node:crypto` hashing.
 

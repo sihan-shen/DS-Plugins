@@ -38,7 +38,7 @@
     "insert": [
       {
         "id": "dsh-code-intelligence",
-        "name": "@ds-plugins/dsh-code-intelligence",
+        "name": "@han_05/dsh-code-intelligence",
         "config": {
           "deploymentRoot": ".",
           "revision": "v0.2c-context",

@@ -12,14 +12,14 @@ blockExoticSubdeps: false
 # The parent workspace develops the submodules from their checked-out sources;
 # standalone repositories keep the GitHub specs in their own manifests.
 overrides:
-  '@ds-plugins/dsh-context': 'link:packages/dsh-context'
-  '@ds-plugins/dsh-context-cache': 'link:packages/dsh-context-cache'
-  '@ds-plugins/dsh-scheduling-contracts': 'link:packages/dsh-scheduling-contracts'
-  '@ds-plugins/dsh-telemetry': 'link:packages/dsh-telemetry'
-  '@ds-plugins/dsh-code-intelligence': 'link:packages/dsh-code-intelligence'
-  '@ds-plugins/dsh-adaptive-scheduler': 'link:packages/dsh-adaptive-scheduler'
-  '@ds-plugins/dsh-orchestrator': 'link:packages/dsh-orchestrator'
-  '@ds-plugins/dsh-eval': 'link:packages/dsh-eval'
+  '@han_05/dsh-context': 'link:packages/dsh-context'
+  '@han_05/dsh-context-cache': 'link:packages/dsh-context-cache'
+  '@han_05/dsh-scheduling-contracts': 'link:packages/dsh-scheduling-contracts'
+  '@han_05/dsh-telemetry': 'link:packages/dsh-telemetry'
+  '@han_05/dsh-code-intelligence': 'link:packages/dsh-code-intelligence'
+  '@han_05/dsh-adaptive-scheduler': 'link:packages/dsh-adaptive-scheduler'
+  '@han_05/dsh-orchestrator': 'link:packages/dsh-orchestrator'
+  '@han_05/dsh-eval': 'link:packages/dsh-eval'
 
 # pnpm blocks dependency lifecycle scripts until this workspace reviews them.
 # The native runtime providers and test bundler need their maintained scripts;

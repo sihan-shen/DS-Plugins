@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import * as yaml from 'js-yaml'
-import { BudgetController, parseConfig, resolveSchedule } from '@ds-plugins/dsh-orchestrator'
-import { createAdaptiveScheduler, parseAdaptiveSchedulerConfig } from '@ds-plugins/dsh-adaptive-scheduler'
+import { BudgetController, parseConfig, resolveSchedule } from '@han_05/dsh-orchestrator'
+import { createAdaptiveScheduler, parseAdaptiveSchedulerConfig } from '@han_05/dsh-adaptive-scheduler'
 import { replayScheduledDirectFixture } from './direct.fixture.ts'
 import { replayInvalidWorkerDecisionFixture, replaySingleWorkerFixture } from './single-worker.fixture.ts'
 

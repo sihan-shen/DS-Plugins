@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { parseEvaluationRecordV1, parsePromotionReportV1, type EvaluationRecordV1, type EvaluationTaskV1 } from '@ds-plugins/dsh-context'
+import { parseEvaluationRecordV1, parsePromotionReportV1, type EvaluationRecordV1, type EvaluationTaskV1 } from '@han_05/dsh-context'
 import manifest from './fixtures/v0.2a/manifest.json'
 import { runBaselineThreeTimes } from '../../packages/dsh-eval/src/baseline.js'
 import { runFixtureVerifier } from '../../packages/dsh-eval/src/fixture-verifier.js'

@@ -4,12 +4,12 @@ import { fileURLToPath } from 'node:url'
 export default defineConfig({
   resolve: {
     alias: {
-      '@ds-plugins/dsh-telemetry/contracts': fileURLToPath(new URL('./packages/dsh-telemetry/src/contracts.ts', import.meta.url)),
-      '@ds-plugins/dsh-context': fileURLToPath(new URL('./packages/dsh-context/src/index.ts', import.meta.url)),
-      '@ds-plugins/dsh-code-intelligence': fileURLToPath(new URL('./packages/dsh-code-intelligence/lib/index.mjs', import.meta.url)),
-      '@ds-plugins/dsh-scheduling-contracts': fileURLToPath(new URL('./packages/dsh-scheduling-contracts/src/index.ts', import.meta.url)),
-      '@ds-plugins/dsh-orchestrator': fileURLToPath(new URL('./packages/dsh-orchestrator/src/index.ts', import.meta.url)),
-      '@ds-plugins/dsh-adaptive-scheduler': fileURLToPath(new URL('./packages/dsh-adaptive-scheduler/src/index.ts', import.meta.url)),
+      '@han_05/dsh-telemetry/contracts': fileURLToPath(new URL('./packages/dsh-telemetry/src/contracts.ts', import.meta.url)),
+      '@han_05/dsh-context': fileURLToPath(new URL('./packages/dsh-context/src/index.ts', import.meta.url)),
+      '@han_05/dsh-code-intelligence': fileURLToPath(new URL('./packages/dsh-code-intelligence/lib/index.mjs', import.meta.url)),
+      '@han_05/dsh-scheduling-contracts': fileURLToPath(new URL('./packages/dsh-scheduling-contracts/src/index.ts', import.meta.url)),
+      '@han_05/dsh-orchestrator': fileURLToPath(new URL('./packages/dsh-orchestrator/src/index.ts', import.meta.url)),
+      '@han_05/dsh-adaptive-scheduler': fileURLToPath(new URL('./packages/dsh-adaptive-scheduler/src/index.ts', import.meta.url)),
     },
   },
   test: {

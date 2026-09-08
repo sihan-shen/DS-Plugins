@@ -1,13 +1,13 @@
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
-import { parseParallelAggregateV1 } from '@ds-plugins/dsh-scheduling-contracts'
-import { parseScheduleSelectedV1 } from '@ds-plugins/dsh-scheduling-contracts'
+import { parseParallelAggregateV1 } from '@han_05/dsh-scheduling-contracts'
+import { parseScheduleSelectedV1 } from '@han_05/dsh-scheduling-contracts'
 import {
   parseParallelStartedV1,
   parseWorkerFinishedV1,
   parseWorkerRequestedV1,
   type ParallelStartedV1,
-} from '@ds-plugins/dsh-orchestrator'
-import type { ParallelAggregateV1 } from '@ds-plugins/dsh-scheduling-contracts'
+} from '@han_05/dsh-orchestrator'
+import type { ParallelAggregateV1 } from '@han_05/dsh-scheduling-contracts'
 
 export interface ParallelReplayResultV1 {
   readonly complete: boolean

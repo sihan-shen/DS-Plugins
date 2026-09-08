@@ -4,7 +4,7 @@
 
 **Goal:** Add the pure v0.6 runtime that binds supplied governance evidence to the compiled revision-1 policy/corpus, derives offline evaluation results, and independently replays candidate-support selection.
 
-**Architecture:** Keep the runtime inside `@ds-plugins/dsh-eval/governance`. `resolver.ts` accepts only bounded in-memory snapshots and derives authoritative run/pair accounting; `evaluator.ts` derives policy metrics, comparisons, and result from resolved evidence; `candidate-support.ts` replays the v0.5 failure-only cohort and deterministic evidence-selection rules. These modules consume the existing detached validators and frozen policy/corpus constants, never filesystem, provider, network, clock, profile, or telemetry-builder code.
+**Architecture:** Keep the runtime inside `@han_05/dsh-eval/governance`. `resolver.ts` accepts only bounded in-memory snapshots and derives authoritative run/pair accounting; `evaluator.ts` derives policy metrics, comparisons, and result from resolved evidence; `candidate-support.ts` replays the v0.5 failure-only cohort and deterministic evidence-selection rules. These modules consume the existing detached validators and frozen policy/corpus constants, never filesystem, provider, network, clock, profile, or telemetry-builder code.
 
 **Tech Stack:** TypeScript, existing governance canonicalization and validators, frozen policy/corpus constants, pure telemetry contract types, Vitest.
 

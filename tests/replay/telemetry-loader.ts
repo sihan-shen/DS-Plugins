@@ -47,7 +47,7 @@ export async function withTelemetryLoader<T>(callback: (value: {
       reloadTelemetry: async () => {
         await loader.create({
           id: 'dsh-telemetry',
-          name: '@ds-plugins/dsh-telemetry',
+          name: '@han_05/dsh-telemetry',
           config: { enabled: true, storageRoot },
         }, 'include')
         return injectedTelemetry(runtime.context)

@@ -1,12 +1,12 @@
 {
-  "name": "@ds-plugins/dsh-v0.2b-readonly-profile",
+  "name": "@han_05/dsh-v0.2b-readonly-profile",
   "version": "0.2.0",
   "private": true,
   "dependencies": {
     "@deepseek-ai/dsh-base": "0.1.1-rc.2",
     "@deepseek-ai/dsh-subprocess": "0.1.1-rc.2",
     "@deepseek-ai/dsh-tools": "0.1.1-rc.2",
-    "@ds-plugins/dsh-code-intelligence": "workspace:*"
+    "@han_05/dsh-code-intelligence": "workspace:*"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1"
@@ -16,7 +16,7 @@
       "bundles": [
         "@deepseek-ai/dsh-base",
         "@deepseek-ai/dsh-web-app",
-        "@ds-plugins/dsh-code-intelligence"
+        "@han_05/dsh-code-intelligence"
       ]
     }
   }

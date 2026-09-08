@@ -5,14 +5,14 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@ds-plugins/dsh-context': link:packages/dsh-context
-  '@ds-plugins/dsh-context-cache': link:packages/dsh-context-cache
-  '@ds-plugins/dsh-scheduling-contracts': link:packages/dsh-scheduling-contracts
-  '@ds-plugins/dsh-telemetry': link:packages/dsh-telemetry
-  '@ds-plugins/dsh-code-intelligence': link:packages/dsh-code-intelligence
-  '@ds-plugins/dsh-adaptive-scheduler': link:packages/dsh-adaptive-scheduler
-  '@ds-plugins/dsh-orchestrator': link:packages/dsh-orchestrator
-  '@ds-plugins/dsh-eval': link:packages/dsh-eval
+  '@han_05/dsh-context': link:packages/dsh-context
+  '@han_05/dsh-context-cache': link:packages/dsh-context-cache
+  '@han_05/dsh-scheduling-contracts': link:packages/dsh-scheduling-contracts
+  '@han_05/dsh-telemetry': link:packages/dsh-telemetry
+  '@han_05/dsh-code-intelligence': link:packages/dsh-code-intelligence
+  '@han_05/dsh-adaptive-scheduler': link:packages/dsh-adaptive-scheduler
+  '@han_05/dsh-orchestrator': link:packages/dsh-orchestrator
+  '@han_05/dsh-eval': link:packages/dsh-eval
 
 importers:
 
@@ -45,7 +45,7 @@ importers:
 
   packages/dsh-adaptive-scheduler:
     dependencies:
-      '@ds-plugins/dsh-scheduling-contracts':
+      '@han_05/dsh-scheduling-contracts':
         specifier: link:../dsh-scheduling-contracts
         version: link:../dsh-scheduling-contracts
     devDependencies:
@@ -64,10 +64,10 @@ importers:
       '@deepseek-ai/dsh-subprocess':
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(@deepseek-ai/cordis@4.0.1)(@deepseek-ai/dsh-invariants@0.1.1-rc.2(@deepseek-ai/cordis@4.0.1))
-      '@ds-plugins/dsh-context':
+      '@han_05/dsh-context':
         specifier: link:../dsh-context
         version: link:../dsh-context
-      '@ds-plugins/dsh-context-cache':
+      '@han_05/dsh-context-cache':
         specifier: link:../dsh-context-cache
         version: link:../dsh-context-cache
       picomatch:
@@ -119,7 +119,7 @@ importers:
 
   packages/dsh-context-cache:
     dependencies:
-      '@ds-plugins/dsh-context':
+      '@han_05/dsh-context':
         specifier: link:../dsh-context
         version: link:../dsh-context
     devDependencies:
@@ -138,13 +138,13 @@ importers:
       '@dqbd/tiktoken':
         specifier: 1.0.22
         version: 1.0.22
-      '@ds-plugins/dsh-code-intelligence':
+      '@han_05/dsh-code-intelligence':
         specifier: link:../dsh-code-intelligence
         version: link:../dsh-code-intelligence
-      '@ds-plugins/dsh-context':
+      '@han_05/dsh-context':
         specifier: link:../dsh-context
         version: link:../dsh-context
-      '@ds-plugins/dsh-telemetry':
+      '@han_05/dsh-telemetry':
         specifier: link:../dsh-telemetry
         version: link:../dsh-telemetry
     devDependencies:
@@ -160,10 +160,10 @@ importers:
 
   packages/dsh-orchestrator:
     dependencies:
-      '@ds-plugins/dsh-context':
+      '@han_05/dsh-context':
         specifier: link:../dsh-context
         version: link:../dsh-context
-      '@ds-plugins/dsh-scheduling-contracts':
+      '@han_05/dsh-scheduling-contracts':
         specifier: link:../dsh-scheduling-contracts
         version: link:../dsh-scheduling-contracts
     devDependencies:
@@ -254,7 +254,7 @@ importers:
       '@deepseek-ai/dsh-tools':
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(119bc70f73f8eddebfaa6b47561adeb3)
-      '@ds-plugins/dsh-orchestrator':
+      '@han_05/dsh-orchestrator':
         specifier: link:../../packages/dsh-orchestrator
         version: link:../../packages/dsh-orchestrator
 
@@ -269,7 +269,7 @@ importers:
       '@deepseek-ai/dsh-tools':
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(119bc70f73f8eddebfaa6b47561adeb3)
-      '@ds-plugins/dsh-code-intelligence':
+      '@han_05/dsh-code-intelligence':
         specifier: link:../../packages/dsh-code-intelligence
         version: link:../../packages/dsh-code-intelligence
     devDependencies:
@@ -294,13 +294,13 @@ importers:
       '@deepseek-ai/dsh-tools':
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(119bc70f73f8eddebfaa6b47561adeb3)
-      '@ds-plugins/dsh-code-intelligence':
+      '@han_05/dsh-code-intelligence':
         specifier: link:../../packages/dsh-code-intelligence
         version: link:../../packages/dsh-code-intelligence
-      '@ds-plugins/dsh-context-cache':
+      '@han_05/dsh-context-cache':
         specifier: link:../../packages/dsh-context-cache
         version: link:../../packages/dsh-context-cache
-      '@ds-plugins/dsh-orchestrator':
+      '@han_05/dsh-orchestrator':
         specifier: link:../../packages/dsh-orchestrator
         version: link:../../packages/dsh-orchestrator
     devDependencies:
@@ -334,13 +334,13 @@ importers:
       '@deepseek-ai/dsh-tools':
         specifier: 0.1.1-rc.2
         version: 0.1.1-rc.2(119bc70f73f8eddebfaa6b47561adeb3)
-      '@ds-plugins/dsh-adaptive-scheduler':
+      '@han_05/dsh-adaptive-scheduler':
         specifier: link:../../packages/dsh-adaptive-scheduler
         version: link:../../packages/dsh-adaptive-scheduler
-      '@ds-plugins/dsh-orchestrator':
+      '@han_05/dsh-orchestrator':
         specifier: link:../../packages/dsh-orchestrator
         version: link:../../packages/dsh-orchestrator
-      '@ds-plugins/dsh-scheduling-contracts':
+      '@han_05/dsh-scheduling-contracts':
         specifier: link:../../packages/dsh-scheduling-contracts
         version: link:../../packages/dsh-scheduling-contracts
 

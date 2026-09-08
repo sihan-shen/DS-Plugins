@@ -33,17 +33,17 @@ describe('v0.2c separate provider-disabled profile', () => {
     expect(manifest.dsh.profile.bundles).toEqual([
       '@deepseek-ai/dsh-base',
       '@deepseek-ai/dsh-web-app',
-      '@ds-plugins/dsh-orchestrator',
-      '@ds-plugins/dsh-code-intelligence',
+      '@han_05/dsh-orchestrator',
+      '@han_05/dsh-code-intelligence',
     ])
     expect(Object.keys(manifest.dependencies)).toEqual(expect.arrayContaining([
       '@deepseek-ai/dsh-base',
-      '@ds-plugins/dsh-orchestrator',
-      '@ds-plugins/dsh-code-intelligence',
-      '@ds-plugins/dsh-context-cache',
+      '@han_05/dsh-orchestrator',
+      '@han_05/dsh-code-intelligence',
+      '@han_05/dsh-context-cache',
     ]))
     expect(JSON.stringify(patch)).toContain('v0.2c-context')
-    expect(v01Manifest.dsh.profile.bundles).toEqual(['@deepseek-ai/dsh-base', '@ds-plugins/dsh-orchestrator'])
+    expect(v01Manifest.dsh.profile.bundles).toEqual(['@deepseek-ai/dsh-base', '@han_05/dsh-orchestrator'])
     expect(v01Patch).not.toContain('dsh-code-intelligence')
     expect(v01Patch).not.toContain('dsh-context-cache')
     expect(rootManifest.scripts['test:v0.2c']).not.toMatch(/test:provider|openai|headless/i)

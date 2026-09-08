@@ -946,7 +946,7 @@ DS-Plugins/
 
 ### v0.1：基础运行闭环
 
-实现、配置、hard limit、Handoff、验证 allowlist 及 provider-smoke 边界见 [`@ds-plugins/dsh-orchestrator`](packages/dsh-orchestrator/README.md)。当前仅提供 keyless 验收；本仓库没有真实 provider 或 coding-task 验收路径。
+实现、配置、hard limit、Handoff、验证 allowlist 及 provider-smoke 边界见 [`@han_05/dsh-orchestrator`](packages/dsh-orchestrator/README.md)。当前仅提供 keyless 验收；本仓库没有真实 provider 或 coding-task 验收路径。
 
 交付：
 
@@ -979,10 +979,10 @@ v0.2a 只验证固定 fixture corpus 的 baseline、共享契约、路径安全�
 
 v0.2b 已在固定 12-task corpus 上完成 keyless promotion gate：cold/warm 的 median source-token reduction 均为 `0.7260683760683762`，mean symbol-query recall@5、target coverage、oracle success 均为 `1`，uncached tokens per success 为 `17.5`；两种条件均通过 `≥ 0.25/0.95/0.95/0.95` 阈值。每个 task 生成 3 次 cold 与 3 次 warm optimized 记录，明确不宣称 cache benefit。该结果只证明固定 fixture、fallback/index、read-only projections、Loader/replay 与评估链路；不证明 provider、网络隔离或真实 coding-task acceptance。`dsh-lsp-actions` 当前决策为 `patch-required`，未安装、未进入默认 profile；详见 [`dsh-lsp-actions compatibility review`](docs/superpowers/reviews/2026-08-30-dsh-lsp-actions-compatibility.md)。
 
-`@ds-plugins/dsh-code-intelligence` 声明了标准 `dsh.bundle`，本地构建后可由 DSH 插件管理命令识别并加入 Profile 的 bundle 栈：
+`@han_05/dsh-code-intelligence` 声明了标准 `dsh.bundle`，本地构建后可由 DSH 插件管理命令识别并加入 Profile 的 bundle 栈：
 
 ```bash
-pnpm --filter @ds-plugins/dsh-code-intelligence build
+pnpm --filter @han_05/dsh-code-intelligence build
 cd upstream/deepseek-harness
 pnpm dsh plugin --profile web add link:/home/sihan/Projects/DS-Plugins/packages/dsh-code-intelligence
 ```
@@ -991,7 +991,7 @@ pnpm dsh plugin --profile web add link:/home/sihan/Projects/DS-Plugins/packages/
 
 #### v0.2c：Context Blocks 与有界缓存（已完成）
 
-v0.2c 已合入 `main`：`@ds-plugins/dsh-context` 作为不可变 ContextBlockV1 契约权威，`@ds-plugins/dsh-context-cache` 作为边界感知的持久化缓存，`@ds-plugins/dsh-code-intelligence` 把既有 Repo Map / Symbol Query 投影通过 `context-compiler` 编译成有界 context block 并提供 provenance 校验的渐进式 source-window 展开，`@ds-plugins/dsh-orchestrator` 仅在 v0.2c overlay 中消费可选 `contextCompiler` 服务。缓存只存在于受信任 deployment root 下的 `.dsh-context-cache/v1/`，使用 mode 0700、同目录临时文件 + 原子 rename、独占锁，并执行依赖哈希失效、LRU 淘汰与 quarantine。`profiles/v0.1` 保持不变；该 overlay 不启用 provider 或 write-capable tool。
+v0.2c 已合入 `main`：`@han_05/dsh-context` 作为不可变 ContextBlockV1 契约权威，`@han_05/dsh-context-cache` 作为边界感知的持久化缓存，`@han_05/dsh-code-intelligence` 把既有 Repo Map / Symbol Query 投影通过 `context-compiler` 编译成有界 context block 并提供 provenance 校验的渐进式 source-window 展开，`@han_05/dsh-orchestrator` 仅在 v0.2c overlay 中消费可选 `contextCompiler` 服务。缓存只存在于受信任 deployment root 下的 `.dsh-context-cache/v1/`，使用 mode 0700、同目录临时文件 + 原子 rename、独占锁，并执行依赖哈希失效、LRU 淘汰与 quarantine。`profiles/v0.1` 保持不变；该 overlay 不启用 provider 或 write-capable tool。
 
 最新 keyless gate 证据（2026-08-31，cached Node v24.19.0）：`pnpm test:v0.2c` 完成全部 package build，并通过 33 个测试文件 / 268 个测试；其中完整 12-task promotion gate 通过，cold/warm median source-token reduction 均为 `0.7260683760683762`，mean symbol-query recall@5、target coverage 和 oracle success 均为 `1`。cold/warm replay 如实报告缓存 hit/miss。该结果只证明不可变 block、边界缓存、progressive disclosure、只读 context tools、Loader/replay 和固定语料评估链路；不证明 provider、网络隔离或真实 coding-task acceptance。
 
@@ -1034,7 +1034,7 @@ Task 14 real-Loader acceptance and the economical full gate are verified (2026-0
 本版本提供本地离线分析命令。先构建 evaluator：
 
 ```bash
-pnpm --filter @ds-plugins/dsh-eval build
+pnpm --filter @han_05/dsh-eval build
 ```
 
 然后使用已实现的 flag 语法导出和分析：
