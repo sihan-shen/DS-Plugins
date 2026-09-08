@@ -18,6 +18,7 @@
     "test:v0.4": "pnpm --filter @han_05/dsh-scheduling-contracts build && pnpm --filter @han_05/dsh-adaptive-scheduler build && pnpm --filter @han_05/dsh-orchestrator build && node --expose-internals ./node_modules/vitest/vitest.mjs run packages/dsh-scheduling-contracts/tests packages/dsh-adaptive-scheduler/tests packages/dsh-orchestrator/tests tests/replay --config vitest.config.ts",
     "test:v0.5": "pnpm build && node --expose-internals ./node_modules/vitest/vitest.mjs run packages/dsh-telemetry/tests packages/dsh-eval/tests tests/replay packages/dsh-orchestrator/tests/loader.spec.ts packages/dsh-orchestrator/tests/profile.spec.ts --config vitest.config.ts",
     "test:profile": "vitest run packages/dsh-orchestrator/tests/profile.spec.ts",
+    "test:standalone-consumer": "node scripts/check-dsh-standalone-consumer.mjs",
     "test:provider": "node --experimental-strip-types tests/provider/openai-codex.smoke.ts"
   },
   "devDependencies": {
